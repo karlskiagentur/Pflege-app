@@ -133,8 +133,8 @@ export default function App() {
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
         <div className="w-full max-w-sm space-y-8 text-center">
           <div>
-            {/* LOGO AUF 200% VERGRÖSSERT (w-64 h-64) UND ABSTAND ANGEPASST (mb-6) */}
-            <div className="w-64 h-64 flex items-center justify-center mx-auto mb-6">
+            {/* LOGO 200% GRÖSSE, ABSTAND WIEDER REVERTIERT AUF mb-2 */}
+            <div className="w-64 h-64 flex items-center justify-center mx-auto mb-2">
                 <img 
                 src="/logo.png" 
                 alt="Logo" 
@@ -162,7 +162,7 @@ export default function App() {
         .animate-slow-blink { animation: slow-blink 3s infinite ease-in-out; }
       `}</style>
 
-      {/* HEADER */}
+      {/* HEADER: Eckig unten, Logo groß */}
       <header className="py-4 px-6 bg-[#dccfbc] text-white shadow-sm relative flex justify-between items-center">
         <img 
           src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" 
@@ -179,7 +179,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto px-6 pt-8">
         
-        {/* DASHBOARD */}
+        {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
@@ -231,7 +231,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAGEBUCH */}
+        {/* TAB 2: TAGEBUCH */}
         {activeTab === 'tagebuch' && (
           <div className="space-y-8 animate-in fade-in">
             <h2 className="text-3xl font-black tracking-tighter">Pflegetagebuch</h2>
@@ -271,7 +271,6 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  {vitalDaten.length === 0 && <p className="text-center text-gray-300 text-sm">Keine aktuellen Daten verfügbar.</p>}
                 </div>
               </div>
             ) : (
@@ -287,7 +286,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PLANER */}
+        {/* TAB 3: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Besuchs-Planer</h2>
@@ -300,10 +299,11 @@ export default function App() {
                 </div>
               </div>
             ))}
+            {besuche.length === 0 && <p className="text-center text-gray-300 text-sm pt-10">Keine Besuche geplant.</p>}
           </div>
         )}
 
-        {/* SERVICE */}
+        {/* TAB 4: SERVICE */}
         {activeTab === 'service' && (
           <div className="space-y-6 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Service-Center</h2>
@@ -316,10 +316,10 @@ export default function App() {
               </button>
             </div>
             
-            <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 mt-4 text-left">
+            <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 mt-4">
               <h3 className="font-black mb-4 text-xs uppercase tracking-widest text-[#b5a48b]">Nachricht an das Team</h3>
               <textarea value={sonstigesMessage} onChange={(e) => setSonstigesMessage(e.target.value)} placeholder="Wie können wir helfen?" className="w-full bg-[#F9F7F4] rounded-2xl p-4 text-sm h-32 outline-none border-none resize-none mb-4" />
-              <button onClick={() => submitService('Sonstiges')} disabled={isSending || !sonstigesMessage.trim()} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-md disabled:bg-gray-100">
+              <button onClick={() => submitService('Sonstiges')} disabled={isSending || !sonstigesMessage.trim()} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-md">
                 {isSending ? "Wird gesendet..." : "Nachricht senden"}
               </button>
               {sentStatus === 'success' && <p className="text-green-500 text-center font-bold mt-4 animate-bounce">✓ Übermittelt!</p>}
@@ -340,7 +340,6 @@ export default function App() {
         ))}
       </nav>
 
-      {/* MODALS */}
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
@@ -379,7 +378,6 @@ export default function App() {
                   )}
                 </div>
               )}
-              {sentStatus === 'success' && <p className="text-green-500 text-center font-bold mt-4 animate-pulse uppercase tracking-widest">✓ Erfolgreich!</p>}
             </div>
           )}
         </div>
