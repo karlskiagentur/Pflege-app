@@ -33,7 +33,6 @@ const formatTime = (raw: any) => {
 };
 
 export default function App() {
-  // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -57,7 +56,6 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-  // --- LOGIN ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -84,7 +82,6 @@ export default function App() {
     setActiveTab('dashboard');
   };
 
-  // --- DATEN LADEN ---
   const fetchData = async () => {
     if (!patientId) return;
     try {
@@ -107,7 +104,6 @@ export default function App() {
 
   useEffect(() => { if (patientId) fetchData(); }, [patientId]);
 
-  // --- SERVICE SENDEN ---
   const submitService = async (type: string) => {
     setIsSending(true);
     try {
@@ -126,26 +122,23 @@ export default function App() {
       const response = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       if (response.ok) {
         setSentStatus('success');
-        setTimeout(() => { 
-          setActiveModal(null); 
-          setSentStatus('idle'); 
-          setNewTaetigkeit("");
-          setNewDatum("");
-          setSelectedFiles([]);
-          setSonstigesMessage("");
-        }, 2000);
+        setTimeout(() => { setActiveModal(null); setSentStatus('idle'); }, 2000);
       }
     } catch (e) { setSentStatus('error'); }
     setIsSending(false);
   };
 
-  // --- UI: LOGIN ---
   if (!patientId) {
     return (
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
         <div className="w-full max-w-sm space-y-8">
           <div className="text-center">
-            <Heart className="text-[#dccfbc] fill-[#dccfbc] mx-auto mb-4" size={64} />
+            {/* NEUES LOGO AUF LOGIN-SEITE */}
+            <img 
+              src="https://drive.google.com/uc?export=view&id=1Yh2OH1xySIfDfuvd52b14szLxJL8R5bk" 
+              alt="Wunschlos Logo" 
+              className="h-20 w-auto mx-auto mb-4 object-contain"
+            />
             <h1 className="text-4xl font-black text-[#b5a48b] tracking-tighter">Wunschlos</h1>
             <p className="text-gray-400 font-medium">Patienten-Portal Login</p>
           </div>
@@ -161,7 +154,6 @@ export default function App() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F7F4]"><RefreshCw className="animate-spin text-[#b5a48b]" size={40} /></div>;
 
-  // --- UI: HAUPT-APP ---
   return (
     <div className="min-h-screen bg-white font-sans pb-32 text-[#3A3A3A] text-left">
       <style>{`
@@ -169,26 +161,26 @@ export default function App() {
         .animate-slow-blink { animation: slow-blink 3s infinite ease-in-out; }
       `}</style>
 
-      {/* HEADER: Eckig unten, Logo groß, Name rechts */}
-      <header className="py-4 px-6 bg-[#dccfbc] text-white shadow-sm relative flex justify-between items-center">
+      {/* HEADER */}
+      <header className="py-3 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img 
           src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" 
           alt="Wunschlos Logo" 
-          className="h-11 w-auto object-contain"
+          className="h-12 w-auto object-contain"
         />
         <div className="flex flex-col items-end">
           <button onClick={handleLogout} className="bg-white/20 p-2 rounded-full text-white active:scale-90 transition-all mb-1">
             <LogOut size={18}/>
           </button>
-          <p className="text-sm font-bold italic opacity-90 text-right leading-tight">{unbox(patientData?.Name)}</p>
+          <p className="text-sm font-bold italic opacity-90">{unbox(patientData?.Name)}</p>
         </div>
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-8">
         
-        {/* TAB 1: DASHBOARD */}
+        {/* DASHBOARD */}
         {activeTab === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in">
+          <div className="space-y-8 animate-in fade-in text-left">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
                <div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black tracking-tight">{unbox(patientData?.Pflegegrad)}</h2></div>
                <div className="bg-white/20 p-4 rounded-2xl"><CalendarIcon size={28}/></div>
@@ -238,9 +230,9 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: TAGEBUCH */}
+        {/* TAGEBUCH */}
         {activeTab === 'tagebuch' && (
-          <div className="space-y-8 animate-in fade-in">
+          <div className="space-y-8 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Pflegetagebuch</h2>
             <div className="bg-gray-100/50 p-1.5 rounded-[1.5rem] flex border border-gray-100">
               <button onClick={() => setTagebuchSubTab('vital')} className={`flex-1 py-4 rounded-2xl text-sm font-black transition-all ${tagebuchSubTab === 'vital' ? 'bg-white shadow-md text-[#b5a48b]' : 'text-gray-400'}`}>Vitalwerte</button>
@@ -248,17 +240,12 @@ export default function App() {
             </div>
             {tagebuchSubTab === 'vital' ? (
               <div className="space-y-8">
-                
-                {/* 1. ÜBERSCHRIFT PULSVERLAUF */}
                 <h3 className="font-black text-lg text-[#3A3A3A] pl-2 -mb-4">Pulsverlauf (Letzte 5 Tage)</h3>
-
                 <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 relative overflow-hidden">
                   <div className="h-40 relative flex items-end justify-between px-2">
-                    {/* Y-ACHSE */}
                     <div className="absolute left-0 h-full flex flex-col justify-between text-[10px] font-bold text-gray-300 pointer-events-none py-1 z-20">
                       <span>120</span><span>100</span><span>80</span><span>60</span><span>40</span>
                     </div>
-                    {/* HINTERGRUND GRID */}
                     <svg className="absolute inset-0 w-full h-full px-10 py-4" viewBox="0 0 100 100" preserveAspectRatio="none">
                       <line x1="0" y1="0" x2="100" y2="0" stroke="#f3f3f3" strokeWidth="0.5" />
                       <line x1="0" y1="25" x2="100" y2="25" stroke="#f3f3f3" strokeWidth="0.5" />
@@ -272,10 +259,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
-                {/* 2. ÜBERSCHRIFT LETZTE MESSWERTE */}
                 <h3 className="font-black text-lg text-[#3A3A3A] pl-2 -mb-4">Letzte Messwerte</h3>
-
                 <div className="space-y-4">
                   {vitalDaten.slice(0, 3).map((v, i) => (
                     <div key={i} className="bg-white rounded-[2rem] p-7 shadow-sm border border-gray-50 flex items-center justify-between">
@@ -283,7 +267,6 @@ export default function App() {
                       <div className="flex gap-8">
                         <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">RR</p><p className="text-sm font-black text-gray-600">{v['RR (Blutdruck)'] || "-"}</p></div>
                         <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">Puls</p><p className="text-sm font-black text-gray-600">{v.PULS || "-"}</p></div>
-                        <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">BZ</p><p className="text-sm font-black text-gray-600">{v.BZ || "-"}</p></div>
                       </div>
                     </div>
                   ))}
@@ -303,33 +286,25 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: PLANER (VOLLSTÄNDIG) */}
+        {/* PLANER */}
         {activeTab === 'planer' && (
-          <div className="space-y-6 animate-in fade-in">
+          <div className="space-y-6 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Besuchs-Planer</h2>
             {besuche.map((b, i) => (
               <div key={i} className="bg-white rounded-[2rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
-                <div className="text-center min-w-[60px]">
-                  <p className="text-xl font-bold text-gray-300 leading-none">{formatTime(b.Uhrzeit)}</p>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">UHR</p>
-                </div>
+                <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300 leading-none">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase mt-1">UHR</p></div>
                 <div className="flex-1 text-left border-l border-gray-100 pl-5">
                   <p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p>
-                  <div className="flex items-center gap-2">
-                    <User size={12} className="text-gray-400"/>
-                    <p className="text-sm text-gray-500 font-medium">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p>
-                  </div>
-                  <p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider">Am {formatDate(b.Datum)}</p>
+                  <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500 font-medium">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider">Am {formatDate(b.Datum)}</p>
                 </div>
               </div>
             ))}
-            {besuche.length === 0 && <p className="text-center text-gray-300 text-sm pt-10">Keine Besuche geplant.</p>}
           </div>
         )}
 
-        {/* TAB 4: SERVICE (VOLLSTÄNDIG) */}
+        {/* SERVICE */}
         {activeTab === 'service' && (
-          <div className="space-y-6 animate-in fade-in">
+          <div className="space-y-6 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Service-Center</h2>
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setActiveModal('rezept')} className="bg-white rounded-3xl p-6 shadow-sm flex flex-col items-center gap-3 border active:scale-95 transition-all">
@@ -352,16 +327,10 @@ export default function App() {
         )}
       </main>
 
-      {/* FLOAT BUTTON: KI 24/7 */}
-      <button 
-        onClick={() => setActiveModal('ki-telefon')}
-        className="fixed right-6 bottom-32 z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white animate-slow-blink active:scale-90 transition-all"
-      >
-        <Mic size={24} fill="white" />
-        <span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span>
+      <button onClick={() => setActiveModal('ki-telefon')} className="fixed right-6 bottom-32 z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white animate-slow-blink active:scale-90 transition-all">
+        <Mic size={24} fill="white" /><span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span>
       </button>
 
-      {/* FOOTER NAV */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-gray-50 flex justify-around p-5 pb-11 rounded-t-[3rem] shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-50">
         {[{ id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'tagebuch', icon: ClipboardList, label: 'Tagebuch' }, { id: 'service', icon: Settings, label: 'Service' }].map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}>
@@ -370,11 +339,9 @@ export default function App() {
         ))}
       </nav>
 
-      {/* MODALS */}
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
-          
           {activeModal === 'ki-telefon' ? (
              <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10">
                 <iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" />
