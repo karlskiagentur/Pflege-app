@@ -1,0 +1,143 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  LayoutDashboard, CalendarDays, ClipboardList, Settings, 
+  Phone, Calendar, FileText, RefreshCw, Send, Heart
+} from 'lucide-react';
+
+const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
+const ACTIVE_PATIENT_ID = 'recR8okokREytMnzk'; // Denis Reutter
+
+// DATUMS-FORMATIERER (Erzeugt 25.1.06)
+const formatDate = (dateString: any) => {
+  if (!dateString) return "-";
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('de-DE', {
+      day: 'numeric',
+      month: 'numeric',
+      year: '2-digit'
+    });
+  } catch (e) {
+    return dateString;
+  }
+};
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [patientData, setPatientData] = useState<any>(null);
+  const [contactData, setContactData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      
+      // 1. Stammdaten abrufen
+      const resP = await fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${ACTIVE_PATIENT_ID}`);
+      const jsonP = await resP.json();
+      if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+
+      // 2. Kontakte abrufen
+      const resC = await fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${ACTIVE_PATIENT_ID}`);
+      const jsonC = await resC.json();
+      
+      // DEBUG LOG - Das ist wichtig für den Screenshot!
+      console.log("ROHDATEN KONTAKT VOM SERVER:", jsonC);
+
+      if (jsonC.status === "success" && jsonC.data) {
+        const d = jsonC.data;
+        // Wir suchen flexibel nach deinen n8n-Feldnamen oder Airtable-Standard
+        setContactData({
+          name: d.vorname_nachname || d.Name || d.name || "Unbekannt",
+          rolle: d.funktion || d.rolle || d["Rolle/Funktion"] || "Ansprechpartner",
+          telefon: d.telefonnummer || d.Telefon || d.telefon
+        });
+      }
+    } catch (error) {
+      console.error("Fehler beim Laden:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F7F4]"><RefreshCw className="animate-spin text-[#b5a48b]" size={40} /></div>;
+
+  return (
+    <div className="min-h-screen bg-[#F9F7F4] font-sans pb-32 text-[#4A4A4A]">
+      <header className="p-6 flex justify-between items-center bg-white/60 backdrop-blur-md sticky top-0 z-50">
+        <div className="flex items-center gap-3">
+          <Heart className="text-[#dccfbc] fill-[#dccfbc]" size={36} />
+          <div className="text-left">
+            <h1 className="text-xl font-bold text-[#b5a48b] leading-tight">Wunschlos</h1>
+            <p className="text-sm font-medium text-[#dccfbc] leading-none">Pflege</p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end">
+           <div className="bg-[#b5a48b] text-white w-10 h-10 rounded-full flex items-center justify-center font-bold uppercase shadow-sm">
+             {patientData?.Name?.substring(0,2) || "??"}
+           </div>
+           <p className="text-[12px] text-gray-400 mt-1 italic">Für {patientData?.Name || "Patient"}</p>
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto px-5 pt-4">
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            <div className="bg-[#dccfbc] rounded-[2rem] p-7 shadow-sm relative text-left text-white">
+              <p className="text-[10px] uppercase font-bold opacity-90">Aktueller Status</p>
+              <h2 className="text-2xl font-bold">{patientData?.Pflegegrad || "Status unbekannt"}</h2>
+            </div>
+
+            <section>
+              <h3 className="font-bold border-l-4 border-[#b5a48b] pl-3 mb-4 text-left">Stammdaten</h3>
+              <div className="bg-white rounded-2xl p-5 space-y-4 shadow-sm text-sm">
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-gray-400">Geburtsdatum</span>
+                  <span className="font-bold">{formatDate(patientData?.Geburtsdatum)}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-gray-400">Versicherung</span>
+                  <span className="font-bold">{patientData?.Versicherung || "-"}</span>
+                </div>
+                <div className="text-left">
+                  <span className="text-gray-400 block mb-1">Anschrift</span>
+                  <p className="font-bold">{patientData?.Anschrift || "Keine Adresse"}</p>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h3 className="font-bold border-l-4 border-[#b5a48b] pl-3 mb-4 text-left">Wichtige Kontakte</h3>
+              <div className="bg-white rounded-2xl p-4 flex items-center justify-between shadow-sm border border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-[#F9F7F4] rounded-full flex items-center justify-center font-bold text-[#dccfbc]">
+                    {contactData?.name ? contactData.name[0] : "!"}
+                  </div>
+                  <div className="text-left">
+                    <p className="font-bold text-sm">{contactData?.name || "Kein Kontakt gefunden"}</p>
+                    <p className="text-[10px] text-gray-400">{contactData?.rolle || "Ansprechpartner"}</p>
+                  </div>
+                </div>
+                {contactData?.telefon && (
+                  <a href={`tel:${contactData.telefon}`} className="bg-[#dccfbc] p-2.5 rounded-full text-white active:scale-95 transition-transform">
+                    <Phone size={18} />
+                  </a>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+      </main>
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t flex justify-around p-5 pb-11 rounded-t-[2.5rem] z-50">
+        {['dashboard', 'planer', 'tagebuch', 'service'].map((id) => (
+          <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center gap-1 ${activeTab === id ? 'text-[#b5a48b]' : 'text-gray-300'}`}>
+            <LayoutDashboard size={22} /><span className="text-[9px] font-bold uppercase">{id.substring(0,4)}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}

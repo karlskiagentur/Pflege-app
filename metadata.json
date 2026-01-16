@@ -1,0 +1,8 @@
+
+{
+  "name": "Wunschlos Pflege Portal",
+  "description": "Ein modernes, seniorenfreundliches Patientenportal für ambulante Pflegedienste mit Dashboard, Besuchsplaner, Pflegetagebuch und KI-Sprachassistent.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
