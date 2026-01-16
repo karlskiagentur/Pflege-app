@@ -133,7 +133,8 @@ export default function App() {
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
         <div className="w-full max-w-sm space-y-8 text-center">
           <div>
-            <div className="w-32 h-32 flex items-center justify-center mx-auto mb-2">
+            {/* LOGO AUF 200% VERGRÖSSERT (w-64 h-64) UND ABSTAND ANGEPASST (mb-6) */}
+            <div className="w-64 h-64 flex items-center justify-center mx-auto mb-6">
                 <img 
                 src="/logo.png" 
                 alt="Logo" 
@@ -147,7 +148,6 @@ export default function App() {
             <input type="password" inputMode="numeric" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl outline-none border-none tracking-widest font-medium" placeholder="Login-Code" required />
             <button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold shadow-lg uppercase tracking-widest text-sm">Anmelden</button>
           </form>
-          {loginError && <p className="text-red-500 font-bold text-xs mt-4">Login fehlgeschlagen. Bitte prüfen Sie Name und Code.</p>}
         </div>
       </div>
     );
@@ -248,7 +248,11 @@ export default function App() {
                       <span>120</span><span>100</span><span>80</span><span>60</span><span>40</span>
                     </div>
                     <svg className="absolute inset-0 w-full h-full px-10 py-4" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      {[0, 25, 50, 75, 100].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="#f3f3f3" strokeWidth="0.5" />)}
+                      <line x1="0" y1="0" x2="100" y2="0" stroke="#f3f3f3" strokeWidth="0.5" />
+                      <line x1="0" y1="25" x2="100" y2="25" stroke="#f3f3f3" strokeWidth="0.5" />
+                      <line x1="0" y1="50" x2="100" y2="50" stroke="#f3f3f3" strokeWidth="0.5" />
+                      <line x1="0" y1="75" x2="100" y2="75" stroke="#f3f3f3" strokeWidth="0.5" />
+                      <line x1="0" y1="100" x2="100" y2="100" stroke="#f3f3f3" strokeWidth="0.5" />
                       <polyline fill="none" stroke="#dccfbc" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" points={vitalDaten.filter(v=>v.PULS).slice(0,5).map((v,idx)=> { const val = Number(v.PULS); const y = 100 - ((val - 40) / 80) * 100; return `${idx*25},${y}`; }).join(' ')} />
                     </svg>
                     {['Fr', 'Do', 'Mi', 'Di', 'Mo'].map((day, i) => (
@@ -267,6 +271,7 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                  {vitalDaten.length === 0 && <p className="text-center text-gray-300 text-sm">Keine aktuellen Daten verfügbar.</p>}
                 </div>
               </div>
             ) : (
@@ -284,21 +289,14 @@ export default function App() {
 
         {/* PLANER */}
         {activeTab === 'planer' && (
-          <div className="space-y-6 animate-in fade-in">
+          <div className="space-y-6 animate-in fade-in text-left">
             <h2 className="text-3xl font-black tracking-tighter">Besuchs-Planer</h2>
             {besuche.map((b, i) => (
               <div key={i} className="bg-white rounded-[2rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
-                <div className="text-center min-w-[60px]">
-                  <p className="text-xl font-bold text-gray-300 leading-none">{formatTime(b.Uhrzeit)}</p>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">UHR</p>
-                </div>
+                <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300 leading-none">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase mt-1">UHR</p></div>
                 <div className="flex-1 text-left border-l border-gray-100 pl-5">
                   <p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p>
-                  <div className="flex items-center gap-2">
-                    <User size={12} className="text-gray-400"/>
-                    <p className="text-sm text-gray-500 font-medium">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p>
-                  </div>
-                  <p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider">Am {formatDate(b.Datum)}</p>
+                  <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500 font-medium">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider">Am {formatDate(b.Datum)}</p>
                 </div>
               </div>
             ))}
@@ -318,10 +316,10 @@ export default function App() {
               </button>
             </div>
             
-            <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 mt-4">
+            <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 mt-4 text-left">
               <h3 className="font-black mb-4 text-xs uppercase tracking-widest text-[#b5a48b]">Nachricht an das Team</h3>
               <textarea value={sonstigesMessage} onChange={(e) => setSonstigesMessage(e.target.value)} placeholder="Wie können wir helfen?" className="w-full bg-[#F9F7F4] rounded-2xl p-4 text-sm h-32 outline-none border-none resize-none mb-4" />
-              <button onClick={() => submitService('Sonstiges')} disabled={isSending || !sonstigesMessage.trim()} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-md">
+              <button onClick={() => submitService('Sonstiges')} disabled={isSending || !sonstigesMessage.trim()} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-md disabled:bg-gray-100">
                 {isSending ? "Wird gesendet..." : "Nachricht senden"}
               </button>
               {sentStatus === 'success' && <p className="text-green-500 text-center font-bold mt-4 animate-bounce">✓ Übermittelt!</p>}
@@ -330,16 +328,10 @@ export default function App() {
         )}
       </main>
 
-      {/* KI-HILFE */}
-      <button 
-        onClick={() => setActiveModal('ki-telefon')}
-        className="fixed right-6 bottom-32 z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white animate-slow-blink active:scale-90 transition-all"
-      >
-        <Mic size={24} fill="white" />
-        <span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span>
+      <button onClick={() => setActiveModal('ki-telefon')} className="fixed right-6 bottom-32 z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white animate-slow-blink active:scale-90 transition-all">
+        <Mic size={24} fill="white" /><span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span>
       </button>
 
-      {/* FOOTER */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-gray-50 flex justify-around p-5 pb-11 rounded-t-[3rem] shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-50">
         {[{ id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'tagebuch', icon: ClipboardList, label: 'Tagebuch' }, { id: 'service', icon: Settings, label: 'Service' }].map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}>
@@ -358,7 +350,7 @@ export default function App() {
                 <button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 backdrop-blur-md p-3 rounded-full text-white shadow-lg"><X/></button>
              </div>
           ) : (
-            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10">
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
               <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
               {activeModal === 'rezept' && (
                 <div className="space-y-6">
@@ -372,7 +364,7 @@ export default function App() {
                 </div>
               )}
               {activeModal === 'termin' && (
-                <div className="space-y-6 text-left">
+                <div className="space-y-6">
                   <h3 className="text-xl font-black flex items-center gap-3"><RefreshCw className="text-[#dccfbc]"/> Termin ändern</h3>
                   {terminStep === 1 ? (
                     <div className="space-y-4">
@@ -387,6 +379,7 @@ export default function App() {
                   )}
                 </div>
               )}
+              {sentStatus === 'success' && <p className="text-green-500 text-center font-bold mt-4 animate-pulse uppercase tracking-widest">✓ Erfolgreich!</p>}
             </div>
           )}
         </div>
