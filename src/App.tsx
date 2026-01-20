@@ -21,8 +21,9 @@ export default function App() {
   const [patientData, setPatientData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   
-  // Debug-Logs für den Screen
+  // Debug-System
   const [logs, setLogs] = useState<string[]>([]);
+  const [rawDebug, setRawDebug] = useState<string>(""); // Für die Anzeige der Rohdaten
   const addLog = (msg: string) => setLogs(prev => [`> ${msg}`, ...prev]);
 
   const fetchData = async () => {
@@ -31,7 +32,7 @@ export default function App() {
 
     try {
       setLoading(true);
-      addLog("Lade Daten...");
+      addLog("Lade Daten v3.0...");
       
       const [resP, resC] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
@@ -41,24 +42,31 @@ export default function App() {
       const jsonP = await resP.json(); 
       const jsonC = await resC.json();
 
+      // Rohdaten speichern, damit wir sie auf dem Handy sehen können
+      setRawDebug(JSON.stringify(jsonC).slice(0, 200)); 
+
       if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
-      // --- HIER IST DIE LOGIK FÜR DEINEN SCREENSHOT ---
+      // --- INTELLIGENTE STRUKTUR-ERKENNUNG (v3.0) ---
       let list = [];
 
-      // Fall A: Die Struktur aus deinem Screenshot (Array mit 1 Objekt, darin "data")
+      // Fall A: Verpackt in Array [ { data: [...] } ] (Wie im n8n Screenshot)
       if (Array.isArray(jsonC) && jsonC.length > 0 && jsonC[0].data) {
-        addLog("Struktur erkannt: Wrapper [ { data: ... } ]");
-        list = jsonC[0].data; // Wir gehen IN das Paket
+        addLog("Erkannt: Array mit Data-Wrapper");
+        list = jsonC[0].data;
       }
-      // Fall B: Normale Liste
+      // Fall B: Einzelnes Objekt { data: [...] } (Das war vermutlich der Fehler eben)
+      else if (!Array.isArray(jsonC) && jsonC.data && Array.isArray(jsonC.data)) {
+        addLog("Erkannt: Objekt mit Data-Feld");
+        list = jsonC.data;
+      }
+      // Fall C: Direkte Liste [ {...}, {...} ]
       else if (Array.isArray(jsonC)) {
-        addLog("Struktur erkannt: Direkte Liste");
+        addLog("Erkannt: Direkte Liste");
         list = jsonC;
       }
       else {
-        addLog("Unbekannte Struktur (siehe Konsole)");
-        console.log("RAW DATA:", jsonC);
+        addLog("STRUKTUR UNBEKANNT!");
       }
 
       setContactData(list);
@@ -106,17 +114,20 @@ export default function App() {
       <header className="py-4 px-6 bg-[#dccfbc] text-white shadow-sm flex justify-between items-center">
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" className="h-11 w-auto object-contain" alt="Logo" />
         <div className="flex items-center gap-2">
-            <span className="text-[10px] opacity-50 font-mono">v2.0</span>
+            <span className="text-[10px] opacity-50 font-mono">v3.0</span>
             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full active:scale-90"><LogOut size={18}/></button>
         </div>
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-8">
         
-        {/* --- DEBUG LOG AUF DEM BILDSCHIRM --- */}
-        <div className="bg-black text-green-400 p-4 rounded-xl mb-6 font-mono text-[10px] h-24 overflow-auto shadow-lg border-2 border-gray-800">
-          <strong>SYSTEM STATUS v2.0:</strong>
+        {/* --- SYSTEM MONITOR v3 --- */}
+        <div className="bg-black text-green-400 p-4 rounded-xl mb-6 font-mono text-[10px] h-auto max-h-40 overflow-auto shadow-lg border-2 border-gray-800">
+          <strong className="block border-b border-gray-700 pb-1 mb-1">SYSTEM STATUS v3.0:</strong>
           {logs.map((l, i) => <div key={i}>{l}</div>)}
+          <div className="mt-2 pt-2 border-t border-gray-700 text-gray-400 break-all">
+            RAW: {rawDebug || "Warte..."}
+          </div>
         </div>
 
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center mb-8 animate-in fade-in">
@@ -137,7 +148,7 @@ export default function App() {
           
           <div className="space-y-3">
             {contactData.length > 0 ? contactData.map((c: any, i: number) => {
-               // HIER: Zugriff direkt auf "Name", "Rolle/Funktion" (wie im Airtable Screenshot)
+               // DATEN MAPPING - Holt Daten aus Name, Rolle/Funktion, Telefon
                const name = unbox(c.Name);
                const rolle = unbox(c['Rolle/Funktion']);
                const tel = unbox(c.Telefon);
