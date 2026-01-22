@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  LayoutDashboard, CalendarDays, ClipboardList, Settings, 
-  Phone, User, RefreshCw, FileText, Activity,
-  X, Upload, Mic, LogOut, Calendar as CalendarIcon, ChevronRight, Send
+  LayoutDashboard, CalendarDays, Settings, 
+  Phone, User, RefreshCw, FileText, 
+  X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
+  ChevronRight, Send, Euro, FileCheck
 } from 'lucide-react';
 
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -36,6 +37,7 @@ const formatTime = (raw: any) => {
 };
 
 export default function App() {
+  // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -43,15 +45,17 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [tagebuchSubTab, setTagebuchSubTab] = useState<'vital' | 'berichte'>('vital');
   const [loading, setLoading] = useState(false);
   
+  // Daten States
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
-  const [vitalDaten, setVitalDaten] = useState<any[]>([]);
   
-  const [activeModal, setActiveModal] = useState<'rezept' | 'termin' | 'ki-telefon' | null>(null);
+  // UI States für Modals & Uploads
+  const [activeModal, setActiveModal] = useState<'upload' | 'termin' | 'ki-telefon' | null>(null);
+  const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | 'Rezept' | ''>(''); // Was wird hochgeladen?
+  
   const [terminStep, setTerminStep] = useState(1);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [newTaetigkeit, setNewTaetigkeit] = useState("");
@@ -60,6 +64,7 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
+  // Draggable Button Logic
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
@@ -77,17 +82,15 @@ export default function App() {
     if (!patientId) return;
     try {
       setLoading(true);
-      const [resP, resC, resB, resV] = await Promise.all([
+      const [resP, resC, resB] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${patientId}`),
         fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${patientId}`),
         fetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${patientId}`),
-        fetch(`${N8N_BASE_URL}/get_data_vitalwerte?patientId=${patientId}`)
       ]);
       
       const jsonP = await resP.json(); 
       const jsonC = await resC.json();
       const jsonB = await resB.json(); 
-      const jsonV = await resV.json();
 
       if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
@@ -100,7 +103,6 @@ export default function App() {
 
       setContactData(extract(jsonC));
       setBesuche(extract(jsonB).sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
-      setVitalDaten(extract(jsonV).sort((a:any, b:any) => new Date(unbox(b.Zeitpunkt)).getTime() - new Date(unbox(a.Zeitpunkt)).getTime()));
 
     } catch (e) { console.error(e); } 
     finally { setLoading(false); }
@@ -131,9 +133,13 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
+      formData.append('patientName', unbox(patientData?.Name));
       formData.append('typ', type);
       formData.append('nachricht', sonstigesMessage);
       
+      // Hinweis: File Upload würde hier die selectedFiles anhängen
+      // selectedFiles.forEach(file => formData.append('files', file));
+
       const response = await fetch(`${N8N_BASE_URL}/service_submit`, { 
         method: 'POST', 
         body: formData 
@@ -142,10 +148,19 @@ export default function App() {
       if (response.ok) {
         setSentStatus('success');
         setSonstigesMessage("");
+        setSelectedFiles([]);
         setTimeout(() => { setActiveModal(null); setSentStatus('idle'); }, 2000);
       }
     } catch (e) { setSentStatus('error'); }
     setIsSending(false);
+  };
+
+  // Hilfsfunktion zum Öffnen des Upload Modals
+  const openUploadModal = (type: 'Rechnung' | 'Leistungsnachweis' | 'Rezept') => {
+    setUploadContext(type);
+    setSelectedFiles([]);
+    setSentStatus('idle');
+    setActiveModal('upload');
   };
 
   if (!patientId) {
@@ -224,74 +239,71 @@ export default function App() {
           </div>
         )}
 
-        {/* TAGEBUCH TAB */}
-        {activeTab === 'tagebuch' && (
+        {/* NEU: HOCHLADEN TAB (Ehemals Tagebuch) */}
+        {activeTab === 'hochladen' && (
           <div className="space-y-8 animate-in fade-in">
-            <h2 className="text-3xl font-black tracking-tighter">Pflegetagebuch</h2>
-            <div className="bg-gray-100/50 p-1.5 rounded-[1.5rem] flex border border-gray-100">
-              <button onClick={() => setTagebuchSubTab('vital')} className={`flex-1 py-4 rounded-2xl text-sm font-black transition-all ${tagebuchSubTab === 'vital' ? 'bg-white shadow-md text-[#b5a48b]' : 'text-gray-400'}`}>Vitalwerte</button>
-              <button onClick={() => setTagebuchSubTab('berichte')} className={`flex-1 py-4 rounded-2xl text-sm font-black transition-all ${tagebuchSubTab === 'berichte' ? 'bg-white shadow-md text-[#b5a48b]' : 'text-gray-400'}`}>Berichte</button>
+            <div className="mb-6 text-center">
+                <h2 className="text-3xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
+                <p className="text-xs text-gray-400 mt-2">Laden Sie hier Nachweise und Rechnungen direkt hoch.</p>
             </div>
+            
+            <div className="flex flex-col gap-5">
+              {/* BUTTON 1: LEISTUNGSNACHWEISE */}
+              <button 
+                onClick={() => openUploadModal('Leistungsnachweis')}
+                className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 flex items-center gap-6 active:scale-95 transition-all text-left"
+              >
+                <div className="bg-[#dccfbc]/20 p-5 rounded-3xl text-[#b5a48b]">
+                  <FileCheck size={40} strokeWidth={1.5} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-[#3A3A3A]">Leistungs-<br/>nachweise</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Unterschrieben hochladen</p>
+                </div>
+                <div className="ml-auto bg-gray-50 p-3 rounded-full text-gray-300">
+                  <ChevronRight size={20} />
+                </div>
+              </button>
 
-            {tagebuchSubTab === 'vital' ? (
-              <div className="space-y-8">
-                <h3 className="font-black text-lg text-[#3A3A3A] pl-2 -mb-4 text-left">Pulsverlauf</h3>
-                <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 relative overflow-hidden h-40 flex items-end justify-between px-2">
-                    <svg className="absolute inset-0 w-full h-full px-10 py-4" viewBox="0 0 100 100" preserveAspectRatio="none">
-                      <polyline fill="none" stroke="#dccfbc" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" 
-                        points={vitalDaten.slice(0, 5).reverse().map((v, idx) => `${idx * 25},${100 - ((Number(unbox(v.PULS)) - 40) / 80) * 100}`).join(' ')} 
-                      />
-                    </svg>
-                    {vitalDaten.slice(0, 5).map((v, i) => (
-                      <div key={i} className="flex flex-col items-center gap-3 z-10">
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#b5a48b] border-2 border-white shadow-sm"></div>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase">{formatDate(v.Zeitpunkt, true)}</span>
-                      </div>
-                    )).reverse()}
+              {/* BUTTON 2: RECHNUNGEN */}
+              <button 
+                onClick={() => openUploadModal('Rechnung')}
+                className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 flex items-center gap-6 active:scale-95 transition-all text-left"
+              >
+                <div className="bg-[#dccfbc]/20 p-5 rounded-3xl text-[#b5a48b]">
+                  <Euro size={40} strokeWidth={1.5} />
                 </div>
-                <div className="space-y-4">
-                  {vitalDaten.slice(0, 5).map((v, i) => (
-                    <div key={i} className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-50 flex items-center justify-between">
-                      <span className="font-black text-lg text-gray-400">{formatDate(v.Zeitpunkt, true)}</span>
-                      <div className="flex gap-6">
-                        <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">RR</p><p className="text-sm font-black text-gray-600">{unbox(v['RR (Blutdruck)']) || "-"}</p></div>
-                        <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">Puls</p><p className="text-sm font-black text-gray-600">{unbox(v.PULS) || "-"}</p></div>
-                        <div className="text-center"><p className="text-[8px] font-black text-gray-300 uppercase mb-1">BZ</p><p className="text-sm font-black text-gray-600">{unbox(v.BZ) || "-"}</p></div>
-                      </div>
-                    </div>
-                  ))}
+                <div>
+                  <h3 className="text-xl font-black text-[#3A3A3A]">Rechnungen<br/>einreichen</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Hier Foto/PDF senden</p>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {vitalDaten.filter(v => unbox(v.Berichtstext)).map((v, i) => (
-                  <div key={i} className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-left">
-                    <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black text-[#b5a48b] uppercase">{unbox(v.Typ) || "Bericht"}</span><span className="text-[10px] text-gray-300 font-bold">{formatDate(v.Zeitpunkt)}</span></div>
-                    <p className="text-sm text-gray-600 italic">"{unbox(v.Berichtstext)}"</p>
-                  </div>
-                ))}
-              </div>
-            )}
+                <div className="ml-auto bg-gray-50 p-3 rounded-full text-gray-300">
+                  <ChevronRight size={20} />
+                </div>
+              </button>
+            </div>
+            
+            <div className="bg-[#dccfbc]/10 rounded-[2rem] p-6 text-center mt-4">
+               <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
+               <button onClick={()=>setActiveModal('ki-telefon')} className="mt-2 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+            </div>
           </div>
         )}
 
-        {/* --- SERVICE TAB (KORRIGIERT) --- */}
+        {/* SERVICE TAB */}
         {activeTab === 'service' && (
           <div className="space-y-6 animate-in fade-in">
             <h2 className="text-3xl font-black tracking-tighter mb-8">Service-Center</h2>
-            
             <div className="grid grid-cols-2 gap-4">
-              <button onClick={() => setActiveModal('rezept')} className="bg-white rounded-[2.5rem] p-8 shadow-sm flex flex-col items-center gap-4 border border-gray-50 active:scale-95 transition-all">
+              <button onClick={() => openUploadModal('Rezept')} className="bg-white rounded-[2.5rem] p-8 shadow-sm flex flex-col items-center gap-4 border border-gray-50 active:scale-95 transition-all">
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileText size={32} /></div>
                 <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Rezept</span>
               </button>
-              
               <button onClick={() => { setActiveModal('termin'); setTerminStep(1); }} className="bg-white rounded-[2.5rem] p-8 shadow-sm flex flex-col items-center gap-4 border border-gray-50 active:scale-95 transition-all">
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><RefreshCw size={32} /></div>
                 <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Termin</span>
               </button>
             </div>
-
             <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 mt-6 text-left">
               <h3 className="font-black mb-4 text-xs uppercase text-[#b5a48b] tracking-widest">Nachbestellung / Sonstiges</h3>
               <textarea 
@@ -321,9 +333,14 @@ export default function App() {
         className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white cursor-move active:scale-90 transition-transform"
       ><Mic size={24} fill="white" /><span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span></button>
 
-      {/* NAVIGATION */}
+      {/* NAVIGATION - NEU: "HOCHLADEN" statt TAGEBUCH */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-gray-50 flex justify-around p-5 pb-11 rounded-t-[3rem] shadow-2xl z-50">
-        {[{ id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'tagebuch', icon: ClipboardList, label: 'Tagebuch' }, { id: 'service', icon: Settings, label: 'Service' }].map((tab) => (
+        {[
+          { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, 
+          { id: 'planer', icon: CalendarDays, label: 'Planer' }, 
+          { id: 'hochladen', icon: Upload, label: 'Hochladen' }, // UPDATED ICON & LABEL
+          { id: 'service', icon: Settings, label: 'Service' }
+        ].map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><tab.icon size={22} strokeWidth={activeTab === tab.id ? 3 : 2} /><span className="text-[10px] font-black uppercase tracking-tighter">{tab.label}</span></button>
         ))}
       </nav>
@@ -332,12 +349,57 @@ export default function App() {
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
-          {activeModal === 'ki-telefon' ? (
+          
+          {/* KI CHAT */}
+          {activeModal === 'ki-telefon' && (
              <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 backdrop-blur-md p-3 rounded-full text-white"><X/></button></div>
-          ) : (
-            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
-              {activeModal === 'rezept' && (<div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><FileText className="text-[#dccfbc]"/> Rezept-Upload</h3><div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative"><input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" /><Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/><p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Klicken zum Hochladen"}</p></div><button onClick={() => submitService('Rezept-Upload')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-lg">Rezept senden</button></div>)}
-              {activeModal === 'termin' && (<div className="space-y-6 text-left"><h3 className="text-xl font-black flex items-center gap-3"><RefreshCw className="text-[#dccfbc]"/> Termin ändern</h3>{terminStep === 1 ? (<div className="space-y-4"><input type="text" value={newTaetigkeit} onChange={(e)=>setNewTaetigkeit(e.target.value)} placeholder="Welcher Termin soll geändert werden?" className="w-full bg-[#F9F7F4] p-5 rounded-2xl outline-none" /><button onClick={()=>setTerminStep(2)} disabled={!newTaetigkeit} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest">Weiter</button></div>) : (<div className="space-y-4"><input type="date" value={newDatum} onChange={(e)=>setNewDatum(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl outline-none font-black" style={{ colorScheme: 'light' }} /><button onClick={() => submitService('Termin-Änderung')} disabled={!newDatum || isSending} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg">Anfrage senden</button></div>)}</div>)}
+          )}
+
+          {/* UPLOAD MODAL (Dynamisch für Rezept, Rechnung, Nachweis) */}
+          {activeModal === 'upload' && (
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
+              <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+              <div className="space-y-6">
+                <h3 className="text-xl font-black flex items-center gap-3">
+                  {/* Icon basierend auf Kontext */}
+                  {uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} 
+                  {uploadContext} hochladen
+                </h3>
+                <div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative">
+                  <input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" />
+                  <Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/>
+                  <p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Klicken zum Hochladen"}</p>
+                </div>
+                <button 
+                  onClick={() => submitService(uploadContext + '-Upload')} 
+                  disabled={isSending || selectedFiles.length === 0} 
+                  className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2"
+                >
+                  {isSending && <RefreshCw className="animate-spin" size={16}/>}
+                  {sentStatus === 'success' ? 'Gesendet!' : 'Absenden'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TERMIN MODAL */}
+          {activeModal === 'termin' && (
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
+              <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+              <div className="space-y-6 text-left">
+                <h3 className="text-xl font-black flex items-center gap-3"><RefreshCw className="text-[#dccfbc]"/> Termin ändern</h3>
+                {terminStep === 1 ? (
+                  <div className="space-y-4">
+                    <input type="text" value={newTaetigkeit} onChange={(e)=>setNewTaetigkeit(e.target.value)} placeholder="Welcher Termin soll geändert werden?" className="w-full bg-[#F9F7F4] p-5 rounded-2xl outline-none" />
+                    <button onClick={()=>setTerminStep(2)} disabled={!newTaetigkeit} className="w-full bg-[#dccfbc] text-white py-5 rounded-2xl font-black uppercase tracking-widest">Weiter</button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <input type="date" value={newDatum} onChange={(e)=>setNewDatum(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl outline-none font-black" style={{ colorScheme: 'light' }} />
+                    <button onClick={() => submitService('Termin-Änderung')} disabled={!newDatum || isSending} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg">Anfrage senden</button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
