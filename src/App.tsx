@@ -240,67 +240,69 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: HOCHLADEN (Optimiert für iPhone 14 / Mobile) */}
+        {/* TAB: HOCHLADEN (Größe: -10% vom Original, Play Button neu) */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
-            <div className="mb-4 text-center">
+            <div className="mb-5 text-center">
                 <h2 className="text-2xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
                 <p className="text-xs text-gray-400 mt-1">Senden Sie uns hier Ihre Unterlagen.</p>
             </div>
             
-            <div className="flex flex-col gap-3">
-              {/* BUTTON 1: LEISTUNGSNACHWEISE (Kompakt) */}
+            <div className="flex flex-col gap-4">
+              {/* BUTTON 1: LEISTUNGSNACHWEISE (Padding 7 = ca. 10% weniger als 8) */}
               <button 
                 onClick={() => openUploadModal('Leistungsnachweis')}
-                className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-50 flex items-center gap-4 active:scale-95 transition-all text-left"
+                className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
               >
-                <div className="bg-[#dccfbc]/20 p-3 rounded-2xl text-[#b5a48b] shrink-0">
-                  <FileCheck size={32} strokeWidth={1.5} />
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
+                  <FileCheck size={36} strokeWidth={1.5} />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3>
+                  <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Unterschrieben</p>
                 </div>
-                <div className="bg-gray-50 p-2 rounded-full text-gray-300">
-                  <ChevronRight size={18} />
+                <div className="bg-gray-50 p-3 rounded-full text-gray-300">
+                  <ChevronRight size={20} />
                 </div>
               </button>
 
-              {/* BUTTON 2: RECHNUNGEN (Kompakt) */}
+              {/* BUTTON 2: RECHNUNGEN */}
               <button 
                 onClick={() => openUploadModal('Rechnung')}
-                className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-50 flex items-center gap-4 active:scale-95 transition-all text-left"
+                className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
               >
-                <div className="bg-[#dccfbc]/20 p-3 rounded-2xl text-[#b5a48b] shrink-0">
-                  <Euro size={32} strokeWidth={1.5} />
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
+                  <Euro size={36} strokeWidth={1.5} />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3>
+                  <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Foto oder PDF</p>
                 </div>
-                <div className="bg-gray-50 p-2 rounded-full text-gray-300">
-                  <ChevronRight size={18} />
+                <div className="bg-gray-50 p-3 rounded-full text-gray-300">
+                  <ChevronRight size={20} />
                 </div>
               </button>
             </div>
             
-            {/* VIDEO BUTTON DAZWISCHEN (Mit Play Taste) */}
+            {/* VIDEO BUTTON DAZWISCHEN (Mit Play Symbol) */}
             <div className="flex justify-center py-2">
                 <button 
                     onClick={() => setActiveModal('video')}
-                    className="flex items-center gap-2 bg-white px-5 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"
+                    className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"
                 >
-                    <PlayCircle size={20} fill="#b5a48b" className="text-white"/> 
+                    <Play size={14} fill="#b5a48b" className="text-[#b5a48b]" />
                     So funktioniert's
                 </button>
             </div>
             
-            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-4 text-center mt-2">
+            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center mt-2">
                <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
                <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
             </div>
           </div>
         )}
 
-        {/* TAB: URLAUB (EHEMALS SERVICE) */}
+        {/* TAB: URLAUB (Text angepasst) */}
         {activeTab === 'urlaub' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="mb-6 text-center">
@@ -308,8 +310,7 @@ export default function App() {
                     <Plane size={32} className="text-[#b5a48b]" />
                 </div>
                 <h2 className="text-3xl font-black tracking-tighter text-[#3A3A3A]">Urlaubsplanung</h2>
-                {/* Text angepasst wie gewünscht */}
-                <p className="text-xs text-gray-400 mt-2">Teilen Sie uns ihre Urlaube/Abwesenheiten mit.</p>
+                <p className="text-xs text-gray-400 mt-2 px-6">Teilen Sie uns ihre Urlaube/Abwesenheiten mit.</p>
             </div>
 
             <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
@@ -399,7 +400,6 @@ export default function App() {
           {activeModal === 'video' && (
              <div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center">
                  <button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 backdrop-blur-md p-2 rounded-full text-white z-20"><X size={20}/></button>
-                 {/* Hier YouTube Video oder eigenes Video einfügen */}
                  <div className="text-white text-center">
                      <PlayCircle size={64} className="mx-auto mb-4 opacity-50"/>
                      <p className="font-bold">Erklärvideo wird geladen...</p>
