@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, 
   Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
-  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play
+  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, FolderOpen, Plus
 } from 'lucide-react';
 
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -53,7 +53,8 @@ export default function App() {
   const [besuche, setBesuche] = useState<any[]>([]);
   
   // UI States für Modals & Uploads
-  const [activeModal, setActiveModal] = useState<'upload' | 'video' | 'ki-telefon' | null>(null);
+  // 'folder' ist neu für die Übersicht, 'upload' für das eigentliche Hochladen
+  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -147,18 +148,27 @@ export default function App() {
         setSentStatus('success');
         setSelectedFiles([]);
         setTimeout(() => { 
-            setActiveModal(null); 
+            // Gehe zurück zur Übersicht (Folder), nicht ganz zu
+            if (activeModal === 'upload') setActiveModal('folder');
+            else setActiveModal(null);
+            
             setSentStatus('idle'); 
             setUrlaubStart("");
             setUrlaubEnde("");
-        }, 2000);
+        }, 1500);
       }
     } catch (e) { setSentStatus('error'); }
     setIsSending(false);
   };
 
-  const openUploadModal = (type: 'Rechnung' | 'Leistungsnachweis') => {
+  // Öffnet den "Ordner" (Liste der Dateien)
+  const openFolderModal = (type: 'Rechnung' | 'Leistungsnachweis') => {
     setUploadContext(type);
+    setActiveModal('folder');
+  };
+
+  // Öffnet den Upload Dialog (vom Ordner aus)
+  const openUploadModal = () => {
     setSelectedFiles([]);
     setSentStatus('idle');
     setActiveModal('upload');
@@ -240,18 +250,18 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: HOCHLADEN (Größe: -10% vom Original, Play Button neu) */}
+        {/* TAB: HOCHLADEN */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="mb-5 text-center">
                 <h2 className="text-2xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
-                <p className="text-xs text-gray-400 mt-1">Senden Sie uns hier Ihre Unterlagen.</p>
+                <p className="text-xs text-gray-400 mt-1">Ihr Archiv & Upload für Nachweise.</p>
             </div>
             
             <div className="flex flex-col gap-4">
-              {/* BUTTON 1: LEISTUNGSNACHWEISE (Padding 7 = ca. 10% weniger als 8) */}
+              {/* BUTTON 1: LEISTUNGSNACHWEISE (Öffnet jetzt Ordner) */}
               <button 
-                onClick={() => openUploadModal('Leistungsnachweis')}
+                onClick={() => openFolderModal('Leistungsnachweis')}
                 className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
               >
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
@@ -259,16 +269,16 @@ export default function App() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Unterschrieben</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p>
                 </div>
                 <div className="bg-gray-50 p-3 rounded-full text-gray-300">
                   <ChevronRight size={20} />
                 </div>
               </button>
 
-              {/* BUTTON 2: RECHNUNGEN */}
+              {/* BUTTON 2: RECHNUNGEN (Öffnet jetzt Ordner) */}
               <button 
-                onClick={() => openUploadModal('Rechnung')}
+                onClick={() => openFolderModal('Rechnung')}
                 className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
               >
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
@@ -276,7 +286,7 @@ export default function App() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Foto oder PDF</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p>
                 </div>
                 <div className="bg-gray-50 p-3 rounded-full text-gray-300">
                   <ChevronRight size={20} />
@@ -284,7 +294,7 @@ export default function App() {
               </button>
             </div>
             
-            {/* VIDEO BUTTON DAZWISCHEN (Mit Play Symbol) */}
+            {/* VIDEO BUTTON */}
             <div className="flex justify-center py-2">
                 <button 
                     onClick={() => setActiveModal('video')}
@@ -302,7 +312,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: URLAUB (Text angepasst) */}
+        {/* TAB: URLAUB */}
         {activeTab === 'urlaub' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="mb-6 text-center">
@@ -314,59 +324,24 @@ export default function App() {
             </div>
 
             <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
-                
-                {/* START DATUM */}
                 <div className="space-y-2 text-left">
                     <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Von wann (Erster Tag)</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4">
                         <CalendarIcon size={20} className="text-gray-400 mr-3"/>
-                        <input 
-                            type="date" 
-                            value={urlaubStart} 
-                            onChange={(e) => setUrlaubStart(e.target.value)}
-                            className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold"
-                            style={{ colorScheme: 'light' }}
-                        />
+                        <input type="date" value={urlaubStart} onChange={(e) => setUrlaubStart(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} />
                     </div>
                 </div>
-
-                {/* ENDE DATUM */}
                 <div className="space-y-2 text-left">
                     <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Bis wann (Letzter Tag)</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4">
                         <CalendarIcon size={20} className="text-gray-400 mr-3"/>
-                        <input 
-                            type="date" 
-                            value={urlaubEnde} 
-                            onChange={(e) => setUrlaubEnde(e.target.value)}
-                            className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold"
-                            style={{ colorScheme: 'light' }}
-                        />
+                        <input type="date" value={urlaubEnde} onChange={(e) => setUrlaubEnde(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} />
                     </div>
                 </div>
-
-                {/* INFO BOX */}
-                {(urlaubStart && urlaubEnde) && (
-                    <div className="bg-[#dccfbc]/10 p-4 rounded-2xl text-center">
-                        <p className="text-[#b5a48b] text-xs font-bold">
-                            Zeitraum ausgewählt: {new Date(urlaubStart).toLocaleDateString()} - {new Date(urlaubEnde).toLocaleDateString()}
-                        </p>
-                    </div>
-                )}
-
-                <button 
-                    onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} 
-                    disabled={isSending || !urlaubStart || !urlaubEnde} 
-                    className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 mt-4"
-                >
-                    {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />}
-                    {sentStatus === 'success' ? 'Eingetragen!' : 'Urlaub eintragen'}
-                </button>
+                {(urlaubStart && urlaubEnde) && (<div className="bg-[#dccfbc]/10 p-4 rounded-2xl text-center"><p className="text-[#b5a48b] text-xs font-bold">Zeitraum ausgewählt: {new Date(urlaubStart).toLocaleDateString()} - {new Date(urlaubEnde).toLocaleDateString()}</p></div>)}
+                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 mt-4">{isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />}{sentStatus === 'success' ? 'Eingetragen!' : 'Urlaub eintragen'}</button>
             </div>
-
-            <p className="text-[10px] text-gray-300 text-center px-10">
-                Hinweis: Pflegeeinsätze werden für diesen Zeitraum automatisch pausiert.
-            </p>
+            <p className="text-[10px] text-gray-300 text-center px-10">Hinweis: Pflegeeinsätze werden für diesen Zeitraum automatisch pausiert.</p>
           </div>
         )}
       </main>
@@ -381,12 +356,7 @@ export default function App() {
 
       {/* NAVIGATION */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-gray-50 flex justify-around p-5 pb-11 rounded-t-[3rem] shadow-2xl z-50">
-        {[
-          { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, 
-          { id: 'planer', icon: CalendarDays, label: 'Planer' }, 
-          { id: 'hochladen', icon: Upload, label: 'Hochladen' }, 
-          { id: 'urlaub', icon: Plane, label: 'Urlaub' }
-        ].map((tab) => (
+        {[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Hochladen' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><tab.icon size={22} strokeWidth={activeTab === tab.id ? 3 : 2} /><span className="text-[10px] font-black uppercase tracking-tighter">{tab.label}</span></button>
         ))}
       </nav>
@@ -412,10 +382,49 @@ export default function App() {
              <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 backdrop-blur-md p-3 rounded-full text-white"><X/></button></div>
           )}
 
-          {/* UPLOAD MODAL */}
+          {/* FOLDER MODAL (DATEI ÜBERSICHT) */}
+          {activeModal === 'folder' && (
+             <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left flex flex-col">
+                 <div className="flex justify-between items-center mb-6 pl-2">
+                    <div>
+                        <h3 className="text-2xl font-black text-[#3A3A3A]">{uploadContext}</h3>
+                        <p className="text-xs text-gray-400">Archiv & Upload</p>
+                    </div>
+                    <button onClick={() => setActiveModal(null)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+                 </div>
+                 
+                 {/* 1. BUTTON: NEUES DOKUMENT */}
+                 <button onClick={openUploadModal} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2 mb-6 active:scale-95 transition-all">
+                    <Plus size={20} />
+                    Neues Dokument
+                 </button>
+
+                 {/* 2. LISTE DER BISHERIGEN DATEIEN (Platzhalter) */}
+                 <div className="flex-1 overflow-y-auto space-y-3 pb-10">
+                    <p className="text-[10px] font-black uppercase text-gray-300 pl-2">Bisher hochgeladen</p>
+                    {/* Beispielhafte Einträge - hier später echte Daten mappen */}
+                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50">
+                        <div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div>
+                        <div>
+                            <p className="font-bold text-gray-500 text-sm">Beispiel_{uploadContext}_01.pdf</p>
+                            <p className="text-[10px] text-gray-400">20.01.2024</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50">
+                        <div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div>
+                        <div>
+                            <p className="font-bold text-gray-500 text-sm">Scan_2023_12.jpg</p>
+                            <p className="text-[10px] text-gray-400">15.12.2023</p>
+                        </div>
+                    </div>
+                 </div>
+             </div>
+          )}
+
+          {/* UPLOAD MODAL (Eigentlicher Upload) */}
           {activeModal === 'upload' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
-              <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+              <button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
               <div className="space-y-6">
                 <h3 className="text-xl font-black flex items-center gap-3">
                   {uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} 
@@ -424,7 +433,7 @@ export default function App() {
                 <div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative">
                   <input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" />
                   <Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/>
-                  <p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Klicken zum Hochladen"}</p>
+                  <p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p>
                 </div>
                 <button 
                   onClick={() => submitData(uploadContext + '-Upload', 'Datei Upload')} 
