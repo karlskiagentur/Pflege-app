@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, 
   Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
-  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane
+  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play
 } from 'lucide-react';
 
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -128,7 +128,7 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
-  // Allgemeine Submit Funktion (für Uploads und Urlaub)
+  // Allgemeine Submit Funktion
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
     try {
@@ -138,9 +138,6 @@ export default function App() {
       formData.append('typ', type);
       formData.append('nachricht', payload);
       
-      // Falls Files da sind (für Upload Tab)
-      // selectedFiles.forEach(f => formData.append('files', f));
-
       const response = await fetch(`${N8N_BASE_URL}/service_submit`, { 
         method: 'POST', 
         body: formData 
@@ -152,7 +149,6 @@ export default function App() {
         setTimeout(() => { 
             setActiveModal(null); 
             setSentStatus('idle'); 
-            // Reset Urlaub Form
             setUrlaubStart("");
             setUrlaubEnde("");
         }, 2000);
@@ -197,7 +193,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-md mx-auto px-6 pt-8">
+      <main className="max-w-md mx-auto px-6 pt-6">
         
         {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
@@ -244,64 +240,62 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: HOCHLADEN */}
+        {/* TAB: HOCHLADEN (Optimiert für iPhone 14 / Mobile) */}
         {activeTab === 'hochladen' && (
-          <div className="space-y-8 animate-in fade-in">
-            <div className="mb-6 text-center">
-                <h2 className="text-3xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
-                <p className="text-xs text-gray-400 mt-2">Laden Sie hier Nachweise und Rechnungen direkt hoch.</p>
+          <div className="space-y-4 animate-in fade-in">
+            <div className="mb-4 text-center">
+                <h2 className="text-2xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
+                <p className="text-xs text-gray-400 mt-1">Senden Sie uns hier Ihre Unterlagen.</p>
             </div>
             
-            <div className="flex flex-col gap-5">
-              {/* BUTTON 1: LEISTUNGSNACHWEISE */}
+            <div className="flex flex-col gap-3">
+              {/* BUTTON 1: LEISTUNGSNACHWEISE (Kompakt) */}
               <button 
                 onClick={() => openUploadModal('Leistungsnachweis')}
-                className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 flex items-center gap-6 active:scale-95 transition-all text-left"
+                className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-50 flex items-center gap-4 active:scale-95 transition-all text-left"
               >
-                <div className="bg-[#dccfbc]/20 p-5 rounded-3xl text-[#b5a48b]">
-                  <FileCheck size={40} strokeWidth={1.5} />
+                <div className="bg-[#dccfbc]/20 p-3 rounded-2xl text-[#b5a48b] shrink-0">
+                  <FileCheck size={32} strokeWidth={1.5} />
                 </div>
-                <div>
-                  <h3 className="text-xl font-black text-[#3A3A3A]">Leistungs-<br/>nachweise</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Unterschrieben hochladen</p>
+                <div className="flex-1">
+                  <h3 className="text-lg font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3>
                 </div>
-                <div className="ml-auto bg-gray-50 p-3 rounded-full text-gray-300">
-                  <ChevronRight size={20} />
+                <div className="bg-gray-50 p-2 rounded-full text-gray-300">
+                  <ChevronRight size={18} />
                 </div>
               </button>
 
-              {/* BUTTON 2: RECHNUNGEN */}
+              {/* BUTTON 2: RECHNUNGEN (Kompakt) */}
               <button 
                 onClick={() => openUploadModal('Rechnung')}
-                className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-50 flex items-center gap-6 active:scale-95 transition-all text-left"
+                className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-50 flex items-center gap-4 active:scale-95 transition-all text-left"
               >
-                <div className="bg-[#dccfbc]/20 p-5 rounded-3xl text-[#b5a48b]">
-                  <Euro size={40} strokeWidth={1.5} />
+                <div className="bg-[#dccfbc]/20 p-3 rounded-2xl text-[#b5a48b] shrink-0">
+                  <Euro size={32} strokeWidth={1.5} />
                 </div>
-                <div>
-                  <h3 className="text-xl font-black text-[#3A3A3A]">Rechnungen<br/>einreichen</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Hier Foto/PDF senden</p>
+                <div className="flex-1">
+                  <h3 className="text-lg font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3>
                 </div>
-                <div className="ml-auto bg-gray-50 p-3 rounded-full text-gray-300">
-                  <ChevronRight size={20} />
+                <div className="bg-gray-50 p-2 rounded-full text-gray-300">
+                  <ChevronRight size={18} />
                 </div>
               </button>
             </div>
             
-            {/* NEU: VIDEO BUTTON DAZWISCHEN */}
-            <div className="flex justify-center -my-2">
+            {/* VIDEO BUTTON DAZWISCHEN (Mit Play Taste) */}
+            <div className="flex justify-center py-2">
                 <button 
                     onClick={() => setActiveModal('video')}
-                    className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"
+                    className="flex items-center gap-2 bg-white px-5 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"
                 >
-                    <PlayCircle size={16} fill="#b5a48b" className="text-white"/> 
+                    <PlayCircle size={20} fill="#b5a48b" className="text-white"/> 
                     So funktioniert's
                 </button>
             </div>
             
-            <div className="bg-[#dccfbc]/10 rounded-[2rem] p-6 text-center mt-4">
+            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-4 text-center mt-2">
                <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
-               <button onClick={()=>setActiveModal('ki-telefon')} className="mt-2 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+               <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
             </div>
           </div>
         )}
@@ -314,7 +308,8 @@ export default function App() {
                     <Plane size={32} className="text-[#b5a48b]" />
                 </div>
                 <h2 className="text-3xl font-black tracking-tighter text-[#3A3A3A]">Urlaubsplanung</h2>
-                <p className="text-xs text-gray-400 mt-2">Teilen Sie uns mit, wann der Patient abwesend ist.</p>
+                {/* Text angepasst wie gewünscht */}
+                <p className="text-xs text-gray-400 mt-2">Teilen Sie uns ihre Urlaube/Abwesenheiten mit.</p>
             </div>
 
             <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
@@ -389,7 +384,7 @@ export default function App() {
           { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, 
           { id: 'planer', icon: CalendarDays, label: 'Planer' }, 
           { id: 'hochladen', icon: Upload, label: 'Hochladen' }, 
-          { id: 'urlaub', icon: Plane, label: 'Urlaub' } // UPDATED: Service -> Urlaub
+          { id: 'urlaub', icon: Plane, label: 'Urlaub' }
         ].map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><tab.icon size={22} strokeWidth={activeTab === tab.id ? 3 : 2} /><span className="text-[10px] font-black uppercase tracking-tighter">{tab.label}</span></button>
         ))}
@@ -408,8 +403,6 @@ export default function App() {
                  <div className="text-white text-center">
                      <PlayCircle size={64} className="mx-auto mb-4 opacity-50"/>
                      <p className="font-bold">Erklärvideo wird geladen...</p>
-                     {/* Beispiel für YouTube Embed: */}
-                     {/* <iframe width="100%" height="100%" src="https://www.youtube.com/embed/VIDEO_ID" frameBorder="0" allow="autoplay; encrypted-media" allowFullScreen className="absolute inset-0"></iframe> */}
                  </div>
              </div>
           )}
