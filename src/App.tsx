@@ -4,7 +4,7 @@ import {
   Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, FolderOpen, Plus,
-  CheckCircle2, Circle
+  CheckCircle2, Circle, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -65,12 +65,17 @@ export default function App() {
   const [urlaubStart, setUrlaubStart] = useState("");
   const [urlaubEnde, setUrlaubEnde] = useState("");
 
-  // AUFGABEN STATE (Neu)
+  // AUFGABEN STATE (Erweitert für Demo)
   const [tasks, setTasks] = useState([
     { id: 1, text: "Versichertenkarte einreichen", done: false },
     { id: 2, text: "Pflegeprotokoll unterschreiben", done: false },
-    { id: 3, text: "Termin mit MDK bestätigen", done: true }
+    { id: 3, text: "Termin mit MDK bestätigen", done: true },
+    { id: 4, text: "Rezeptupload: Blutdrucksenker", done: false },
+    { id: 5, text: "Sturzprotokoll ausfüllen", done: false },
+    { id: 6, text: "Beratungseinsatz buchen", done: false }, // Nr. 6 (wird ausgeblendet)
+    { id: 7, text: "Adressdaten aktualisieren", done: true }   // Nr. 7 (wird ausgeblendet)
   ]);
+  const [showAllTasks, setShowAllTasks] = useState(false);
 
   // Draggable Button Logic
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
@@ -195,6 +200,11 @@ export default function App() {
     );
   }
 
+  // --- LOGIC FÜR AUFGABEN ANZEIGE ---
+  const openTasksCount = tasks.filter(t => !t.done).length;
+  // Zeige entweder alle, oder nur die ersten 5
+  const visibleTasks = showAllTasks ? tasks : tasks.slice(0, 5);
+
   return (
     <div 
       className="min-h-screen bg-white font-sans pb-32 text-[#3A3A3A] text-left select-none"
@@ -220,15 +230,18 @@ export default function App() {
                <div className="bg-white/20 p-4 rounded-2xl"><CalendarIcon size={28}/></div>
             </div>
 
-            {/* NEU: AUFGABEN LISTE */}
+            {/* AUFGABEN LISTE (Dynamisch: Max 5, dann Button) */}
             <section className="space-y-4">
-              <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Wichtige Aufgaben für Sie</h3>
+              <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">
+                Wichtige Aufgaben für Sie <span className="text-[#b5a48b]">({openTasksCount} offen)</span>
+              </h3>
               <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">
-                 {tasks.map((task) => (
+                 {/* Liste der Aufgaben */}
+                 {visibleTasks.map((task) => (
                     <button 
                         key={task.id} 
                         onClick={() => toggleTask(task.id)}
-                        className="w-full flex items-center gap-3 text-left group"
+                        className="w-full flex items-center gap-3 text-left group animate-in fade-in"
                     >
                         <div className={`transition-all ${task.done ? 'text-[#dccfbc]' : 'text-gray-300 group-hover:text-[#b5a48b]'}`}>
                             {task.done ? <CheckCircle2 size={24} fill="#F9F7F4"/> : <Circle size={24} strokeWidth={1.5} />}
@@ -238,8 +251,24 @@ export default function App() {
                         </span>
                     </button>
                  ))}
+                 
+                 {/* Empty State */}
                  {tasks.every(t => t.done) && (
                      <p className="text-[10px] text-[#b5a48b] font-bold text-center pt-2">Alles erledigt! Vielen Dank.</p>
+                 )}
+
+                 {/* "Weitere anzeigen" Button (nur wenn mehr als 5 Aufgaben existieren) */}
+                 {tasks.length > 5 && (
+                     <button 
+                        onClick={() => setShowAllTasks(!showAllTasks)}
+                        className="w-full text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] pt-3 pb-1 border-t border-gray-50 mt-2 flex items-center justify-center gap-1"
+                     >
+                        {showAllTasks ? (
+                             <><ChevronUp size={12} /> Weniger anzeigen</>
+                        ) : (
+                             <><ChevronDown size={12} /> {tasks.length - 5} weitere Aufgaben</>
+                        )}
+                     </button>
                  )}
               </div>
             </section>
