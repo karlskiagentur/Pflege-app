@@ -6,7 +6,7 @@ import {
   CheckCircle2, Circle, ChevronDown, ChevronUp
 } from 'lucide-react';
 
-// WICHTIG: Dein n8n Workflow muss auf "Active" (Grün) stehen!
+// STELLE SICHER: Dein n8n Workflow 'get_tasks' und 'update_task' muss ACTIVE sein.
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
 const unbox = (val: any): string => {
@@ -39,7 +39,7 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // --- DATEN LADEN (GET) ---
+  // --- DATEN LADEN ---
   const fetchData = async () => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -55,14 +55,14 @@ export default function App() {
       const jsonP = await resP.json(); 
       const jsonC = await resC.json();
       const jsonB = await resB.json(); 
-      const jsonT = await resT.json(); // Hier kommen die Aufgaben
+      const jsonT = await resT.json();
 
       if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
       const extract = (json: any) => {
         if (!json) return [];
+        // n8n Aggregate Node Struktur entpacken
         if (json.data && Array.isArray(json.data)) {
-           // Fall: n8n schachtelt Daten manchmal tief
            if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
            return json.data;
         }
@@ -73,18 +73,19 @@ export default function App() {
       setContactData(extract(jsonC));
       setBesuche(extract(jsonB));
       
-      // --- AUFGABEN INTELLIGENT VERARBEITEN ---
+      // --- AUFGABEN MAPPING ---
       const rawTasks = extract(jsonT);
       const mappedTasks = rawTasks.map((t: any) => {
-        // n8n liefert Daten manchmal flach oder im 'fields' Objekt
-        // Wir prüfen beides, damit es garantiert klappt.
-        const text = t.fields?.Aufgabentext || t.Aufgabentext || t.text || "Aufgabe ohne Titel";
-        const status = t.fields?.Status || t.Status || "";
+        // Wir prüfen 'fields' und die direkte Ebene
+        const data = t.fields || t; 
+        
+        // Hier ist der entscheidende Punkt: Wir lesen exakt 'Aufgabentext'
+        const textValue = data.Aufgabentext || data.text || "Aufgabe ohne Titel";
         
         return {
-          id: t.id, // Die echte Record-ID (rec...)
-          text: unbox(text),
-          done: unbox(status) === "Erledigt"
+          id: t.id, // Record ID von Airtable
+          text: unbox(textValue),
+          done: unbox(data.Status) === "Erledigt"
         };
       });
       setTasks(mappedTasks);
@@ -95,28 +96,23 @@ export default function App() {
 
   useEffect(() => { if (patientId) fetchData(); }, [patientId]);
 
-  // --- AUFGABE UPDATE (POST) ---
+  // --- AUFGABE UPDATE ---
   const toggleTask = async (id: string, currentStatus: boolean) => {
-    // 1. Sofort in der App anzeigen (schnelles Feedback)
+    // 1. UI sofort ändern
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
 
     try {
-      // 2. An n8n senden (Hintergrund)
+      // 2. n8n informieren
       await fetch(`${N8N_BASE_URL}/update_task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId: id, done: !currentStatus })
       });
-      // 3. Kurz warten und neu laden zur Sicherheit
+      // 3. Neuladen zur Sicherheit
       setTimeout(fetchData, 1000);
-    } catch (e) { 
-        console.error("Sync Fehler:", e); 
-        // Falls Fehler: Rückgängig machen (optional)
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, done: currentStatus } : t));
-    }
+    } catch (e) { console.error("Update Fehler:", e); }
   };
 
-  // --- LOGIN & UPLOAD LOGIK ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -220,7 +216,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in">
             <h2 className="text-3xl font-black">Besuchs-Planer</h2>
@@ -237,7 +232,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: HOCHLADEN */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="mb-5 text-center"><h2 className="text-2xl font-black">Dokumente</h2><p className="text-xs text-gray-400 mt-1">Ihr Archiv & Upload</p></div>
@@ -260,7 +254,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: URLAUB */}
         {activeTab === 'urlaub' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="text-center mb-6">
@@ -284,17 +277,17 @@ export default function App() {
         )}
       </main>
 
-      {/* NAVIGATION */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">
         {[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} /><span className="text-[9px] font-black uppercase">{t.label}</span></button>
+          <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}>
+            <t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} />
+            <span className="text-[9px] font-black uppercase">{t.label}</span>
+          </button>
         ))}
       </nav>
 
-      {/* KI BUTTON */}
       <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-16 h-16 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform"><Mic size={24} fill="white" /><span className="text-[8px] font-bold mt-0.5">KI Hilfe</span></button>
 
-      {/* MODALS */}
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
