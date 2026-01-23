@@ -6,16 +6,39 @@ import {
   CheckCircle2, Circle, ChevronDown, ChevronUp
 } from 'lucide-react';
 
-// STELLE SICHER: Dein n8n Workflow 'get_tasks' und 'update_task' muss ACTIVE sein.
+// Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
+// --- HELFER-FUNKTIONEN ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
   if (Array.isArray(val)) return unbox(val[0]);
   return String(val);
 };
 
+const formatDate = (raw: any, short = false) => {
+  const val = unbox(raw);
+  if (!val || val === "-") return "-";
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    if (short) { 
+      const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
+      return days[d.getDay()]; 
+    }
+    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+  } catch { return val; }
+};
+
+const formatTime = (raw: any) => {
+  const val = unbox(raw);
+  if (!val) return "--:--";
+  if (val.includes('T')) return val.split('T')[1].substring(0, 5);
+  return val.substring(0, 5);
+};
+
 export default function App() {
+  // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -23,23 +46,39 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   
+  // Daten States
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [showAllTasks, setShowAllTasks] = useState(false);
 
+  // UI States
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  // Urlaub States
   const [urlaubStart, setUrlaubStart] = useState("");
   const [urlaubEnde, setUrlaubEnde] = useState("");
+
+  // KI Button Logic
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // --- DATEN LADEN ---
+  const handleDrag = (e: any) => {
+    if (!isDragging.current) return;
+    const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+    const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+    setKiPos({
+      x: Math.max(10, window.innerWidth - clientX - 40),
+      y: Math.max(10, window.innerHeight - clientY - 40)
+    });
+  };
+
+  // --- DATEN LADEN (GET) ---
   const fetchData = async () => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -61,8 +100,8 @@ export default function App() {
       
       const extract = (json: any) => {
         if (!json) return [];
-        // n8n Aggregate Node Struktur entpacken
         if (json.data && Array.isArray(json.data)) {
+           // Fallback falls n8n doch mal aggregiert
            if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
            return json.data;
         }
@@ -71,17 +110,14 @@ export default function App() {
       };
 
       setContactData(extract(jsonC));
-      setBesuche(extract(jsonB));
+      setBesuche(extract(jsonB).sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
       
-      // --- AUFGABEN MAPPING ---
+      // AUFGABEN MAPPING (Robust)
       const rawTasks = extract(jsonT);
       const mappedTasks = rawTasks.map((t: any) => {
-        // Wir prüfen 'fields' und die direkte Ebene
+        // Daten liegen meist in 'fields' wenn sie direkt aus Airtable kommen
         const data = t.fields || t; 
-        
-        // Hier ist der entscheidende Punkt: Wir lesen exakt 'Aufgabentext'
-        const textValue = data.Aufgabentext || data.text || "Aufgabe ohne Titel";
-        
+        const textValue = data.Aufgabentext || data.text || "Aufgabe";
         return {
           id: t.id, // Record ID von Airtable
           text: unbox(textValue),
@@ -96,23 +132,20 @@ export default function App() {
 
   useEffect(() => { if (patientId) fetchData(); }, [patientId]);
 
-  // --- AUFGABE UPDATE ---
+  // --- AUFGABE UPDATE (POST) ---
   const toggleTask = async (id: string, currentStatus: boolean) => {
-    // 1. UI sofort ändern
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
-
     try {
-      // 2. n8n informieren
       await fetch(`${N8N_BASE_URL}/update_task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId: id, done: !currentStatus })
       });
-      // 3. Neuladen zur Sicherheit
       setTimeout(fetchData, 1000);
     } catch (e) { console.error("Update Fehler:", e); }
   };
 
+  // --- LOGIN & UPLOAD LOGIK ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -145,11 +178,14 @@ export default function App() {
         if (activeModal === 'upload') setActiveModal('folder');
         else setActiveModal(null);
         setSentStatus('idle');
+        setUrlaubStart("");
+        setUrlaubEnde("");
       }, 1500);
     } catch (e) { setSentStatus('error'); }
     setIsSending(false);
   };
 
+  // --- RENDER ---
   if (!patientId) {
     return (
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
@@ -167,7 +203,11 @@ export default function App() {
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, 5);
 
   return (
-    <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]">
+    <div 
+      className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]"
+      onMouseMove={handleDrag} onTouchMove={handleDrag}
+      onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}
+    >
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
@@ -177,6 +217,8 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
+        
+        {/* TAB: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
@@ -184,6 +226,7 @@ export default function App() {
                <CalendarIcon size={28}/>
             </div>
 
+            {/* AUFGABEN LISTE */}
             <section className="space-y-4">
               <div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4">
                   <h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>
@@ -195,7 +238,7 @@ export default function App() {
                         {t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}
                         <span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span>
                     </button>
-                 )) : <p className="text-center text-gray-300 py-4 italic text-xs">Alles erledigt oder keine Aufgaben.</p>}
+                 )) : <p className="text-center text-gray-300 py-4 italic text-xs">Aktuell keine Aufgaben.</p>}
                  
                  {tasks.length > 5 && (
                    <button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">
@@ -213,25 +256,42 @@ export default function App() {
                 <div><p className="text-gray-400">Anschrift</p><p className="font-bold">{unbox(patientData?.Anschrift)}</p></div>
               </div>
             </section>
+            
+            <section className="space-y-6">
+              <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3>
+              <div className="space-y-3">
+                {contactData.map((c: any, i: number) => (
+                  <div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(c.Name)[0]}</div>
+                      <div className="text-left"><p className="font-black text-lg leading-tight">{unbox(c.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(c['Rolle/Funktion'])}</p></div>
+                    </div>
+                    {unbox(c.Telefon) && <a href={`tel:${unbox(c.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
         )}
 
+        {/* TAB: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in">
-            <h2 className="text-3xl font-black">Besuchs-Planer</h2>
+            <h2 className="text-3xl font-black tracking-tighter">Besuchs-Planer</h2>
             {besuche.map((b, i) => (
               <div key={i} className="bg-white rounded-[2rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100 text-left">
-                <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{(unbox(b.Uhrzeit)).substring(0,5)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
-                <div className="flex-1 border-l pl-5">
-                  <p className="font-black text-lg">{unbox(b.Tätigkeit)}</p>
-                  <p className="text-xs text-gray-500 mt-1">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p>
-                  <p className="text-[10px] text-[#b5a48b] mt-2 font-bold uppercase">Am {formatDate(b.Datum)}</p>
+                <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
+                <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                  <p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p>
+                  <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
+                  <p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p>
                 </div>
               </div>
             ))}
           </div>
         )}
 
+        {/* TAB: HOCHLADEN */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="mb-5 text-center"><h2 className="text-2xl font-black">Dokumente</h2><p className="text-xs text-gray-400 mt-1">Ihr Archiv & Upload</p></div>
@@ -254,6 +314,7 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB: URLAUB */}
         {activeTab === 'urlaub' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="text-center mb-6">
@@ -277,6 +338,7 @@ export default function App() {
         )}
       </main>
 
+      {/* NAVIGATION */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">
         {[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}>
@@ -286,8 +348,10 @@ export default function App() {
         ))}
       </nav>
 
+      {/* KI BUTTON */}
       <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-16 h-16 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform"><Mic size={24} fill="white" /><span className="text-[8px] font-bold mt-0.5">KI Hilfe</span></button>
 
+      {/* MODALS */}
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
