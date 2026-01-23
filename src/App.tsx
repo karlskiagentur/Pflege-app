@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 // STELLE SICHER, DASS DIESE URL KORREKT IST
-const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
+const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook/update_task';
 
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
