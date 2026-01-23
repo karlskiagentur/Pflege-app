@@ -249,7 +249,8 @@ export default function App() {
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm">
                 <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{unbox(patientData?.Geburtsdatum)}</span></div>
                 <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div>
-                <div><p className="text-gray-400">Anschrift</p><p className="font-bold">{unbox(patientData?.Anschrift)}</p></div>
+                {/* KORREKTUR 1: Anschrift Farbe explizit auf Schwarz */}
+                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div>
               </div>
             </section>
             
@@ -273,7 +274,12 @@ export default function App() {
         {/* TAB: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in">
-            <h2 className="text-3xl font-black tracking-tighter">Besuchs-Planer</h2>
+            {/* KORREKTUR 2: Planer Header vereinheitlicht */}
+            <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
+                <h2 className="text-3xl font-black">Besuchs-Planer</h2>
+                <p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p>
+            </div>
             {besuche.map((b, i) => (
               <div key={i} className="bg-white rounded-[2rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100 text-left">
                 <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
@@ -290,7 +296,12 @@ export default function App() {
         {/* TAB: HOCHLADEN */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
-            <div className="mb-5 text-center"><h2 className="text-2xl font-black">Dokumente</h2><p className="text-xs text-gray-400 mt-1">Ihr Archiv & Upload</p></div>
+            {/* KORREKTUR 2: Upload Header vereinheitlicht */}
+            <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
+                <h2 className="text-3xl font-black">Dokumente</h2>
+                <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
+            </div>
             <div className="flex flex-col gap-4">
               <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
@@ -304,7 +315,6 @@ export default function App() {
               </button>
             </div>
             
-            {/* 10% Vergrößert & Zentriert */}
             <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
                 <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
                     <Play size={14} fill="#b5a48b" /> So funktioniert's
@@ -334,7 +344,7 @@ export default function App() {
                     <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                {/* KORRIGIERTER BUTTON: Flex, zentriert, symmetrisch */}
+                {/* KORREKTUR 3: Urlaub Button symmetrisch */}
                 <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
                     {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} 
                     <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
@@ -355,7 +365,7 @@ export default function App() {
         ))}
       </nav>
 
-      {/* KI BUTTON (Vergrößert + 24h Text) */}
+      {/* KI BUTTON */}
       <button 
         onMouseDown={() => isDragging.current = true} 
         onTouchStart={() => isDragging.current = true} 
