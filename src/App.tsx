@@ -101,7 +101,6 @@ export default function App() {
       const extract = (json: any) => {
         if (!json) return [];
         if (json.data && Array.isArray(json.data)) {
-           // Fallback falls n8n doch mal aggregiert
            if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
            return json.data;
         }
@@ -112,14 +111,13 @@ export default function App() {
       setContactData(extract(jsonC));
       setBesuche(extract(jsonB).sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
       
-      // AUFGABEN MAPPING (Robust)
+      // AUFGABEN MAPPING
       const rawTasks = extract(jsonT);
       const mappedTasks = rawTasks.map((t: any) => {
-        // Daten liegen meist in 'fields' wenn sie direkt aus Airtable kommen
         const data = t.fields || t; 
         const textValue = data.Aufgabentext || data.text || "Aufgabe";
         return {
-          id: t.id, // Record ID von Airtable
+          id: t.id,
           text: unbox(textValue),
           done: unbox(data.Status) === "Erledigt"
         };
@@ -185,7 +183,6 @@ export default function App() {
     setIsSending(false);
   };
 
-  // --- RENDER ---
   if (!patientId) {
     return (
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
@@ -226,7 +223,6 @@ export default function App() {
                <CalendarIcon size={28}/>
             </div>
 
-            {/* AUFGABEN LISTE */}
             <section className="space-y-4">
               <div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4">
                   <h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>
@@ -238,7 +234,7 @@ export default function App() {
                         {t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}
                         <span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span>
                     </button>
-                 )) : <p className="text-center text-gray-300 py-4 italic text-xs">Aktuell keine Aufgaben.</p>}
+                 )) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}
                  
                  {tasks.length > 5 && (
                    <button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">
@@ -307,10 +303,17 @@ export default function App() {
                 <ChevronRight className="text-gray-300" />
               </button>
             </div>
-            <div className="flex justify-center pt-4">
-                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"><Play size={14} fill="#b5a48b" /> So funktioniert's</button>
+            
+            {/* 10% Vergrößert & Zentriert */}
+            <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
+                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
+                    <Play size={14} fill="#b5a48b" /> So funktioniert's
+                </button>
+                <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs">
+                    <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
+                    <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+                </div>
             </div>
-            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center mt-2"><p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p><button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button></div>
           </div>
         )}
 
@@ -331,7 +334,11 @@ export default function App() {
                     <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all">{isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} {sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</button>
+                {/* KORRIGIERTER BUTTON: Flex, zentriert, symmetrisch */}
+                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
+                    {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} 
+                    <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
+                </button>
             </div>
             <p className="text-[10px] text-gray-300 text-center px-10">Hinweis: Einsätze pausieren in diesem Zeitraum.</p>
           </div>
@@ -348,8 +355,17 @@ export default function App() {
         ))}
       </nav>
 
-      {/* KI BUTTON */}
-      <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-16 h-16 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform"><Mic size={24} fill="white" /><span className="text-[8px] font-bold mt-0.5">KI Hilfe</span></button>
+      {/* KI BUTTON (Vergrößert + 24h Text) */}
+      <button 
+        onMouseDown={() => isDragging.current = true} 
+        onTouchStart={() => isDragging.current = true} 
+        onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} 
+        style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} 
+        className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform cursor-move"
+      >
+        <Mic size={24} fill="white" />
+        <span className="text-[9px] font-bold mt-0.5 leading-tight text-center">24h<br/>KI Hilfe</span>
+      </button>
 
       {/* MODALS */}
       {activeModal && (
