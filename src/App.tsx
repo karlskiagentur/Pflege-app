@@ -6,7 +6,7 @@ import {
   CheckCircle2, Circle, ChevronDown, ChevronUp
 } from 'lucide-react';
 
-// Deine n8n Live-URL
+// Deine n8n Live-URL (muss ACTIVE sein)
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
 // --- HELFER-FUNKTIONEN ---
@@ -143,7 +143,7 @@ export default function App() {
     } catch (e) { console.error("Update Fehler:", e); }
   };
 
-  // --- LOGIN & UPLOAD LOGIK ---
+  // --- LOGIN LOGIK ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -162,15 +162,30 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
+  // --- SUBMIT LOGIK (FILE & TEXT) ---
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
       formData.append('patientName', unbox(patientData?.Name));
-      formData.append('typ', type);
-      formData.append('nachricht', payload);
-      await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+      
+      // ENTSCHEIDUNG: Datei-Upload oder Text-Nachricht?
+      if (activeModal === 'upload' && selectedFiles.length > 0) {
+          // --- DATEI UPLOAD (Google Drive & Airtable Dokumente) ---
+          formData.append('typ', type.replace('-Upload', '')); // "Rechnung-Upload" -> "Rechnung"
+          formData.append('file', selectedFiles[0]); // Wir senden die erste Datei
+          
+          await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
+      } else {
+          // --- TEXT NACHRICHT (Urlaub etc.) ---
+          formData.append('typ', type);
+          formData.append('nachricht', payload);
+          
+          await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+      }
+
+      // Erfolgsbehandlung
       setSentStatus('success');
       setTimeout(() => { 
         if (activeModal === 'upload') setActiveModal('folder');
@@ -178,8 +193,12 @@ export default function App() {
         setSentStatus('idle');
         setUrlaubStart("");
         setUrlaubEnde("");
+        setSelectedFiles([]);
       }, 1500);
-    } catch (e) { setSentStatus('error'); }
+    } catch (e) { 
+        console.error(e); 
+        setSentStatus('error'); 
+    }
     setIsSending(false);
   };
 
@@ -249,7 +268,6 @@ export default function App() {
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm">
                 <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{unbox(patientData?.Geburtsdatum)}</span></div>
                 <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div>
-                {/* KORREKTUR 1: Anschrift Farbe explizit auf Schwarz */}
                 <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div>
               </div>
             </section>
@@ -274,7 +292,6 @@ export default function App() {
         {/* TAB: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in">
-            {/* KORREKTUR 2: Planer Header vereinheitlicht */}
             <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
                 <h2 className="text-3xl font-black">Besuchs-Planer</h2>
@@ -296,7 +313,6 @@ export default function App() {
         {/* TAB: HOCHLADEN */}
         {activeTab === 'hochladen' && (
           <div className="space-y-4 animate-in fade-in">
-            {/* KORREKTUR 2: Upload Header vereinheitlicht */}
             <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
                 <h2 className="text-3xl font-black">Dokumente</h2>
@@ -344,7 +360,6 @@ export default function App() {
                     <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                {/* KORREKTUR 3: Urlaub Button symmetrisch */}
                 <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
                     {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} 
                     <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
