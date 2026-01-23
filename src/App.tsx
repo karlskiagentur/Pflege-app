@@ -3,7 +3,8 @@ import {
   LayoutDashboard, CalendarDays, 
   Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
-  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, FolderOpen, Plus
+  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, FolderOpen, Plus,
+  CheckCircle2, Circle
 } from 'lucide-react';
 
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -52,8 +53,7 @@ export default function App() {
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
   
-  // UI States für Modals & Uploads
-  // 'folder' ist neu für die Übersicht, 'upload' für das eigentliche Hochladen
+  // UI States
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   
@@ -64,6 +64,13 @@ export default function App() {
   // URLAUB STATE
   const [urlaubStart, setUrlaubStart] = useState("");
   const [urlaubEnde, setUrlaubEnde] = useState("");
+
+  // AUFGABEN STATE (Neu)
+  const [tasks, setTasks] = useState([
+    { id: 1, text: "Versichertenkarte einreichen", done: false },
+    { id: 2, text: "Pflegeprotokoll unterschreiben", done: false },
+    { id: 3, text: "Termin mit MDK bestätigen", done: true }
+  ]);
 
   // Draggable Button Logic
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
@@ -129,7 +136,6 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
-  // Allgemeine Submit Funktion
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
     try {
@@ -148,10 +154,8 @@ export default function App() {
         setSentStatus('success');
         setSelectedFiles([]);
         setTimeout(() => { 
-            // Gehe zurück zur Übersicht (Folder), nicht ganz zu
             if (activeModal === 'upload') setActiveModal('folder');
             else setActiveModal(null);
-            
             setSentStatus('idle'); 
             setUrlaubStart("");
             setUrlaubEnde("");
@@ -161,17 +165,19 @@ export default function App() {
     setIsSending(false);
   };
 
-  // Öffnet den "Ordner" (Liste der Dateien)
   const openFolderModal = (type: 'Rechnung' | 'Leistungsnachweis') => {
     setUploadContext(type);
     setActiveModal('folder');
   };
 
-  // Öffnet den Upload Dialog (vom Ordner aus)
   const openUploadModal = () => {
     setSelectedFiles([]);
     setSentStatus('idle');
     setActiveModal('upload');
+  };
+
+  const toggleTask = (id: number) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
   };
 
   if (!patientId) {
@@ -208,10 +214,37 @@ export default function App() {
         {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
+            {/* Status Karte */}
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
                <div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div>
                <div className="bg-white/20 p-4 rounded-2xl"><CalendarIcon size={28}/></div>
             </div>
+
+            {/* NEU: AUFGABEN LISTE */}
+            <section className="space-y-4">
+              <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Wichtige Aufgaben für Sie</h3>
+              <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">
+                 {tasks.map((task) => (
+                    <button 
+                        key={task.id} 
+                        onClick={() => toggleTask(task.id)}
+                        className="w-full flex items-center gap-3 text-left group"
+                    >
+                        <div className={`transition-all ${task.done ? 'text-[#dccfbc]' : 'text-gray-300 group-hover:text-[#b5a48b]'}`}>
+                            {task.done ? <CheckCircle2 size={24} fill="#F9F7F4"/> : <Circle size={24} strokeWidth={1.5} />}
+                        </div>
+                        <span className={`text-sm transition-all ${task.done ? 'text-gray-300 line-through' : 'text-gray-700 font-bold'}`}>
+                            {task.text}
+                        </span>
+                    </button>
+                 ))}
+                 {tasks.every(t => t.done) && (
+                     <p className="text-[10px] text-[#b5a48b] font-bold text-center pt-2">Alles erledigt! Vielen Dank.</p>
+                 )}
+              </div>
+            </section>
+
+            {/* Stammdaten */}
             <section className="space-y-6">
               <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3>
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
@@ -220,6 +253,8 @@ export default function App() {
                 <div className="pt-2"><p className="text-sm text-gray-400 mb-1 text-left">Anschrift</p><p className="text-sm font-bold text-gray-800 leading-snug text-left">{unbox(patientData?.Anschrift)}</p></div>
               </div>
             </section>
+
+            {/* Kontakte */}
             <section className="space-y-6">
               <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3>
               <div className="space-y-3">
@@ -259,50 +294,20 @@ export default function App() {
             </div>
             
             <div className="flex flex-col gap-4">
-              {/* BUTTON 1: LEISTUNGSNACHWEISE (Öffnet jetzt Ordner) */}
-              <button 
-                onClick={() => openFolderModal('Leistungsnachweis')}
-                className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
-              >
-                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
-                  <FileCheck size={36} strokeWidth={1.5} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-full text-gray-300">
-                  <ChevronRight size={20} />
-                </div>
+              <button onClick={() => openFolderModal('Leistungsnachweis')} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0"><FileCheck size={36} strokeWidth={1.5} /></div>
+                <div className="flex-1"><h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p></div>
+                <div className="bg-gray-50 p-3 rounded-full text-gray-300"><ChevronRight size={20} /></div>
               </button>
-
-              {/* BUTTON 2: RECHNUNGEN (Öffnet jetzt Ordner) */}
-              <button 
-                onClick={() => openFolderModal('Rechnung')}
-                className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"
-              >
-                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0">
-                  <Euro size={36} strokeWidth={1.5} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p>
-                </div>
-                <div className="bg-gray-50 p-3 rounded-full text-gray-300">
-                  <ChevronRight size={20} />
-                </div>
+              <button onClick={() => openFolderModal('Rechnung')} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0"><Euro size={36} strokeWidth={1.5} /></div>
+                <div className="flex-1"><h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p></div>
+                <div className="bg-gray-50 p-3 rounded-full text-gray-300"><ChevronRight size={20} /></div>
               </button>
             </div>
             
-            {/* VIDEO BUTTON */}
             <div className="flex justify-center py-2">
-                <button 
-                    onClick={() => setActiveModal('video')}
-                    className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"
-                >
-                    <Play size={14} fill="#b5a48b" className="text-[#b5a48b]" />
-                    So funktioniert's
-                </button>
+                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"><Play size={14} fill="#b5a48b" className="text-[#b5a48b]" />So funktioniert's</button>
             </div>
             
             <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center mt-2">
@@ -316,27 +321,18 @@ export default function App() {
         {activeTab === 'urlaub' && (
           <div className="space-y-6 animate-in fade-in">
             <div className="mb-6 text-center">
-                <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Plane size={32} className="text-[#b5a48b]" />
-                </div>
+                <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Plane size={32} className="text-[#b5a48b]" /></div>
                 <h2 className="text-3xl font-black tracking-tighter text-[#3A3A3A]">Urlaubsplanung</h2>
                 <p className="text-xs text-gray-400 mt-2 px-6">Teilen Sie uns ihre Urlaube/Abwesenheiten mit.</p>
             </div>
-
             <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
                 <div className="space-y-2 text-left">
                     <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Von wann (Erster Tag)</label>
-                    <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4">
-                        <CalendarIcon size={20} className="text-gray-400 mr-3"/>
-                        <input type="date" value={urlaubStart} onChange={(e) => setUrlaubStart(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} />
-                    </div>
+                    <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubStart} onChange={(e) => setUrlaubStart(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
                 <div className="space-y-2 text-left">
                     <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Bis wann (Letzter Tag)</label>
-                    <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4">
-                        <CalendarIcon size={20} className="text-gray-400 mr-3"/>
-                        <input type="date" value={urlaubEnde} onChange={(e) => setUrlaubEnde(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} />
-                    </div>
+                    <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e) => setUrlaubEnde(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
                 {(urlaubStart && urlaubEnde) && (<div className="bg-[#dccfbc]/10 p-4 rounded-2xl text-center"><p className="text-[#b5a48b] text-xs font-bold">Zeitraum ausgewählt: {new Date(urlaubStart).toLocaleDateString()} - {new Date(urlaubEnde).toLocaleDateString()}</p></div>)}
                 <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 mt-4">{isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />}{sentStatus === 'success' ? 'Eingetragen!' : 'Urlaub eintragen'}</button>
@@ -382,67 +378,34 @@ export default function App() {
              <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 backdrop-blur-md p-3 rounded-full text-white"><X/></button></div>
           )}
 
-          {/* FOLDER MODAL (DATEI ÜBERSICHT) */}
+          {/* FOLDER MODAL */}
           {activeModal === 'folder' && (
              <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left flex flex-col">
                  <div className="flex justify-between items-center mb-6 pl-2">
-                    <div>
-                        <h3 className="text-2xl font-black text-[#3A3A3A]">{uploadContext}</h3>
-                        <p className="text-xs text-gray-400">Archiv & Upload</p>
-                    </div>
+                    <div><h3 className="text-2xl font-black text-[#3A3A3A]">{uploadContext}</h3><p className="text-xs text-gray-400">Archiv & Upload</p></div>
                     <button onClick={() => setActiveModal(null)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
                  </div>
-                 
-                 {/* 1. BUTTON: NEUES DOKUMENT */}
-                 <button onClick={openUploadModal} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2 mb-6 active:scale-95 transition-all">
-                    <Plus size={20} />
-                    Neues Dokument
-                 </button>
-
-                 {/* 2. LISTE DER BISHERIGEN DATEIEN (Platzhalter) */}
+                 <button onClick={openUploadModal} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2 mb-6 active:scale-95 transition-all"><Plus size={20} />Neues Dokument</button>
                  <div className="flex-1 overflow-y-auto space-y-3 pb-10">
                     <p className="text-[10px] font-black uppercase text-gray-300 pl-2">Bisher hochgeladen</p>
-                    {/* Beispielhafte Einträge - hier später echte Daten mappen */}
-                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50">
-                        <div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div>
-                        <div>
-                            <p className="font-bold text-gray-500 text-sm">Beispiel_{uploadContext}_01.pdf</p>
-                            <p className="text-[10px] text-gray-400">20.01.2024</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50">
-                        <div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div>
-                        <div>
-                            <p className="font-bold text-gray-500 text-sm">Scan_2023_12.jpg</p>
-                            <p className="text-[10px] text-gray-400">15.12.2023</p>
-                        </div>
-                    </div>
+                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50"><div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div><div><p className="font-bold text-gray-500 text-sm">Beispiel_{uploadContext}_01.pdf</p><p className="text-[10px] text-gray-400">20.01.2024</p></div></div>
+                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50"><div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div><div><p className="font-bold text-gray-500 text-sm">Scan_2023_12.jpg</p><p className="text-[10px] text-gray-400">15.12.2023</p></div></div>
                  </div>
              </div>
           )}
 
-          {/* UPLOAD MODAL (Eigentlicher Upload) */}
+          {/* UPLOAD MODAL */}
           {activeModal === 'upload' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
               <button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
               <div className="space-y-6">
-                <h3 className="text-xl font-black flex items-center gap-3">
-                  {uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} 
-                  {uploadContext} hochladen
-                </h3>
+                <h3 className="text-xl font-black flex items-center gap-3">{uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} {uploadContext} hochladen</h3>
                 <div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative">
                   <input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" />
                   <Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/>
                   <p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p>
                 </div>
-                <button 
-                  onClick={() => submitData(uploadContext + '-Upload', 'Datei Upload')} 
-                  disabled={isSending || selectedFiles.length === 0} 
-                  className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2"
-                >
-                  {isSending && <RefreshCw className="animate-spin" size={16}/>}
-                  {sentStatus === 'success' ? 'Gesendet!' : 'Absenden'}
-                </button>
+                <button onClick={() => submitData(uploadContext + '-Upload', 'Datei Upload')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2">{isSending && <RefreshCw className="animate-spin" size={16}/>}{sentStatus === 'success' ? 'Gesendet!' : 'Absenden'}</button>
               </div>
             </div>
           )}
