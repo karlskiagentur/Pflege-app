@@ -48,15 +48,16 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   
-  // Daten States
+  // Daten States (Airtable)
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
   
   // UI States
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
-  
+  const [showAllTasks, setShowAllTasks] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -64,20 +65,8 @@ export default function App() {
   // URLAUB STATE
   const [urlaubStart, setUrlaubStart] = useState("");
   const [urlaubEnde, setUrlaubEnde] = useState("");
+  const [sonstigesMessage, setSonstigesMessage] = useState("");
 
-  // AUFGABEN STATE (Erweitert für Demo)
-  const [tasks, setTasks] = useState([
-    { id: 1, text: "Versichertenkarte einreichen", done: false },
-    { id: 2, text: "Pflegeprotokoll unterschreiben", done: false },
-    { id: 3, text: "Termin mit MDK bestätigen", done: true },
-    { id: 4, text: "Rezeptupload: Blutdrucksenker", done: false },
-    { id: 5, text: "Sturzprotokoll ausfüllen", done: false },
-    { id: 6, text: "Beratungseinsatz buchen", done: false }, // Nr. 6 (wird ausgeblendet)
-    { id: 7, text: "Adressdaten aktualisieren", done: true }   // Nr. 7 (wird ausgeblendet)
-  ]);
-  const [showAllTasks, setShowAllTasks] = useState(false);
-
-  // Draggable Button Logic
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
@@ -91,37 +80,83 @@ export default function App() {
     });
   };
 
+  // --- DATEN LADEN (GET) ---
   const fetchData = async () => {
     if (!patientId) return;
     try {
       setLoading(true);
-      const [resP, resC, resB] = await Promise.all([
+      const [resP, resC, resB, resT] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${patientId}`),
         fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${patientId}`),
         fetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${patientId}`),
+        fetch(`${N8N_BASE_URL}/get_tasks?patientId=${patientId}`)
       ]);
       
       const jsonP = await resP.json(); 
       const jsonC = await resC.json();
       const jsonB = await resB.json(); 
+      const jsonT = await resT.json();
 
       if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
       const extract = (json: any) => {
         if (json.data && Array.isArray(json.data) && json.data[0]?.data) return json.data[0].data;
         if (json.data && Array.isArray(json.data)) return json.data;
-        if (Array.isArray(json)) return json;
-        return [];
+        return Array.isArray(json) ? json : [];
       };
 
       setContactData(extract(jsonC));
       setBesuche(extract(jsonB).sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
+      
+      // Aufgaben Mapping
+      const airtableTasks = extract(jsonT).map((t: any) => ({
+        id: t.id,
+        text: unbox(t.fields?.Aufgabentext || t.Aufgabentext),
+        done: unbox(t.fields?.Status || t.Status) === "Erledigt"
+      }));
+      setTasks(airtableTasks);
 
     } catch (e) { console.error(e); } 
     finally { setLoading(false); }
   };
 
   useEffect(() => { if (patientId) fetchData(); }, [patientId]);
+
+  // --- AUFGABE AKTUALISIEREN (POST) ---
+  const toggleTask = async (id: string, currentStatus: boolean) => {
+    // Optimistisches UI Update
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
+
+    try {
+      await fetch(`${N8N_BASE_URL}/update_task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: id, done: !currentStatus })
+      });
+    } catch (e) {
+      console.error("Fehler beim n8n-Update:", e);
+    }
+  };
+
+  const submitData = async (type: string, payload: string) => {
+    setIsSending(true);
+    try {
+      const formData = new FormData();
+      formData.append('patientId', patientId!);
+      formData.append('patientName', unbox(patientData?.Name));
+      formData.append('typ', type);
+      formData.append('nachricht', payload);
+      
+      await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+      setSentStatus('success');
+      setTimeout(() => { 
+        if (activeModal === 'upload') setActiveModal('folder');
+        else setActiveModal(null);
+        setSentStatus('idle');
+      }, 1500);
+    } catch (e) { setSentStatus('error'); }
+    setIsSending(false);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,50 +176,6 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
-  const submitData = async (type: string, payload: string) => {
-    setIsSending(true);
-    try {
-      const formData = new FormData();
-      formData.append('patientId', patientId!);
-      formData.append('patientName', unbox(patientData?.Name));
-      formData.append('typ', type);
-      formData.append('nachricht', payload);
-      
-      const response = await fetch(`${N8N_BASE_URL}/service_submit`, { 
-        method: 'POST', 
-        body: formData 
-      });
-
-      if (response.ok) {
-        setSentStatus('success');
-        setSelectedFiles([]);
-        setTimeout(() => { 
-            if (activeModal === 'upload') setActiveModal('folder');
-            else setActiveModal(null);
-            setSentStatus('idle'); 
-            setUrlaubStart("");
-            setUrlaubEnde("");
-        }, 1500);
-      }
-    } catch (e) { setSentStatus('error'); }
-    setIsSending(false);
-  };
-
-  const openFolderModal = (type: 'Rechnung' | 'Leistungsnachweis') => {
-    setUploadContext(type);
-    setActiveModal('folder');
-  };
-
-  const openUploadModal = () => {
-    setSelectedFiles([]);
-    setSentStatus('idle');
-    setActiveModal('upload');
-  };
-
-  const toggleTask = (id: number) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  };
-
   if (!patientId) {
     return (
       <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6 text-left">
@@ -200,9 +191,7 @@ export default function App() {
     );
   }
 
-  // --- LOGIC FÜR AUFGABEN ANZEIGE ---
   const openTasksCount = tasks.filter(t => !t.done).length;
-  // Zeige entweder alle, oder nur die ersten 5
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, 5);
 
   return (
@@ -224,56 +213,33 @@ export default function App() {
         {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
-            {/* Status Karte */}
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
                <div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div>
                <div className="bg-white/20 p-4 rounded-2xl"><CalendarIcon size={28}/></div>
             </div>
 
-            {/* AUFGABEN LISTE (Dynamisch: Max 5, dann Button) */}
+            {/* AUFGABEN LISTE */}
             <section className="space-y-4">
               <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">
-                Wichtige Aufgaben für Sie <span className="text-[#b5a48b]">({openTasksCount} offen)</span>
+                Aufgaben <span className="text-[#b5a48b]">({openTasksCount} offen)</span>
               </h3>
               <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">
-                 {/* Liste der Aufgaben */}
                  {visibleTasks.map((task) => (
-                    <button 
-                        key={task.id} 
-                        onClick={() => toggleTask(task.id)}
-                        className="w-full flex items-center gap-3 text-left group animate-in fade-in"
-                    >
+                    <button key={task.id} onClick={() => toggleTask(task.id, task.done)} className="w-full flex items-center gap-3 text-left group">
                         <div className={`transition-all ${task.done ? 'text-[#dccfbc]' : 'text-gray-300 group-hover:text-[#b5a48b]'}`}>
                             {task.done ? <CheckCircle2 size={24} fill="#F9F7F4"/> : <Circle size={24} strokeWidth={1.5} />}
                         </div>
-                        <span className={`text-sm transition-all ${task.done ? 'text-gray-300 line-through' : 'text-gray-700 font-bold'}`}>
-                            {task.text}
-                        </span>
+                        <span className={`text-sm transition-all ${task.done ? 'text-gray-300 line-through' : 'text-gray-700 font-bold'}`}>{task.text}</span>
                     </button>
                  ))}
-                 
-                 {/* Empty State */}
-                 {tasks.every(t => t.done) && (
-                     <p className="text-[10px] text-[#b5a48b] font-bold text-center pt-2">Alles erledigt! Vielen Dank.</p>
-                 )}
-
-                 {/* "Weitere anzeigen" Button (nur wenn mehr als 5 Aufgaben existieren) */}
                  {tasks.length > 5 && (
-                     <button 
-                        onClick={() => setShowAllTasks(!showAllTasks)}
-                        className="w-full text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] pt-3 pb-1 border-t border-gray-50 mt-2 flex items-center justify-center gap-1"
-                     >
-                        {showAllTasks ? (
-                             <><ChevronUp size={12} /> Weniger anzeigen</>
-                        ) : (
-                             <><ChevronDown size={12} /> {tasks.length - 5} weitere Aufgaben</>
-                        )}
+                     <button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] pt-3 flex items-center justify-center gap-1 border-t border-gray-50">
+                        {showAllTasks ? <><ChevronUp size={12}/> Weniger</> : <><ChevronDown size={12}/> {tasks.length - 5} weitere</>}
                      </button>
                  )}
               </div>
             </section>
 
-            {/* Stammdaten */}
             <section className="space-y-6">
               <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3>
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4">
@@ -283,7 +249,6 @@ export default function App() {
               </div>
             </section>
 
-            {/* Kontakte */}
             <section className="space-y-6">
               <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3>
               <div className="space-y-3">
@@ -321,27 +286,20 @@ export default function App() {
                 <h2 className="text-2xl font-black tracking-tighter text-[#3A3A3A]">Dokumente</h2>
                 <p className="text-xs text-gray-400 mt-1">Ihr Archiv & Upload für Nachweise.</p>
             </div>
-            
             <div className="flex flex-col gap-4">
-              <button onClick={() => openFolderModal('Leistungsnachweis')} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+              <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0"><FileCheck size={36} strokeWidth={1.5} /></div>
                 <div className="flex-1"><h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Leistungs-<br/>nachweise</h3><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p></div>
                 <div className="bg-gray-50 p-3 rounded-full text-gray-300"><ChevronRight size={20} /></div>
               </button>
-              <button onClick={() => openFolderModal('Rechnung')} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+              <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-7 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
                 <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b] shrink-0"><Euro size={36} strokeWidth={1.5} /></div>
                 <div className="flex-1"><h3 className="text-xl font-black text-[#3A3A3A] leading-tight">Rechnungen<br/>einreichen</h3><p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Ordner öffnen</p></div>
                 <div className="bg-gray-50 p-3 rounded-full text-gray-300"><ChevronRight size={20} /></div>
               </button>
             </div>
-            
             <div className="flex justify-center py-2">
-                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest hover:scale-105 transition-transform"><Play size={14} fill="#b5a48b" className="text-[#b5a48b]" />So funktioniert's</button>
-            </div>
-            
-            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center mt-2">
-               <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
-               <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border border-gray-100 text-[#b5a48b] text-xs font-black uppercase tracking-widest active:scale-95 transition-all"><Play size={14} fill="#b5a48b" /> So funktioniert's</button>
             </div>
           </div>
         )}
@@ -356,28 +314,21 @@ export default function App() {
             </div>
             <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
                 <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Von wann (Erster Tag)</label>
+                    <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Von wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubStart} onChange={(e) => setUrlaubStart(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
                 <div className="space-y-2 text-left">
-                    <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Bis wann (Letzter Tag)</label>
+                    <label className="text-[10px] font-black uppercase text-[#b5a48b] tracking-widest ml-2">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e) => setUrlaubEnde(e.target.value)} className="bg-transparent w-full py-3 outline-none text-gray-700 font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                {(urlaubStart && urlaubEnde) && (<div className="bg-[#dccfbc]/10 p-4 rounded-2xl text-center"><p className="text-[#b5a48b] text-xs font-bold">Zeitraum ausgewählt: {new Date(urlaubStart).toLocaleDateString()} - {new Date(urlaubEnde).toLocaleDateString()}</p></div>)}
-                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 mt-4">{isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />}{sentStatus === 'success' ? 'Eingetragen!' : 'Urlaub eintragen'}</button>
+                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50">{sentStatus === 'success' ? 'Eingetragen!' : 'Urlaub eintragen'}</button>
             </div>
-            <p className="text-[10px] text-gray-300 text-center px-10">Hinweis: Pflegeeinsätze werden für diesen Zeitraum automatisch pausiert.</p>
           </div>
         )}
       </main>
 
       {/* KI BUTTON */}
-      <button 
-        onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true}
-        onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }}
-        style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }}
-        className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white cursor-move active:scale-90 transition-transform"
-      ><Mic size={24} fill="white" /><span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span></button>
+      <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-4 border-white cursor-move active:scale-90 transition-transform"><Mic size={24} fill="white" /><span className="text-[10px] font-bold text-center mt-0.5 leading-none">KI 24/7<br/>Hilfe</span></button>
 
       {/* NAVIGATION */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-gray-50 flex justify-around p-5 pb-11 rounded-t-[3rem] shadow-2xl z-50">
@@ -390,51 +341,38 @@ export default function App() {
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
-          
-          {/* VIDEO POPUP */}
           {activeModal === 'video' && (
-             <div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center">
-                 <button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 backdrop-blur-md p-2 rounded-full text-white z-20"><X size={20}/></button>
-                 <div className="text-white text-center">
-                     <PlayCircle size={64} className="mx-auto mb-4 opacity-50"/>
-                     <p className="font-bold">Erklärvideo wird geladen...</p>
-                 </div>
+             <div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative animate-in zoom-in-95 flex items-center justify-center">
+                 <button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white z-20"><X size={20}/></button>
+                 <div className="text-white text-center"><PlayCircle size={64} className="opacity-50 mb-4 mx-auto"/><p className="font-bold tracking-widest uppercase text-[10px]">Video wird geladen...</p></div>
              </div>
           )}
-
-          {/* KI CHAT */}
           {activeModal === 'ki-telefon' && (
-             <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 backdrop-blur-md p-3 rounded-full text-white"><X/></button></div>
+             <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative shadow-2xl animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" width="100%" height="100%" className="border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-white/30 p-3 rounded-full text-white"><X/></button></div>
           )}
-
-          {/* FOLDER MODAL */}
           {activeModal === 'folder' && (
              <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left flex flex-col">
                  <div className="flex justify-between items-center mb-6 pl-2">
                     <div><h3 className="text-2xl font-black text-[#3A3A3A]">{uploadContext}</h3><p className="text-xs text-gray-400">Archiv & Upload</p></div>
                     <button onClick={() => setActiveModal(null)} className="p-2 bg-gray-100 rounded-full"><X size={20}/></button>
                  </div>
-                 <button onClick={openUploadModal} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2 mb-6 active:scale-95 transition-all"><Plus size={20} />Neues Dokument</button>
+                 <button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2 mb-6 active:scale-95 transition-all"><Plus size={20} />Neues Dokument</button>
                  <div className="flex-1 overflow-y-auto space-y-3 pb-10">
                     <p className="text-[10px] font-black uppercase text-gray-300 pl-2">Bisher hochgeladen</p>
-                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50"><div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div><div><p className="font-bold text-gray-500 text-sm">Beispiel_{uploadContext}_01.pdf</p><p className="text-[10px] text-gray-400">20.01.2024</p></div></div>
-                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50"><div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div><div><p className="font-bold text-gray-500 text-sm">Scan_2023_12.jpg</p><p className="text-[10px] text-gray-400">15.12.2023</p></div></div>
+                    <div className="flex items-center gap-4 bg-[#F9F7F4] p-4 rounded-2xl opacity-50"><div className="bg-white p-2 rounded-xl text-gray-300"><FileText size={20}/></div><div><p className="font-bold text-gray-500 text-sm">Scan_{uploadContext}_01.pdf</p><p className="text-[10px] text-gray-400">Archiv-Beispiel</p></div></div>
                  </div>
              </div>
           )}
-
-          {/* UPLOAD MODAL */}
           {activeModal === 'upload' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
               <button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
               <div className="space-y-6">
-                <h3 className="text-xl font-black flex items-center gap-3">{uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} {uploadContext} hochladen</h3>
+                <h3 className="text-xl font-black flex items-center gap-3">{uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} Hochladen</h3>
                 <div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative">
                   <input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" />
-                  <Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/>
-                  <p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p>
+                  <Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/><p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p>
                 </div>
-                <button onClick={() => submitData(uploadContext + '-Upload', 'Datei Upload')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-lg flex justify-center items-center gap-2">{isSending && <RefreshCw className="animate-spin" size={16}/>}{sentStatus === 'success' ? 'Gesendet!' : 'Absenden'}</button>
+                <button onClick={() => submitData(uploadContext + '-Upload', 'Dokument')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending && <RefreshCw className="animate-spin" size={16}/>}{sentStatus === 'success' ? 'Erfolgreich!' : 'Absenden'}</button>
               </div>
             </div>
           )}
