@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
-  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, FolderOpen, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp
+  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, AlertCircle
 } from 'lucide-react';
 
-// Deine n8n Live-URL (muss ACTIVE sein)
+// Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
 // --- HELFER-FUNKTIONEN ---
@@ -26,7 +26,6 @@ const formatDate = (raw: any, short = false) => {
       const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
       return days[d.getDay()]; 
     }
-    // NEU: Mit führender Null (01.01.2024)
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
     return `${day}.${month}.${d.getFullYear()}`;
@@ -62,6 +61,11 @@ export default function App() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  // Termin-Management States (NEU)
+  const [confirmedTermine, setConfirmedTermine] = useState<number[]>([]); // Speichert Indices der bestätigten Termine
+  const [editingTermin, setEditingTermin] = useState<number | null>(null); // Welcher Termin wird gerade bearbeitet?
+  const [newTerminDate, setNewTerminDate] = useState(""); // Das neue Datum für die Verschiebung
 
   // Urlaub States
   const [urlaubStart, setUrlaubStart] = useState("");
@@ -114,7 +118,6 @@ export default function App() {
       setContactData(extract(jsonC));
       setBesuche(extract(jsonB).sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
       
-      // AUFGABEN MAPPING
       const rawTasks = extract(jsonT);
       const mappedTasks = rawTasks.map((t: any) => {
         const data = t.fields || t; 
@@ -165,7 +168,38 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
-  // --- SUBMIT LOGIK (FILE & TEXT) ---
+  // --- TERMIN LOGIK (NEU) ---
+  const handleTerminConfirm = (index: number) => {
+    // Hier könnte man einen API Call machen: "Termin bestätigt"
+    setConfirmedTermine([...confirmedTermine, index]);
+  };
+
+  const handleTerminReschedule = async (index: number, oldDate: string) => {
+    if(!newTerminDate) return;
+    
+    // Sende Änderungswunsch an n8n
+    setIsSending(true);
+    try {
+        const formData = new FormData();
+        formData.append('patientId', patientId!);
+        formData.append('patientName', unbox(patientData?.Name));
+        formData.append('typ', 'Terminverschiebung');
+        formData.append('nachricht', `Bitte Termin vom ${formatDate(oldDate)} auf den ${formatDate(newTerminDate)} verschieben.`);
+        
+        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        
+        // UI Reset
+        setEditingTermin(null);
+        setNewTerminDate("");
+        alert("Änderungswunsch wurde gesendet!");
+    } catch(e) {
+        console.error(e);
+        alert("Fehler beim Senden.");
+    }
+    setIsSending(false);
+  };
+
+  // --- SUBMIT LOGIK (Allgemein) ---
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
     try {
@@ -173,22 +207,16 @@ export default function App() {
       formData.append('patientId', patientId!);
       formData.append('patientName', unbox(patientData?.Name));
       
-      // ENTSCHEIDUNG: Datei-Upload oder Text-Nachricht?
       if (activeModal === 'upload' && selectedFiles.length > 0) {
-          // --- DATEI UPLOAD (Google Drive & Airtable Dokumente) ---
           formData.append('typ', type.replace('-Upload', '')); 
           formData.append('file', selectedFiles[0]); 
-          
           await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
       } else {
-          // --- TEXT NACHRICHT (Urlaub etc.) ---
           formData.append('typ', type);
           formData.append('nachricht', payload);
-          
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
 
-      // Erfolgsbehandlung
       setSentStatus('success');
       setTimeout(() => { 
         if (activeModal === 'upload') setActiveModal('folder');
@@ -292,22 +320,53 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: PLANER */}
+        {/* TAB: PLANER (KOMPLETT NEU ÜBERARBEITET) */}
         {activeTab === 'planer' && (
-          <div className="space-y-6 animate-in fade-in">
+          <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
                 <h2 className="text-3xl font-black">Besuchs-Planer</h2>
                 <p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p>
             </div>
             {besuche.map((b, i) => (
-              <div key={i} className="bg-white rounded-[2rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100 text-left">
-                <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
-                <div className="flex-1 border-l border-gray-100 pl-5 text-left">
-                  <p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p>
-                  <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
-                  <p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p>
+              <div key={i} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
+                {/* OBEN: DIE NORMALE KARTE */}
+                <div className="p-6 flex items-center gap-6">
+                    <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
+                    <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                        <p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p>
+                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
+                        <p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p>
+                    </div>
                 </div>
+
+                {/* UNTEN: DER INTERAKTIVE KASTEN */}
+                {confirmedTermine.includes(i) ? (
+                    // OPTION A: TERMIN BESTÄTIGT (Grüner Balken)
+                    <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2">
+                        <Check size={16} strokeWidth={3}/> Termin angenommen
+                    </div>
+                ) : editingTermin === i ? (
+                    // OPTION B: TERMIN VERSCHIEBEN (Kalender)
+                    <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
+                        <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
+                        <div className="flex gap-2">
+                            <input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none" style={{ colorScheme: 'light' }} />
+                            <button onClick={() => setEditingTermin(null)} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button>
+                            <button onClick={() => handleTerminReschedule(i, unbox(b.Datum))} className="px-4 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase">Senden</button>
+                        </div>
+                    </div>
+                ) : (
+                    // OPTION C: DIE BUTTONS (Pastell)
+                    <div className="flex border-t border-gray-100">
+                        <button onClick={() => handleTerminConfirm(i)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">
+                            Termin ok
+                        </button>
+                        <button onClick={() => setEditingTermin(i)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">
+                            Termin ändern
+                        </button>
+                    </div>
+                )}
               </div>
             ))}
           </div>
@@ -363,7 +422,6 @@ export default function App() {
                     <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                {/* HIER WURDE KORRIGIERT: formatDate() wird benutzt */}
                 <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${formatDate(urlaubStart)} bis ${formatDate(urlaubEnde)}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
                     {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} 
                     <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
