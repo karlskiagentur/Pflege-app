@@ -26,7 +26,10 @@ const formatDate = (raw: any, short = false) => {
       const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
       return days[d.getDay()]; 
     }
-    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    // NEU: Mit führender Null (01.01.2024)
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${day}.${month}.${d.getFullYear()}`;
   } catch { return val; }
 };
 
@@ -173,8 +176,8 @@ export default function App() {
       // ENTSCHEIDUNG: Datei-Upload oder Text-Nachricht?
       if (activeModal === 'upload' && selectedFiles.length > 0) {
           // --- DATEI UPLOAD (Google Drive & Airtable Dokumente) ---
-          formData.append('typ', type.replace('-Upload', '')); // "Rechnung-Upload" -> "Rechnung"
-          formData.append('file', selectedFiles[0]); // Wir senden die erste Datei
+          formData.append('typ', type.replace('-Upload', '')); 
+          formData.append('file', selectedFiles[0]); 
           
           await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
       } else {
@@ -360,7 +363,8 @@ export default function App() {
                     <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
                     <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
                 </div>
-                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${urlaubStart} bis ${urlaubEnde}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
+                {/* HIER WURDE KORRIGIERT: formatDate() wird benutzt */}
+                <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${formatDate(urlaubStart)} bis ${formatDate(urlaubEnde)}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
                     {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} 
                     <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
                 </button>
