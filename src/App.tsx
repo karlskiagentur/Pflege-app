@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, AlertCircle
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -56,16 +56,21 @@ export default function App() {
   const [showAllTasks, setShowAllTasks] = useState(false);
 
   // UI States
-  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | null>(null);
+  // 'new-appointment' hinzugefügt
+  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-  // Termin-Management States (NEU)
-  const [confirmedTermine, setConfirmedTermine] = useState<number[]>([]); // Speichert Indices der bestätigten Termine
-  const [editingTermin, setEditingTermin] = useState<number | null>(null); // Welcher Termin wird gerade bearbeitet?
-  const [newTerminDate, setNewTerminDate] = useState(""); // Das neue Datum für die Verschiebung
+  // Termin-Management States
+  const [confirmedTermine, setConfirmedTermine] = useState<number[]>([]); 
+  const [editingTermin, setEditingTermin] = useState<number | null>(null); 
+  const [newTerminDate, setNewTerminDate] = useState(""); 
+  
+  // Neuer Termin Anfrage State
+  const [requestDate, setRequestDate] = useState("");
+  const [requestReason, setRequestReason] = useState("");
 
   // Urlaub States
   const [urlaubStart, setUrlaubStart] = useState("");
@@ -168,16 +173,13 @@ export default function App() {
     finally { setIsLoggingIn(false); }
   };
 
-  // --- TERMIN LOGIK (NEU) ---
+  // --- TERMIN LOGIK ---
   const handleTerminConfirm = (index: number) => {
-    // Hier könnte man einen API Call machen: "Termin bestätigt"
     setConfirmedTermine([...confirmedTermine, index]);
   };
 
   const handleTerminReschedule = async (index: number, oldDate: string) => {
     if(!newTerminDate) return;
-    
-    // Sende Änderungswunsch an n8n
     setIsSending(true);
     try {
         const formData = new FormData();
@@ -185,19 +187,39 @@ export default function App() {
         formData.append('patientName', unbox(patientData?.Name));
         formData.append('typ', 'Terminverschiebung');
         formData.append('nachricht', `Bitte Termin vom ${formatDate(oldDate)} auf den ${formatDate(newTerminDate)} verschieben.`);
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        
-        // UI Reset
         setEditingTermin(null);
         setNewTerminDate("");
         alert("Änderungswunsch wurde gesendet!");
-    } catch(e) {
-        console.error(e);
-        alert("Fehler beim Senden.");
-    }
+    } catch(e) { console.error(e); }
     setIsSending(false);
   };
+
+  const handleNewTerminRequest = async () => {
+      if(!requestDate) return;
+      setIsSending(true);
+      try {
+        const formData = new FormData();
+        formData.append('patientId', patientId!);
+        formData.append('patientName', unbox(patientData?.Name));
+        formData.append('typ', 'Terminanfrage');
+        formData.append('nachricht', `Anfrage für neuen Termin am ${formatDate(requestDate)}. Info: ${requestReason}`);
+        
+        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        
+        setSentStatus('success');
+        setTimeout(() => {
+            setActiveModal(null);
+            setSentStatus('idle');
+            setRequestDate("");
+            setRequestReason("");
+        }, 1500);
+      } catch (e) {
+          setSentStatus('error');
+      }
+      setIsSending(false);
+  };
+
 
   // --- SUBMIT LOGIK (Allgemein) ---
   const submitData = async (type: string, payload: string) => {
@@ -320,7 +342,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB: PLANER (KOMPLETT NEU ÜBERARBEITET) */}
+        {/* TAB: PLANER */}
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6">
@@ -328,9 +350,16 @@ export default function App() {
                 <h2 className="text-3xl font-black">Besuchs-Planer</h2>
                 <p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p>
             </div>
+
+            {/* NEU: MINI BUTTON ZUM ANFRAGEN */}
+            <div className="flex justify-center">
+                <button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">
+                    <PlusCircle size={16} /> Termin anfragen
+                </button>
+            </div>
+
             {besuche.map((b, i) => (
               <div key={i} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
-                {/* OBEN: DIE NORMALE KARTE */}
                 <div className="p-6 flex items-center gap-6">
                     <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
@@ -340,14 +369,11 @@ export default function App() {
                     </div>
                 </div>
 
-                {/* UNTEN: DER INTERAKTIVE KASTEN */}
                 {confirmedTermine.includes(i) ? (
-                    // OPTION A: TERMIN BESTÄTIGT (Grüner Balken)
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2">
                         <Check size={16} strokeWidth={3}/> Termin angenommen
                     </div>
                 ) : editingTermin === i ? (
-                    // OPTION B: TERMIN VERSCHIEBEN (Kalender)
                     <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
                         <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
                         <div className="flex gap-2">
@@ -357,7 +383,6 @@ export default function App() {
                         </div>
                     </div>
                 ) : (
-                    // OPTION C: DIE BUTTONS (Pastell)
                     <div className="flex border-t border-gray-100">
                         <button onClick={() => handleTerminConfirm(i)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">
                             Termin ok
@@ -458,15 +483,46 @@ export default function App() {
       {activeModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
+          
+          {/* MODAL: VIDEO */}
           {activeModal === 'video' && (
              <div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center">
                  <button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white"><X size={20}/></button>
                  <div className="text-white text-center"><PlayCircle size={64} className="opacity-20 mx-auto"/><p className="mt-4 font-bold text-xs uppercase tracking-widest">Video wird geladen...</p></div>
              </div>
           )}
+          
+          {/* MODAL: KI TELEFON */}
           {activeModal === 'ki-telefon' && (
              <div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>
           )}
+
+          {/* MODAL: NEUER TERMIN (NEU!) */}
+          {activeModal === 'new-appointment' && (
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
+                <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+                <div className="space-y-6">
+                    <h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3>
+                    <p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p>
+                    
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label>
+                        <input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund / Uhrzeit (Optional)</label>
+                        <input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Vormittags, Verbandswechsel..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" />
+                    </div>
+
+                    <button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">
+                        {isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />}
+                        {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}
+                    </button>
+                </div>
+            </div>
+          )}
+          
+          {/* MODAL: FOLDER AUSWAHL */}
           {activeModal === 'folder' && (
             <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10">
                 <div className="flex justify-between items-center mb-8">
@@ -480,6 +536,8 @@ export default function App() {
                 </div>
             </div>
           )}
+          
+          {/* MODAL: UPLOAD */}
           {activeModal === 'upload' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
               <button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
