@@ -39,18 +39,43 @@ const formatTime = (raw: any) => {
   return val.substring(0, 5);
 };
 
-// Intelligente Titel-Anzeige
+// Titel-Logik
 const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
   const status = unbox(b.Status);
   
-  // Wenn es eine Anfrage ist oder der Titel generisch ist, suchen wir in der Notiz
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
   }
   return title || "Termin";
+};
+
+// NEU: Holt Wunschdaten aus der Notiz, falls offizielles Datum fehlt
+const getProposedDetails = (b: any) => {
+    const note = unbox(b.Notiz_Patient);
+    const status = unbox(b.Status);
+    
+    // Nur aktiv werden, wenn es eine Anfrage ist und wir eine Notiz haben
+    if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
+        try {
+            // Format in Notiz: "Wunschtermin: 24.01.2026 um 14:00 Uhr" oder "Wunschtermin: 24.01.2026"
+            const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
+            
+            let pDate = datePart;
+            let pTime = "--:--";
+
+            if (datePart.includes(" um ")) {
+                const parts = datePart.split(" um ");
+                pDate = parts[0];
+                pTime = parts[1].replace(" Uhr", "");
+            }
+            
+            return { date: pDate, time: pTime, isProposed: true };
+        } catch (e) { return null; }
+    }
+    return null;
 };
 
 export default function App() {
@@ -143,7 +168,7 @@ export default function App() {
           const fields = b.fields || b;
           return { id: b.id, ...fields };
       });
-      // Sortierung: Wir behandeln fehlende Daten (neue Anfragen) als "weit in der Zukunft" für die Sortierung, damit sie oben bleiben oder korrekt einsortiert werden
+      
       setBesuche(mappedBesuche.sort((a:any, b:any) => {
           const dA = new Date(unbox(a.Datum)).getTime() || 0;
           const dB = new Date(unbox(b.Datum)).getTime() || 0;
@@ -162,7 +187,7 @@ export default function App() {
 
   useEffect(() => { if (patientId) fetchData(); }, [patientId]);
 
-  // --- LOGIN ---
+  // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoggingIn(true);
     try {
@@ -174,7 +199,6 @@ export default function App() {
     } catch (e) { console.error(e); } finally { setIsLoggingIn(false); }
   };
 
-  // --- ACTIONS ---
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
@@ -268,33 +292,24 @@ export default function App() {
 
   const openTasksCount = tasks.filter(t => !t.done).length;
 
-  // -- INTELLIGENTE FILTERLOGIK --
   const today = new Date();
   today.setHours(0,0,0,0);
   
-  // ZUKUNFT: Alles was ab heute ist ODER Status 'Anfrage'/'Änderungswunsch' hat (egal welches Datum)
   const upcomingBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
       const datumVal = unbox(b.Datum);
-      
-      // 1. Priorität: Aktive Vorgänge immer anzeigen
       if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
-      
-      // 2. Datum prüfen (nur wenn Datum existiert)
       if (!datumVal) return false;
       return new Date(datumVal) >= today;
   });
 
-  // VERGANGENHEIT: Alles was vorbei ist UND NICHT 'Anfrage'/'Änderungswunsch' ist
   const pastBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
       const datumVal = unbox(b.Datum);
-      
-      if (status === 'Anfrage' || status === 'Änderungswunsch') return false; // Gehört nach oben
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
       if (!datumVal) return false;
       return new Date(datumVal) < today;
   });
-  // ------------------------------
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
@@ -317,23 +332,41 @@ export default function App() {
             
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
             
-            {upcomingBesuche.map((b, i) => (
-              <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
-                <div className="p-6 flex items-center gap-6">
-                    <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
-                    <div className="flex-1 border-l border-gray-100 pl-5 text-left"><p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p><div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p></div>
-                </div>
-                {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
-                    <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
-                ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" || unbox(b.Status) === "Anfrage" ? (
-                    <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
-                ) : editingTermin === b.id ? (
-                    <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
-                ) : (
-                    <div className="flex border-t border-gray-100"><button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button><button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button></div>
-                )}
-              </div>
-            ))}
+            {/* ZUKÜNFTIGE BESUCHE & ANFRAGEN */}
+            {upcomingBesuche.map((b, i) => {
+                // HIER IST DIE MAGIE: Wir prüfen, ob wir Wunsch-Daten anzeigen müssen
+                const proposed = getProposedDetails(b);
+                const showTime = unbox(b.Uhrzeit) || (proposed ? proposed.time : "--:--");
+                const showDate = unbox(b.Datum) ? formatDate(b.Datum) : (proposed ? proposed.date : "-");
+                const isProposed = !unbox(b.Datum) && proposed; // Ist es nur ein Wunsch?
+
+                return (
+                  <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
+                    <div className="p-6 flex items-center gap-6">
+                        <div className="text-center min-w-[60px]">
+                            {/* ZEIT: Grau und kursiv, wenn es nur ein Vorschlag ist */}
+                            <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
+                        </div>
+                        <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                            <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
+                            <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
+                            {/* DATUM: Grau und kursiv, wenn es nur ein Vorschlag ist */}
+                            <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
+                        </div>
+                    </div>
+                    {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
+                        <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
+                    ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" || unbox(b.Status) === "Anfrage" ? (
+                        <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
+                    ) : editingTermin === b.id ? (
+                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
+                    ) : (
+                        <div className="flex border-t border-gray-100"><button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button><button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button></div>
+                    )}
+                  </div>
+                );
+            })}
 
             {pastBesuche.length > 0 && (
                 <div className="pt-8 text-center">
