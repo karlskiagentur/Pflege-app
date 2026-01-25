@@ -9,10 +9,12 @@ import {
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
-// --- HELFER-FUNKTIONEN ---
+// --- HELFER-FUNKTIONEN (REPARIERT) ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
-  if (Array.isArray(val)) return unbox(val[0]);
+  if (Array.isArray(val) && val.length > 0) return unbox(val[0]); // Rekursiv falls Array im Array
+  if (Array.isArray(val) && val.length === 0) return "";
+  if (typeof val === 'object') return ""; 
   return String(val);
 };
 
@@ -21,22 +23,39 @@ const formatDate = (raw: any, short = false) => {
   if (!val || val === "-") return "-";
   try {
     const d = new Date(val);
-    if (isNaN(d.getTime())) return val;
-    if (short) { 
-      const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
-      return days[d.getDay()]; 
+    // Prüfen ob Datum valide ist
+    if (!isNaN(d.getTime())) {
+        if (short) { 
+          const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
+          return days[d.getDay()]; 
+        }
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        return `${day}.${month}.${d.getFullYear()}`;
     }
-    const day = String(d.getDate()).padStart(2, '0');
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    return `${day}.${month}.${d.getFullYear()}`;
+    return val; // Fallback falls kein Datum erkannt
   } catch { return val; }
 };
 
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
-  if (val.includes('T')) return val.split('T')[1].substring(0, 5);
-  return val.substring(0, 5);
+  try {
+      // Versuch 1: Ist es ein ISO Datum? (z.B. 2026-02-01T14:00:00.000Z)
+      if (val.includes('T') || val.includes('-')) {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+              const hours = String(d.getHours()).padStart(2, '0');
+              const minutes = String(d.getMinutes()).padStart(2, '0');
+              return `${hours}:${minutes}`;
+          }
+      }
+      // Versuch 2: Ist es nur Text? (z.B. 14:00:00)
+      if (val.includes(':')) {
+          return val.substring(0, 5);
+      }
+      return val;
+  } catch { return "--:--"; }
 };
 
 // Titel-Logik
@@ -52,17 +71,14 @@ const getDisplayTitle = (b: any) => {
   return title || "Termin";
 };
 
-// NEU: Holt Wunschdaten aus der Notiz, falls offizielles Datum fehlt
+// Vorschlags-Daten Logik
 const getProposedDetails = (b: any) => {
     const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
     
-    // Nur aktiv werden, wenn es eine Anfrage ist und wir eine Notiz haben
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
-            // Format in Notiz: "Wunschtermin: 24.01.2026 um 14:00 Uhr" oder "Wunschtermin: 24.01.2026"
             const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
-            
             let pDate = datePart;
             let pTime = "--:--";
 
@@ -71,7 +87,6 @@ const getProposedDetails = (b: any) => {
                 pDate = parts[0];
                 pTime = parts[1].replace(" Uhr", "");
             }
-            
             return { date: pDate, time: pTime, isProposed: true };
         } catch (e) { return null; }
     }
@@ -334,24 +349,22 @@ export default function App() {
             
             {/* ZUKÜNFTIGE BESUCHE & ANFRAGEN */}
             {upcomingBesuche.map((b, i) => {
-                // HIER IST DIE MAGIE: Wir prüfen, ob wir Wunsch-Daten anzeigen müssen
                 const proposed = getProposedDetails(b);
-                const showTime = unbox(b.Uhrzeit) || (proposed ? proposed.time : "--:--");
+                const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Datum) ? formatDate(b.Datum) : (proposed ? proposed.date : "-");
-                const isProposed = !unbox(b.Datum) && proposed; // Ist es nur ein Wunsch?
+                const isProposed = !unbox(b.Datum) && proposed; 
 
                 return (
                   <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
                     <div className="p-6 flex items-center gap-6">
                         <div className="text-center min-w-[60px]">
-                            {/* ZEIT: Grau und kursiv, wenn es nur ein Vorschlag ist */}
+                            {/* ZEIT: Einheitlich formatiert */}
                             <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
                             <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                         </div>
                         <div className="flex-1 border-l border-gray-100 pl-5 text-left">
                             <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
                             <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
-                            {/* DATUM: Grau und kursiv, wenn es nur ein Vorschlag ist */}
                             <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                         </div>
                     </div>
