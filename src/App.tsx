@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, Clock
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -63,9 +63,12 @@ export default function App() {
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   // Termin Management
-  const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]); // Speichert IDs der bestätigten Termine
-  const [editingTermin, setEditingTermin] = useState<string | null>(null); // Speichert ID des Termins, der bearbeitet wird
+  const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
+  const [editingTermin, setEditingTermin] = useState<string | null>(null);
+  
+  // NEU: Uhrzeit State für Verschiebung
   const [newTerminDate, setNewTerminDate] = useState(""); 
+  const [newTerminTime, setNewTerminTime] = useState(""); 
   
   // Neue Terminanfrage
   const [requestDate, setRequestDate] = useState("");
@@ -112,15 +115,12 @@ export default function App() {
       const extract = (json: any) => {
         if (!json) return [];
         if (json.data && Array.isArray(json.data)) {
-           // Fall: n8n liefert { data: [ {id:..., fields:...}, ... ] }
            if (json.data[0]?.id && json.data[0]?.fields) return json.data; 
-           // Fallback
            return json.data;
         }
         return Array.isArray(json) ? json : [];
       };
 
-      // WICHTIG: Wir brauchen die 'id' (Record ID) für Updates
       const rawBesuche = extract(jsonB);
       const mappedBesuche = rawBesuche.map((b: any) => ({
         id: b.id, 
@@ -175,18 +175,17 @@ export default function App() {
   
   // 1. Termin bestätigen
   const handleTerminConfirm = async (recordId: string) => {
-    setConfirmedTermine([...confirmedTermine, recordId]); // UI Update sofort
+    setConfirmedTermine([...confirmedTermine, recordId]); 
     try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
-  // 2. Termin verschieben
+  // 2. Termin verschieben (JETZT MIT UHRZEIT)
   const handleTerminReschedule = async (recordId: string, oldDate: string) => {
     if(!newTerminDate) return;
     setIsSending(true);
@@ -195,12 +194,20 @@ export default function App() {
         formData.append('patientId', patientId!);
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
-        formData.append('nachricht', `Verschiebung gewünscht von ${formatDate(oldDate)} auf ${formatDate(newTerminDate)}.`);
+        
+        // Logik: Datum + optionale Uhrzeit
+        let nachricht = `Verschiebung gewünscht von ${formatDate(oldDate)} auf ${formatDate(newTerminDate)}`;
+        if (newTerminTime) {
+            nachricht += ` um ca. ${newTerminTime} Uhr`;
+        }
+        
+        formData.append('nachricht', nachricht);
         
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setEditingTermin(null);
         setNewTerminDate("");
+        setNewTerminTime(""); // Reset Time
         alert("Änderungswunsch wurde gesendet!");
     } catch(e) { console.error(e); }
     setIsSending(false);
@@ -216,7 +223,6 @@ export default function App() {
         formData.append('patientName', unbox(patientData?.Name));
         formData.append('typ', 'Terminanfrage');
         formData.append('nachricht', `Wunschdatum: ${formatDate(requestDate)}. Grund: ${requestReason}`);
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setSentStatus('success');
@@ -306,14 +312,26 @@ export default function App() {
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left"><p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p><div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p></div>
                 </div>
 
-                {/* LOGIK: Ist Status in Airtable 'Bestätigt' ODER lokal geklickt? */}
+                {/* LOGIK */}
                 {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
                 ) : editingTermin === b.id ? (
-                    // OPTION: Ändern
-                    <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none" style={{ colorScheme: 'light' }} /><button onClick={() => setEditingTermin(null)} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase">Senden</button></div></div>
+                    // OPTION: Ändern MIT UHRZEIT
+                    <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
+                        <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
+                        <div className="flex gap-2 mb-2">
+                            {/* Datum */}
+                            <input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} />
+                            {/* Uhrzeit */}
+                            <input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button>
+                            <button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button>
+                        </div>
+                    </div>
                 ) : (
-                    // OPTION: Buttons (Pastell)
+                    // OPTION: Buttons
                     <div className="flex border-t border-gray-100">
                         <button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button>
                         <button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button>
