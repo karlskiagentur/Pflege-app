@@ -39,15 +39,18 @@ const formatTime = (raw: any) => {
   return val.substring(0, 5);
 };
 
+// Intelligente Titel-Anzeige
 const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
+  const status = unbox(b.Status);
   
-  if ((title === "Terminanfrage App" || unbox(b.Status) === "Anfrage") && note) {
+  // Wenn es eine Anfrage ist oder der Titel generisch ist, suchen wir in der Notiz
+  if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
   }
-  return title;
+  return title || "Termin";
 };
 
 export default function App() {
@@ -73,7 +76,7 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // NEU: Archiv Toggle
+  // Archiv Toggle
   const [showArchive, setShowArchive] = useState(false);
 
   // Termin Management
@@ -81,6 +84,7 @@ export default function App() {
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   
+  // Formular Daten
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   
@@ -139,7 +143,12 @@ export default function App() {
           const fields = b.fields || b;
           return { id: b.id, ...fields };
       });
-      setBesuche(mappedBesuche.sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
+      // Sortierung: Wir behandeln fehlende Daten (neue Anfragen) als "weit in der Zukunft" für die Sortierung, damit sie oben bleiben oder korrekt einsortiert werden
+      setBesuche(mappedBesuche.sort((a:any, b:any) => {
+          const dA = new Date(unbox(a.Datum)).getTime() || 0;
+          const dB = new Date(unbox(b.Datum)).getTime() || 0;
+          return dA - dB;
+      }));
       
       const rawTasks = extract(jsonT);
       setTasks(rawTasks.map((t: any) => {
@@ -165,6 +174,7 @@ export default function App() {
     } catch (e) { console.error(e); } finally { setIsLoggingIn(false); }
   };
 
+  // --- ACTIONS ---
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
@@ -202,7 +212,6 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        // Reload Daten um Status "Änderungswunsch" anzuzeigen
         setTimeout(fetchData, 1000);
     } catch(e) { console.error(e); }
     setIsSending(false);
@@ -230,7 +239,6 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
-            // DATEN NEU LADEN damit die Anfrage mit Status "Anfrage" sichtbar wird
             setTimeout(fetchData, 1500); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
@@ -260,13 +268,33 @@ export default function App() {
 
   const openTasksCount = tasks.filter(t => !t.done).length;
 
-  // -- FILTERLOGIK FÜR ZUKUNFT / VERGANGENHEIT --
+  // -- INTELLIGENTE FILTERLOGIK --
   const today = new Date();
-  today.setHours(0,0,0,0); // Heute 00:00 Uhr
+  today.setHours(0,0,0,0);
   
-  const upcomingBesuche = besuche.filter(b => new Date(unbox(b.Datum)) >= today);
-  const pastBesuche = besuche.filter(b => new Date(unbox(b.Datum)) < today);
-  // ----------------------------------------------
+  // ZUKUNFT: Alles was ab heute ist ODER Status 'Anfrage'/'Änderungswunsch' hat (egal welches Datum)
+  const upcomingBesuche = besuche.filter(b => {
+      const status = unbox(b.Status);
+      const datumVal = unbox(b.Datum);
+      
+      // 1. Priorität: Aktive Vorgänge immer anzeigen
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
+      
+      // 2. Datum prüfen (nur wenn Datum existiert)
+      if (!datumVal) return false;
+      return new Date(datumVal) >= today;
+  });
+
+  // VERGANGENHEIT: Alles was vorbei ist UND NICHT 'Anfrage'/'Änderungswunsch' ist
+  const pastBesuche = besuche.filter(b => {
+      const status = unbox(b.Status);
+      const datumVal = unbox(b.Datum);
+      
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return false; // Gehört nach oben
+      if (!datumVal) return false;
+      return new Date(datumVal) < today;
+  });
+  // ------------------------------
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
@@ -289,7 +317,6 @@ export default function App() {
             
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
             
-            {/* ZUKÜNFTIGE BESUCHE */}
             {upcomingBesuche.map((b, i) => (
               <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
                 <div className="p-6 flex items-center gap-6">
@@ -299,7 +326,6 @@ export default function App() {
                 {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
                 ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" || unbox(b.Status) === "Anfrage" ? (
-                    // HIER: Zeigt "Warten" für Änderungswünsche UND neue Anfragen (Status = Anfrage)
                     <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
                 ) : editingTermin === b.id ? (
                     <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
@@ -308,25 +334,17 @@ export default function App() {
                 )}
               </div>
             ))}
-            
-            {/* ARCHIV (VERGANGENE BESUCHE) */}
+
             {pastBesuche.length > 0 && (
                 <div className="pt-8 text-center">
-                    <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">
-                        {showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})
-                    </button>
-                    
+                    <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">{showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})</button>
                     {showArchive && (
                         <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-4">
                             {pastBesuche.slice().reverse().map((b, i) => (
                                 <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
                                     <div className="p-6 flex items-center gap-6">
                                         <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(b.Uhrzeit)}</p></div>
-                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left">
-                                            <p className="font-bold text-gray-500 text-lg mb-1">{unbox(b.Tätigkeit)}</p>
-                                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b.Datum)}</p>
-                                        </div>
-                                        <History size={20} className="text-gray-300 mr-2"/>
+                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b.Datum)}</p></div><History size={20} className="text-gray-300 mr-2"/>
                                     </div>
                                 </div>
                             ))}
