@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, Clock
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, Clock, AlertCircle
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -39,17 +39,15 @@ const formatTime = (raw: any) => {
   return val.substring(0, 5);
 };
 
-// NEU: Diese Funktion repariert die Anzeige des Titels
+// Titel-Logik (Einkaufen statt Terminanfrage App)
 const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
   
-  // Wenn es eine Anfrage ist, zeigen wir den Grund anstatt "Terminanfrage App"
   if ((title === "Terminanfrage App" || unbox(b.Status) === "Anfrage") && note) {
      if (note.includes("Grund:")) {
-         return note.split("Grund:")[1].trim(); // Holt sich nur das "Einkaufen"
+         return note.split("Grund:")[1].trim(); 
      }
-     // Falls "Wunschdatum" drin steht, versuchen wir es zu bereinigen
      if (note.includes("Wunschdatum")) {
          return "Terminanfrage"; 
      }
@@ -84,8 +82,9 @@ export default function App() {
   // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
+  const [pendingChanges, setPendingChanges] = useState<string[]>([]); // NEU: IDs von Terminen mit Änderungswunsch
   
-  // Uhrzeit State für Verschiebung
+  // Änderungs-Daten
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   
@@ -97,7 +96,7 @@ export default function App() {
   const [urlaubStart, setUrlaubStart] = useState("");
   const [urlaubEnde, setUrlaubEnde] = useState("");
 
-  // KI Button Position
+  // KI Button
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
@@ -131,24 +130,35 @@ export default function App() {
 
       if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
+      // Robuste Extract Funktion (wie in v27)
       const extract = (json: any) => {
         if (!json) return [];
         if (json.data && Array.isArray(json.data)) {
-           if (json.data[0]?.id && json.data[0]?.fields) return json.data; 
+           // Prüfen ob es nested data gibt (n8n Struktur)
+           if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
+           // Oder ob es direkt das Array ist
            return json.data;
         }
-        return Array.isArray(json) ? json : [];
+        if (Array.isArray(json)) return json;
+        return [];
       };
 
-      const rawBesuche = extract(jsonB);
-      const mappedBesuche = rawBesuche.map((b: any) => ({
-        id: b.id, 
-        ... (b.fields || b) 
-      }));
+      // KONTAKTE LADEN (Repariert)
+      setContactData(extract(jsonC));
 
-      setContactData(extract(jsonC).map((c:any) => c.fields || c));
+      // BESUCHE LADEN (Mit ID Mapping)
+      const rawBesuche = extract(jsonB);
+      const mappedBesuche = rawBesuche.map((b: any) => {
+          // Wir versuchen die Felder zu normalisieren, egal ob sie direkt oder in 'fields' liegen
+          const fields = b.fields || b;
+          return {
+              id: b.id, // Die Airtable Record ID ist wichtig
+              ...fields
+          };
+      });
       setBesuche(mappedBesuche.sort((a:any, b:any) => new Date(unbox(a.Datum)).getTime() - new Date(unbox(b.Datum)).getTime()));
       
+      // AUFGABEN LADEN
       const rawTasks = extract(jsonT);
       setTasks(rawTasks.map((t: any) => {
         const data = t.fields || t; 
@@ -204,10 +214,15 @@ export default function App() {
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
-  // 2. Termin verschieben
+  // 2. Termin verschieben (Mit Zeit & Pending-Status)
   const handleTerminReschedule = async (recordId: string, oldDate: string) => {
     if(!newTerminDate) return;
     setIsSending(true);
+    
+    // UI sofort auf "Warten" setzen
+    setPendingChanges([...pendingChanges, recordId]);
+    setEditingTermin(null);
+
     try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
@@ -223,10 +238,9 @@ export default function App() {
         
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
-        setEditingTermin(null);
         setNewTerminDate("");
         setNewTerminTime(""); 
-        alert("Änderungswunsch wurde gesendet!");
+        // alert("Änderungswunsch wurde gesendet!"); // Nicht mehr nötig, da UI Status anzeigt
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -240,7 +254,6 @@ export default function App() {
         formData.append('patientId', patientId!);
         formData.append('patientName', unbox(patientData?.Name));
         formData.append('typ', 'Terminanfrage');
-        // Hier formatieren wir so, dass die App es später gut lesen kann
         formData.append('nachricht', `Wunschdatum: ${formatDate(requestDate)} \nGrund: ${requestReason || "Allgemeine Anfrage"}`);
         
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
@@ -309,7 +322,26 @@ export default function App() {
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div><CalendarIcon size={28}/></div>
             <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>{loading && <RefreshCw size={14} className="animate-spin text-gray-300"/>}</div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? visibleTasks.map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{unbox(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(c.Name)[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{unbox(c.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(c['Rolle/Funktion'])}</p></div></div>{unbox(c.Telefon) && <a href={`tel:${unbox(c.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>))}</div></section>
+            
+            {/* KONTAKTE (Jetzt wieder sichtbar dank Fix in fetchData) */}
+            <section className="space-y-6">
+              <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3>
+              <div className="space-y-3">
+                {contactData.map((c: any, i: number) => {
+                  // Fallback: Manchmal sind Daten direkt im Objekt, manchmal in 'fields'
+                  const data = c.fields || c;
+                  return (
+                    <div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(data.Name || "?")[0]}</div>
+                        <div className="text-left"><p className="font-black text-lg leading-tight">{unbox(data.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(data['Rolle/Funktion'])}</p></div>
+                      </div>
+                      {unbox(data.Telefon) && <a href={`tel:${unbox(data.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           </div>
         )}
 
@@ -329,14 +361,17 @@ export default function App() {
                 <div className="p-6 flex items-center gap-6">
                     <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
-                        {/* HIER WIRD DER TITEL JETZT KORRIGIERT ANGEZEIGT */}
                         <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p>
                     </div>
                 </div>
 
+                {/* LOGIK */}
                 {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
+                ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" ? (
+                    // NEU: Warten auf Rückmeldung (Orange)
+                    <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
                 ) : editingTermin === b.id ? (
                     <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
                         <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
