@@ -39,6 +39,25 @@ const formatTime = (raw: any) => {
   return val.substring(0, 5);
 };
 
+// NEU: Diese Funktion repariert die Anzeige des Titels
+const getDisplayTitle = (b: any) => {
+  const title = unbox(b.Tätigkeit);
+  const note = unbox(b.Notiz_Patient);
+  
+  // Wenn es eine Anfrage ist, zeigen wir den Grund anstatt "Terminanfrage App"
+  if ((title === "Terminanfrage App" || unbox(b.Status) === "Anfrage") && note) {
+     if (note.includes("Grund:")) {
+         return note.split("Grund:")[1].trim(); // Holt sich nur das "Einkaufen"
+     }
+     // Falls "Wunschdatum" drin steht, versuchen wir es zu bereinigen
+     if (note.includes("Wunschdatum")) {
+         return "Terminanfrage"; 
+     }
+     return note;
+  }
+  return title;
+};
+
 export default function App() {
   // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
@@ -66,7 +85,7 @@ export default function App() {
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   
-  // NEU: Uhrzeit State für Verschiebung
+  // Uhrzeit State für Verschiebung
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   
@@ -185,7 +204,7 @@ export default function App() {
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
-  // 2. Termin verschieben (JETZT MIT UHRZEIT)
+  // 2. Termin verschieben
   const handleTerminReschedule = async (recordId: string, oldDate: string) => {
     if(!newTerminDate) return;
     setIsSending(true);
@@ -195,7 +214,6 @@ export default function App() {
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
         
-        // Logik: Datum + optionale Uhrzeit
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDate)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) {
             nachricht += ` um ca. ${newTerminTime} Uhr`;
@@ -207,7 +225,7 @@ export default function App() {
         
         setEditingTermin(null);
         setNewTerminDate("");
-        setNewTerminTime(""); // Reset Time
+        setNewTerminTime(""); 
         alert("Änderungswunsch wurde gesendet!");
     } catch(e) { console.error(e); }
     setIsSending(false);
@@ -222,7 +240,9 @@ export default function App() {
         formData.append('patientId', patientId!);
         formData.append('patientName', unbox(patientData?.Name));
         formData.append('typ', 'Terminanfrage');
-        formData.append('nachricht', `Wunschdatum: ${formatDate(requestDate)}. Grund: ${requestReason}`);
+        // Hier formatieren wir so, dass die App es später gut lesen kann
+        formData.append('nachricht', `Wunschdatum: ${formatDate(requestDate)} \nGrund: ${requestReason || "Allgemeine Anfrage"}`);
+        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setSentStatus('success');
@@ -298,7 +318,6 @@ export default function App() {
           <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Besuchs-Planer</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p></div>
             
-            {/* BUTTON TERMIN ANFRAGEN */}
             <div className="flex justify-center">
                 <button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">
                     <PlusCircle size={16} /> Termin anfragen
@@ -309,20 +328,20 @@ export default function App() {
               <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
                 <div className="p-6 flex items-center gap-6">
                     <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-300">{formatTime(b.Uhrzeit)}</p><p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p></div>
-                    <div className="flex-1 border-l border-gray-100 pl-5 text-left"><p className="font-black text-[#3A3A3A] text-lg mb-2">{unbox(b.Tätigkeit)}</p><div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p></div>
+                    <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                        {/* HIER WIRD DER TITEL JETZT KORRIGIERT ANGEZEIGT */}
+                        <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
+                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div><p className="text-[10px] text-[#b5a48b] mt-3 font-bold uppercase tracking-wider text-left">Am {formatDate(b.Datum)}</p>
+                    </div>
                 </div>
 
-                {/* LOGIK */}
                 {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
                 ) : editingTermin === b.id ? (
-                    // OPTION: Ändern MIT UHRZEIT
                     <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
                         <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
                         <div className="flex gap-2 mb-2">
-                            {/* Datum */}
                             <input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} />
-                            {/* Uhrzeit */}
                             <input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} />
                         </div>
                         <div className="flex justify-end gap-2">
@@ -331,7 +350,6 @@ export default function App() {
                         </div>
                     </div>
                 ) : (
-                    // OPTION: Buttons
                     <div className="flex border-t border-gray-100">
                         <button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button>
                         <button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button>
