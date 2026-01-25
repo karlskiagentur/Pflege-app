@@ -18,7 +18,6 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// Holt das DATUM aus dem ISO-String der Uhrzeit-Spalte
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -37,12 +36,11 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
-// Holt die UHRZEIT aus dem ISO-String der Uhrzeit-Spalte
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
   try {
-      if (val.includes('T') || val.includes('-')) { // ISO Format Erkennung
+      if (val.includes('T') || val.includes('-')) { 
           const d = new Date(val);
           if (!isNaN(d.getTime())) {
               const hours = String(d.getHours()).padStart(2, '0');
@@ -50,12 +48,11 @@ const formatTime = (raw: any) => {
               return `${hours}:${minutes}`;
           }
       }
-      if (val.includes(':')) return val.substring(0, 5); // Fallback für reinen Text
+      if (val.includes(':')) return val.substring(0, 5); 
       return val;
   } catch { return "--:--"; }
 };
 
-// Titel-Logik
 const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
@@ -68,7 +65,6 @@ const getDisplayTitle = (b: any) => {
   return title || "Termin";
 };
 
-// Vorschlags-Daten aus Notiz (falls Uhrzeit-Spalte noch leer ist)
 const getProposedDetails = (b: any) => {
     const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
@@ -145,12 +141,15 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN ---
-  const fetchData = async () => {
+  // --- DATEN LADEN (Optimiert für Background-Refresh) ---
+  // Parameter 'background' steuert, ob der Ladekreis angezeigt wird
+  const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
+    
     try {
-      setLoading(true);
+      if (!background) setLoading(true); // Nur Spinner zeigen, wenn nicht im Hintergrund
+      
       const [resP, resC, resB, resT] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
         fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
@@ -181,7 +180,6 @@ export default function App() {
           return { id: b.id, ...fields };
       });
       
-      // SORTIERUNG JETZT NACH "UHRZEIT" (enthält Datum+Zeit)
       setBesuche(mappedBesuche.sort((a:any, b:any) => {
           const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
           const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
@@ -195,10 +193,23 @@ export default function App() {
       }));
 
     } catch (e) { console.error("Ladefehler:", e); } 
-    finally { setLoading(false); }
+    finally { if (!background) setLoading(false); }
   };
 
-  useEffect(() => { if (patientId) fetchData(); }, [patientId]);
+  // AUTO-REFRESH LOGIK
+  useEffect(() => { 
+      if (patientId) {
+          // 1. Sofort laden (mit Spinner)
+          fetchData(false);
+          
+          // 2. Alle 5 Sekunden still aktualisieren (ohne Spinner)
+          const interval = setInterval(() => {
+              fetchData(true);
+          }, 5000); // 5000ms = 5 Sekunden
+
+          return () => clearInterval(interval); // Aufräumen beim Beenden
+      }
+  }, [patientId]);
 
   // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -227,6 +238,8 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        // Force Reload um Status "Bestätigt" auch sauber vom Server zu haben
+        setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
@@ -242,7 +255,6 @@ export default function App() {
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
         
-        // formatDate extrahiert das Datum aus dem ISO String von 'Uhrzeit'
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
         
@@ -250,7 +262,7 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(fetchData, 1000);
+        setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -277,7 +289,7 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
-            setTimeout(fetchData, 1500); 
+            setTimeout(() => fetchData(true), 1500); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -309,11 +321,9 @@ export default function App() {
   const today = new Date();
   today.setHours(0,0,0,0);
   
-  // FILTERLOGIK BASIERT JETZT AUF 'Uhrzeit' SPALTE
   const upcomingBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
-      const zeitVal = unbox(b.Uhrzeit); // Hier greifen wir auf 'Uhrzeit' zu
-      
+      const zeitVal = unbox(b.Uhrzeit); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
       if (!zeitVal) return false;
       return new Date(zeitVal) >= today;
@@ -321,8 +331,7 @@ export default function App() {
 
   const pastBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
-      const zeitVal = unbox(b.Uhrzeit); // Hier greifen wir auf 'Uhrzeit' zu
-      
+      const zeitVal = unbox(b.Uhrzeit); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
       if (!zeitVal) return false;
       return new Date(zeitVal) < today;
@@ -351,7 +360,6 @@ export default function App() {
             
             {upcomingBesuche.map((b, i) => {
                 const proposed = getProposedDetails(b);
-                // ANZEIGE: Nutzen jetzt 'Uhrzeit' statt 'Datum'
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
