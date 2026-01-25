@@ -9,21 +9,21 @@ import {
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
-// --- HELFER-FUNKTIONEN (REPARIERT) ---
+// --- HELFER-FUNKTIONEN ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
-  if (Array.isArray(val) && val.length > 0) return unbox(val[0]); // Rekursiv falls Array im Array
+  if (Array.isArray(val) && val.length > 0) return unbox(val[0]); 
   if (Array.isArray(val) && val.length === 0) return "";
   if (typeof val === 'object') return ""; 
   return String(val);
 };
 
+// Holt das DATUM aus dem ISO-String der Uhrzeit-Spalte
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
   try {
     const d = new Date(val);
-    // Prüfen ob Datum valide ist
     if (!isNaN(d.getTime())) {
         if (short) { 
           const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
@@ -33,16 +33,16 @@ const formatDate = (raw: any, short = false) => {
         const month = String(d.getMonth() + 1).padStart(2, '0');
         return `${day}.${month}.${d.getFullYear()}`;
     }
-    return val; // Fallback falls kein Datum erkannt
+    return val; 
   } catch { return val; }
 };
 
+// Holt die UHRZEIT aus dem ISO-String der Uhrzeit-Spalte
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
   try {
-      // Versuch 1: Ist es ein ISO Datum? (z.B. 2026-02-01T14:00:00.000Z)
-      if (val.includes('T') || val.includes('-')) {
+      if (val.includes('T') || val.includes('-')) { // ISO Format Erkennung
           const d = new Date(val);
           if (!isNaN(d.getTime())) {
               const hours = String(d.getHours()).padStart(2, '0');
@@ -50,10 +50,7 @@ const formatTime = (raw: any) => {
               return `${hours}:${minutes}`;
           }
       }
-      // Versuch 2: Ist es nur Text? (z.B. 14:00:00)
-      if (val.includes(':')) {
-          return val.substring(0, 5);
-      }
+      if (val.includes(':')) return val.substring(0, 5); // Fallback für reinen Text
       return val;
   } catch { return "--:--"; }
 };
@@ -71,7 +68,7 @@ const getDisplayTitle = (b: any) => {
   return title || "Termin";
 };
 
-// Vorschlags-Daten Logik
+// Vorschlags-Daten aus Notiz (falls Uhrzeit-Spalte noch leer ist)
 const getProposedDetails = (b: any) => {
     const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
@@ -184,9 +181,10 @@ export default function App() {
           return { id: b.id, ...fields };
       });
       
+      // SORTIERUNG JETZT NACH "UHRZEIT" (enthält Datum+Zeit)
       setBesuche(mappedBesuche.sort((a:any, b:any) => {
-          const dA = new Date(unbox(a.Datum)).getTime() || 0;
-          const dB = new Date(unbox(b.Datum)).getTime() || 0;
+          const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
+          const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
           return dA - dB;
       }));
       
@@ -232,7 +230,7 @@ export default function App() {
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
-  const handleTerminReschedule = async (recordId: string, oldDate: string) => {
+  const handleTerminReschedule = async (recordId: string, oldDateRaw: string) => {
     if(!newTerminDate) return;
     setIsSending(true);
     setPendingChanges([...pendingChanges, recordId]);
@@ -244,7 +242,8 @@ export default function App() {
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
         
-        let nachricht = `Verschiebung gewünscht von ${formatDate(oldDate)} auf ${formatDate(newTerminDate)}`;
+        // formatDate extrahiert das Datum aus dem ISO String von 'Uhrzeit'
+        let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
         
         formData.append('nachricht', nachricht);
@@ -310,20 +309,23 @@ export default function App() {
   const today = new Date();
   today.setHours(0,0,0,0);
   
+  // FILTERLOGIK BASIERT JETZT AUF 'Uhrzeit' SPALTE
   const upcomingBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
-      const datumVal = unbox(b.Datum);
+      const zeitVal = unbox(b.Uhrzeit); // Hier greifen wir auf 'Uhrzeit' zu
+      
       if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
-      if (!datumVal) return false;
-      return new Date(datumVal) >= today;
+      if (!zeitVal) return false;
+      return new Date(zeitVal) >= today;
   });
 
   const pastBesuche = besuche.filter(b => {
       const status = unbox(b.Status);
-      const datumVal = unbox(b.Datum);
+      const zeitVal = unbox(b.Uhrzeit); // Hier greifen wir auf 'Uhrzeit' zu
+      
       if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
-      if (!datumVal) return false;
-      return new Date(datumVal) < today;
+      if (!zeitVal) return false;
+      return new Date(zeitVal) < today;
   });
 
   return (
@@ -347,18 +349,17 @@ export default function App() {
             
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
             
-            {/* ZUKÜNFTIGE BESUCHE & ANFRAGEN */}
             {upcomingBesuche.map((b, i) => {
                 const proposed = getProposedDetails(b);
+                // ANZEIGE: Nutzen jetzt 'Uhrzeit' statt 'Datum'
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
-                const showDate = unbox(b.Datum) ? formatDate(b.Datum) : (proposed ? proposed.date : "-");
-                const isProposed = !unbox(b.Datum) && proposed; 
+                const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
+                const isProposed = !unbox(b.Uhrzeit) && proposed; 
 
                 return (
                   <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
                     <div className="p-6 flex items-center gap-6">
                         <div className="text-center min-w-[60px]">
-                            {/* ZEIT: Einheitlich formatiert */}
                             <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
                             <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                         </div>
@@ -373,7 +374,7 @@ export default function App() {
                     ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" || unbox(b.Status) === "Anfrage" ? (
                         <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
                     ) : editingTermin === b.id ? (
-                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Datum))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
+                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Uhrzeit))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
                     ) : (
                         <div className="flex border-t border-gray-100"><button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button><button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button></div>
                     )}
@@ -390,7 +391,7 @@ export default function App() {
                                 <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
                                     <div className="p-6 flex items-center gap-6">
                                         <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(b.Uhrzeit)}</p></div>
-                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b.Datum)}</p></div><History size={20} className="text-gray-300 mr-2"/>
+                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b.Uhrzeit)}</p></div><History size={20} className="text-gray-300 mr-2"/>
                                     </div>
                                 </div>
                             ))}
