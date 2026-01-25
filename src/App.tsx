@@ -18,6 +18,7 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
+// Standard Datum (24.01.2026)
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -36,6 +37,20 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
+// NEU: Langes Datum für Geburtstag (25. Januar 2026)
+const formatDateLong = (raw: any) => {
+  const val = unbox(raw);
+  if (!val || val === "-") return "-";
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    return val; 
+  } catch { return val; }
+};
+
+// Uhrzeit aus ISO String
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -141,14 +156,13 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN (Optimiert für Background-Refresh) ---
-  // Parameter 'background' steuert, ob der Ladekreis angezeigt wird
+  // --- DATEN LADEN (Auto-Refresh) ---
   const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
     try {
-      if (!background) setLoading(true); // Nur Spinner zeigen, wenn nicht im Hintergrund
+      if (!background) setLoading(true);
       
       const [resP, resC, resB, resT] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
@@ -196,18 +210,13 @@ export default function App() {
     finally { if (!background) setLoading(false); }
   };
 
-  // AUTO-REFRESH LOGIK
   useEffect(() => { 
       if (patientId) {
-          // 1. Sofort laden (mit Spinner)
           fetchData(false);
-          
-          // 2. Alle 5 Sekunden still aktualisieren (ohne Spinner)
           const interval = setInterval(() => {
               fetchData(true);
-          }, 5000); // 5000ms = 5 Sekunden
-
-          return () => clearInterval(interval); // Aufräumen beim Beenden
+          }, 5000); 
+          return () => clearInterval(interval);
       }
   }, [patientId]);
 
@@ -238,7 +247,6 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        // Force Reload um Status "Bestätigt" auch sauber vom Server zu haben
         setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
@@ -346,7 +354,7 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div><CalendarIcon size={28}/></div>
             <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>{loading && <RefreshCw size={14} className="animate-spin text-gray-300"/>}</div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{unbox(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
+            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { const data = c.fields || c; return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(data.Name || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{unbox(data.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(data['Rolle/Funktion'])}</p></div></div>{unbox(data.Telefon) && <a href={`tel:${unbox(data.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
           </div>
         )}
