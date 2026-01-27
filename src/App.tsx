@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -18,24 +18,6 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-const formatDate = (raw: any, short = false) => {
-  const val = unbox(raw);
-  if (!val || val === "-") return "-";
-  try {
-    const d = new Date(val);
-    if (!isNaN(d.getTime())) {
-        if (short) { 
-          const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
-          return days[d.getDay()]; 
-        }
-        const day = String(d.getDate()).padStart(2, '0');
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        return `${day}.${month}.${d.getFullYear()}`;
-    }
-    return val; 
-  } catch { return val; }
-};
-
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -43,6 +25,21 @@ const formatDateLong = (raw: any) => {
     const d = new Date(val);
     if (!isNaN(d.getTime())) {
         return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
+    }
+    return val; 
+  } catch { return val; }
+};
+
+const formatDate = (raw: any, short = false) => {
+  const val = unbox(raw);
+  if (!val || val === "-") return "-";
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+        if (short) { const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; return days[d.getDay()]; }
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        return `${day}.${month}.${d.getFullYear()}`;
     }
     return val; 
   } catch { return val; }
@@ -95,7 +92,7 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
-// Kurze Pause Helfer
+// Hilfsfunktion für Pausen
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function App() {
@@ -107,6 +104,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   
+  // FEHLER DIAGNOSE STATE
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   // Daten
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
@@ -142,11 +142,9 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // --- SYSTEM REFS (DAS HERZSTÜCK) ---
+  // Refs
   const besucheRef = useRef<any[]>([]);
-  const isFetchingRef = useRef(false); // Verhindert doppelte Aufrufe
-  const lastFetchTimeRef = useRef<number>(0); // Speichert wann zuletzt geladen wurde
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const isFetchingRef = useRef(false); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -158,38 +156,49 @@ export default function App() {
     });
   };
 
-  // --- MASTER FETCH LOGIK ---
-  // force = true: Ignoriert die Zeitsperre (z.B. bei Klick auf Refresh)
-  // background = true: Zeigt keinen Spinner (z.B. Auto-Check)
-  const fetchData = async (force = false, background = false) => {
+  // --- STRICT MANUAL FETCH ---
+  const fetchData = async () => {
+    // Wenn schon geladen wird, ABBRUCH. Keine Warteschlange.
+    if (isFetchingRef.current) return;
+    
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
-    // 1. ÜBERLASTUNGSSCHUTZ: Läuft schon was?
-    if (isFetchingRef.current) return;
-
-    // 2. ZEITSPERRE: Nur alle 60 Sekunden laden, außer 'force' ist an
-    const now = Date.now();
-    if (!force && (now - lastFetchTimeRef.current < 60000)) {
-        // Daten sind noch frisch genug, wir machen nichts.
-        return;
-    }
-
-    // Ab hier wird geladen -> Tür zu
     isFetchingRef.current = true;
-    lastFetchTimeRef.current = now;
-
-    // Spinner Logik
-    if (!background) setLoading(true);
-
-    // Timeout-Schutz: Nach 15 Sekunden brechen wir hart ab
-    if (abortControllerRef.current) abortControllerRef.current.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    setLoading(true);
+    setErrorMsg(null); // Reset Error
 
     try {
-        const fetchWithSignal = (url: string) => fetch(url, { signal: controller.signal });
+        const fetchUrl = (endpoint: string) => `${N8N_BASE_URL}/${endpoint}?patientId=${id}`;
+        
+        // 1. Stammdaten
+        const resP = await fetch(fetchUrl('get_data_patienten'));
+        if (!resP.ok) throw new Error(`Patienten-Daten Fehler: ${resP.status}`);
+        const jsonP = await resP.json();
+        if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+        
+        await delay(500); // Bremse
+
+        // 2. Kontakte
+        const resC = await fetch(fetchUrl('get_data_kontakte'));
+        if (!resC.ok) throw new Error(`Kontakte Fehler: ${resC.status}`);
+        const jsonC = await resC.json();
+        
+        await delay(500);
+
+        // 3. Besuche
+        const resB = await fetch(fetchUrl('get_data_besuche'));
+        if (!resB.ok) throw new Error(`Besuche Fehler: ${resB.status}`);
+        const jsonB = await resB.json();
+
+        await delay(500);
+
+        // 4. Tasks
+        const resT = await fetch(fetchUrl('get_tasks'));
+        if (!resT.ok) throw new Error(`Tasks Fehler: ${resT.status}`);
+        const jsonT = await resT.json();
+
+        // --- VERARBEITUNG ---
         const extract = (json: any) => {
             if (!json) return [];
             if (json.data && Array.isArray(json.data)) {
@@ -199,35 +208,8 @@ export default function App() {
             return Array.isArray(json) ? json : [];
         };
 
-        // --- WASSERFALL START ---
-        // 1. Stammdaten
-        const resP = await fetchWithSignal(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
-        const jsonP = await resP.json();
-        if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-        
-        await delay(500); // Kurze Atempause für den Server
-
-        // 2. Kontakte
-        const resC = await fetchWithSignal(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
-        const jsonC = await resC.json();
         setContactData(extract(jsonC));
 
-        await delay(500);
-
-        // 3. Besuche (Wichtig!)
-        const resB = await fetchWithSignal(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
-        const jsonB = await resB.json();
-
-        await delay(500);
-
-        // 4. Tasks
-        const resT = await fetchWithSignal(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
-        const jsonT = await resT.json();
-        // --- WASSERFALL ENDE ---
-
-        clearTimeout(timeoutId); // Alles gut gegangen
-
-        // Daten verarbeiten
         const rawBesuche = extract(jsonB);
         const mappedBesuche = rawBesuche.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
         const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
@@ -236,23 +218,18 @@ export default function App() {
             return dA - dB;
         });
 
-        // Banner & Highlight Logik
+        // Highlight Check
         if (besucheRef.current.length > 0) {
             const changes: string[] = [];
             sortedBesuche.forEach(newItem => {
                 const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit)) {
+                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
                     changes.push(newItem.id);
                 }
             });
-
             if (changes.length > 0) {
-                if (background) {
-                    setShowUpdateBanner(true);
-                } else {
-                    setHighlightedIds(changes);
-                    setTimeout(() => setHighlightedIds([]), 180000); // 3 Minuten Highlight
-                }
+                setHighlightedIds(changes);
+                setTimeout(() => setHighlightedIds([]), 180000);
             }
         }
 
@@ -266,36 +243,20 @@ export default function App() {
         }));
 
     } catch (e: any) {
-        if (e.name !== 'AbortError') console.error("Update fehlgeschlagen:", e);
+        console.error("CRITICAL ERROR:", e);
+        setErrorMsg(e.message || "Verbindungsfehler");
     } finally {
-        isFetchingRef.current = false; // Tür wieder auf
-        if (!background) setLoading(false);
+        isFetchingRef.current = false;
+        setLoading(false);
     }
   };
 
-  // --- AUTOMATISIERUNG ---
-  
-  // 1. Initial Start (Force Load)
+  // --- INITIAL LOAD ONLY ---
+  // Kein Interval, kein Auto-Update. Nur 1x beim Start.
   useEffect(() => { 
-      if (patientId) fetchData(true);
+      if (patientId) fetchData();
   }, [patientId]);
 
-  // 2. Tab-Wechsel (Soft Load - respektiert 60s Sperre)
-  useEffect(() => { 
-      if (patientId) fetchData(false);
-  }, [patientId, activeTab]);
-
-  // 3. App kommt in Vordergrund (Soft Load)
-  useEffect(() => {
-      const handleFocus = () => { if (patientId) fetchData(false); };
-      window.addEventListener('focus', handleFocus);
-      document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible' && patientId) fetchData(false);
-      });
-      return () => {
-          window.removeEventListener('focus', handleFocus);
-      };
-  }, [patientId]);
 
   // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -305,8 +266,10 @@ export default function App() {
       const data = await res.json();
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
+      } else {
+          alert("Login fehlgeschlagen. Bitte prüfen.");
       }
-    } catch (e) { console.error(e); } finally { setIsLoggingIn(false); }
+    } catch (e) { console.error(e); alert("Server-Fehler beim Login."); } finally { setIsLoggingIn(false); }
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
@@ -324,8 +287,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        // Nach Aktion kurz warten und dann FORCE refresh
-        setTimeout(() => fetchData(true), 2000);
+        setTimeout(fetchData, 2000);
     } catch(e) { console.error(e); }
   };
 
@@ -345,7 +307,7 @@ export default function App() {
         formData.append('nachricht', nachricht);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(() => fetchData(true), 2000);
+        setTimeout(fetchData, 2000);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -366,7 +328,7 @@ export default function App() {
         setSentStatus('success');
         setTimeout(() => { 
             setActiveModal(null); setSentStatus('idle'); setRequestDate(""); setRequestTime(""); setRequestReason("");
-            setTimeout(() => fetchData(true), 2000); 
+            setTimeout(fetchData, 2000); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -386,14 +348,9 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
+      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(); }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
-  };
-
-  // BANNER CLICK -> ERZWINGT UPDATE
-  const handleBannerClick = () => {
-      fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
@@ -421,21 +378,23 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {showUpdateBanner && (
-          <button onClick={handleBannerClick} className="fixed top-0 left-0 right-0 z-[100] bg-[#3A3A3A] text-white p-8 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-[#b5a48b]">
-              <div className="flex items-center gap-3 mb-2">
-                  <div className="bg-white/20 p-3 rounded-full animate-bounce"><Bell size={32} /></div>
-                  <span className="font-black text-xl uppercase tracking-wide">Neuer Hinweis für Sie</span>
+      {/* ERROR MONITORING - Zeigt an wenn was kaputt ist */}
+      {errorMsg && (
+          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3">
+              <AlertTriangle size={24}/>
+              <div>
+                  <strong className="font-bold">Verbindungsfehler!</strong>
+                  <span className="block text-sm">{errorMsg} - Bitte später probieren.</span>
               </div>
-              <p className="text-base opacity-90 font-bold underline decoration-2 underline-offset-4 text-[#b5a48b]">Hier tippen zum Aktualisieren</p>
-          </button>
+              <button onClick={() => setErrorMsg(null)} className="absolute top-2 right-2"><X size={16}/></button>
+          </div>
       )}
 
       <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
+             <button onClick={() => fetchData()} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
           </div>
           <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
@@ -456,6 +415,7 @@ export default function App() {
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Besuchs-Planer</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p></div>
+            
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
             
             {upcomingBesuche.map((b, i) => {
@@ -463,6 +423,7 @@ export default function App() {
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
+                
                 const isHighlighted = highlightedIds.includes(b.id);
 
                 return (
