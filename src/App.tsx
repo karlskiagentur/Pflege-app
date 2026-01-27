@@ -148,9 +148,10 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // Refs für Sicherheit & Vergleiche
+  // Refs
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
+  const abortControllerRef = useRef<AbortController | null>(null); // NEU: Abbruch-Signal
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -162,28 +163,42 @@ export default function App() {
     });
   };
 
-  // --- SICHERES DATEN LADEN MIT HIGHLIGHTING ---
+  // --- ROBUSRE DATEN-LADE FUNKTION ---
   const fetchData = async (background = false) => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current) return; // Wenn schon geladen wird, sofort raus.
     
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
+    // Alten Request abbrechen falls vorhanden
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    
     isFetchingRef.current = true; 
     if (!background) setLoading(true);
     
-    try {
-      const [resP, resC, resB, resT] = await Promise.all([
-        fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
-        fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
-        fetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`),
-        fetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`)
-      ]);
-      
-      const jsonP = await resP.json(); const jsonC = await resC.json();
-      const jsonB = await resB.json(); const jsonT = await resT.json();
+    // Timeout Promise: Bricht nach 10 Sekunden hart ab
+    const timeoutId = setTimeout(() => controller.abort(), 10000); 
 
-      if (jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+    try {
+      const fetchWithSignal = (url: string) => fetch(url, { signal: controller.signal });
+
+      const responses = await Promise.all([
+        fetchWithSignal(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
+        fetchWithSignal(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
+        fetchWithSignal(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`),
+        fetchWithSignal(`${N8N_BASE_URL}/get_tasks?patientId=${id}`)
+      ]);
+
+      // JSON Parsing sicher machen
+      const [jsonP, jsonC, jsonB, jsonT] = await Promise.all(
+          responses.map(r => r.ok ? r.json() : Promise.resolve({})) // Fehlerhafte Responses ignorieren
+      );
+
+      clearTimeout(timeoutId); // Timeout löschen, da erfolgreich
+
+      if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
       
       const extract = (json: any) => {
         if (!json) return [];
@@ -224,10 +239,8 @@ export default function App() {
               if (background) {
                   setShowUpdateBanner(true);
               } else {
-                  // Manuelles Update: Highlight setzen
                   setHighlightedIds(changes);
-                  // Highlight nach 3 MINUTEN (180.000 ms) entfernen
-                  setTimeout(() => setHighlightedIds([]), 180000);
+                  setTimeout(() => setHighlightedIds([]), 180000); // 3 Min Highlight
               }
           }
       }
@@ -241,15 +254,19 @@ export default function App() {
         return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
       }));
 
-    } catch (e) { 
-        console.error("Ladefehler:", e); 
+    } catch (e: any) { 
+        if (e.name === 'AbortError') {
+            console.log("Fetch abgebrochen (Timeout oder Navigation)");
+        } else {
+            console.error("Ladefehler:", e); 
+        }
     } finally { 
         isFetchingRef.current = false; 
         if (!background) setLoading(false); 
     }
   };
 
-  // --- SMART UPDATE LOGIK ---
+  // --- SMART POLLING ---
   const triggerFastPolling = () => {
       setIsFastPolling(true);
       setTimeout(() => setIsFastPolling(false), 120000); 
@@ -267,8 +284,9 @@ export default function App() {
 
   useEffect(() => {
       let interval: any;
-      if (patientId && isFastPolling) {
-          interval = setInterval(() => { fetchData(true); }, 10000);
+      if (patientId) {
+          const time = isFastPolling ? 10000 : 900000; 
+          interval = setInterval(() => { fetchData(true); }, time);
       }
       return () => clearInterval(interval);
   }, [patientId, isFastPolling]);
@@ -414,7 +432,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* BANNER */}
+      {/* BANNER MIT NEUEM TEXT */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
