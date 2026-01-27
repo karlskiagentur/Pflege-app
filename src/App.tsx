@@ -121,8 +121,9 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Banner & Archiv
+  // Banner & Highlight
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [highlightedIds, setHighlightedIds] = useState<string[]>([]); // NEU: IDs die aufblinken sollen
   const [showArchive, setShowArchive] = useState(false);
 
   // Termin Management
@@ -160,7 +161,7 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN MIT VERGLEICH ---
+  // --- DATEN LADEN MIT CHANGE DETECTION ---
   const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -205,13 +206,31 @@ export default function App() {
           return dA - dB;
       });
 
-      // CHANGE DETECTION
-      if (background && besucheRef.current.length > 0) {
-          const oldData = JSON.stringify(besucheRef.current.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
-          const newData = JSON.stringify(sortedBesuche.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
+      // --- LOGIK: WAS HAT SICH GEÄNDERT? ---
+      if (besucheRef.current.length > 0) {
+          const changes: string[] = [];
           
-          if (oldData !== newData) {
-              setShowUpdateBanner(true); 
+          sortedBesuche.forEach(newItem => {
+              const oldItem = besucheRef.current.find(old => old.id === newItem.id);
+              // Check: Ist es neu ODER hat sich Status/Zeit/Notiz geändert?
+              if (!oldItem || 
+                  unbox(oldItem.Status) !== unbox(newItem.Status) || 
+                  unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) ||
+                  unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
+                  changes.push(newItem.id);
+              }
+          });
+
+          if (changes.length > 0) {
+              if (background) {
+                  // Im Hintergrund: Nur Banner zeigen
+                  setShowUpdateBanner(true);
+              } else {
+                  // Manuell (Banner Klick): Hervorheben!
+                  setHighlightedIds(changes);
+                  // Highlight nach 3 Sekunden entfernen
+                  setTimeout(() => setHighlightedIds([]), 3000);
+              }
           }
       }
 
@@ -228,36 +247,24 @@ export default function App() {
     finally { if (!background) setLoading(false); }
   };
 
-  // --- SMART POLLING, FOKUS & NAVIGATION ---
+  // --- SMART POLLING ---
   const triggerFastPolling = () => {
       setIsFastPolling(true);
       setTimeout(() => setIsFastPolling(false), 120000); 
   };
 
-  // 1. Initial Laden & Navigation Update (NEU: activeTab Dependency)
   useEffect(() => { 
-      if (patientId) {
-          fetchData(true); // Lädt neu bei jedem Tab-Wechsel (leise)
-      }
-  }, [patientId, activeTab]); // <--- HIER: activeTab hinzugefügt
+      if (patientId) fetchData(true); // Tab Wechsel Refresh
+  }, [patientId, activeTab]);
 
-  // 2. Fokus & Sichtbarkeit
   useEffect(() => {
-      const handleResume = () => {
-          if (document.visibilityState === 'visible' && patientId) fetchData(true);
-      };
+      const handleResume = () => { if (document.visibilityState === 'visible' && patientId) fetchData(true); };
       const handleFocus = () => { if (patientId) fetchData(true); };
-
       document.addEventListener('visibilitychange', handleResume);
       window.addEventListener('focus', handleFocus);
-
-      return () => {
-          document.removeEventListener('visibilitychange', handleResume);
-          window.removeEventListener('focus', handleFocus);
-      };
+      return () => { document.removeEventListener('visibilitychange', handleResume); window.removeEventListener('focus', handleFocus); };
   }, [patientId]);
 
-  // 3. Intervalle (Fast / Slow)
   useEffect(() => {
       let interval: any;
       if (patientId) {
@@ -374,6 +381,7 @@ export default function App() {
     setIsSending(false);
   };
 
+  // BANNER CLICK: Löst Refresh aus, was wiederum das Highlighting auslöst
   const handleBannerClick = () => {
       setLoading(true); 
       fetchData(false).then(() => {
@@ -408,7 +416,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* UPDATE BANNER */}
+      {/* BANNER MIT NEUEM TEXT */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -416,7 +424,7 @@ export default function App() {
           >
               <div className="flex items-center gap-3 mb-2">
                   <div className="bg-white/20 p-3 rounded-full animate-bounce"><Bell size={32} /></div>
-                  <span className="font-black text-xl uppercase tracking-wide">Neue Information für Sie</span>
+                  <span className="font-black text-xl uppercase tracking-wide">Neuer Hinweis für Sie</span>
               </div>
               <p className="text-base opacity-90 font-bold underline decoration-2 underline-offset-4 text-[#b5a48b]">Hier tippen zum Aktualisieren</p>
           </button>
@@ -426,7 +434,8 @@ export default function App() {
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
+             {/* REFRESH BUTTON DREHT SICH JETZT (animate-spin) */}
+             <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
           </div>
           <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
@@ -455,9 +464,12 @@ export default function App() {
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
+                
+                // HIGHLIGHT LOGIK: Goldener Rahmen + Schimmer
+                const isHighlighted = highlightedIds.includes(b.id);
 
                 return (
-                  <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
+                  <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                     <div className="p-6 flex items-center gap-6">
                         <div className="text-center min-w-[60px]">
                             <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
