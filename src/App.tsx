@@ -9,13 +9,31 @@ import {
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
-// --- HELFER ---
+// --- HELFER-FUNKTIONEN ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
-  if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
+  if (Array.isArray(val) && val.length > 0) return unbox(val[0]); 
   if (Array.isArray(val) && val.length === 0) return "";
-  if (typeof val === 'object') return "";
+  if (typeof val === 'object') return ""; 
   return String(val);
+};
+
+const formatDate = (raw: any, short = false) => {
+  const val = unbox(raw);
+  if (!val || val === "-") return "-";
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+        if (short) { 
+          const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
+          return days[d.getDay()]; 
+        }
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        return `${day}.${month}.${d.getFullYear()}`;
+    }
+    return val; 
+  } catch { return val; }
 };
 
 const formatDateLong = (raw: any) => {
@@ -25,21 +43,6 @@ const formatDateLong = (raw: any) => {
     const d = new Date(val);
     if (!isNaN(d.getTime())) {
         return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
-    }
-    return val; 
-  } catch { return val; }
-};
-
-const formatDate = (raw: any, short = false) => {
-  const val = unbox(raw);
-  if (!val || val === "-") return "-";
-  try {
-    const d = new Date(val);
-    if (!isNaN(d.getTime())) {
-        if (short) { const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; return days[d.getDay()]; }
-        const day = String(d.getDate()).padStart(2, '0');
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        return `${day}.${month}.${d.getFullYear()}`;
     }
     return val; 
   } catch { return val; }
@@ -66,6 +69,7 @@ const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
   const status = unbox(b.Status);
+  
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
@@ -76,11 +80,13 @@ const getDisplayTitle = (b: any) => {
 const getProposedDetails = (b: any) => {
     const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
+    
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
             const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
             let pDate = datePart;
             let pTime = "--:--";
+
             if (datePart.includes(" um ")) {
                 const parts = datePart.split(" um ");
                 pDate = parts[0];
@@ -92,7 +98,7 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
-// Hilfsfunktion für Pausen
+// HELFER FÜR PAUSEN (DAS RETTET DEN SERVER)
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function App() {
@@ -103,10 +109,8 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
-  
-  // FEHLER DIAGNOSE STATE
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
+  
   // Daten
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
@@ -114,23 +118,24 @@ export default function App() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [showAllTasks, setShowAllTasks] = useState(false);
 
-  // UI
+  // UI / Modals
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Features
+  // Banner & Highlight
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
+  // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   
-  // Forms
+  // Formular Daten
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   const [requestDate, setRequestDate] = useState("");
@@ -144,7 +149,7 @@ export default function App() {
 
   // Refs
   const besucheRef = useRef<any[]>([]);
-  const isFetchingRef = useRef(false); 
+  const isFetchingRef = useRef(false); // Die Türsteher-Funktion
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -156,106 +161,140 @@ export default function App() {
     });
   };
 
-  // --- STRICT MANUAL FETCH ---
-  const fetchData = async () => {
-    // Wenn schon geladen wird, ABBRUCH. Keine Warteschlange.
-    if (isFetchingRef.current) return;
+  // --- DER "WASSERFALL" FETCH (SEQUENZIELL) ---
+  const fetchData = async (background = false) => {
+    if (isFetchingRef.current) return; // Blockieren, wenn schon geladen wird
     
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
-
-    isFetchingRef.current = true;
-    setLoading(true);
-    setErrorMsg(null); // Reset Error
-
+    
+    isFetchingRef.current = true; 
+    if (!background) setLoading(true);
+    setErrorMsg(null);
+    
     try {
-        const fetchUrl = (endpoint: string) => `${N8N_BASE_URL}/${endpoint}?patientId=${id}`;
-        
-        // 1. Stammdaten
-        const resP = await fetch(fetchUrl('get_data_patienten'));
-        if (!resP.ok) throw new Error(`Patienten-Daten Fehler: ${resP.status}`);
-        const jsonP = await resP.json();
-        if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-        
-        await delay(500); // Bremse
+      // Hilfsfunktion für den Fetch
+      const safeFetch = async (url: string) => {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+      };
 
-        // 2. Kontakte
-        const resC = await fetch(fetchUrl('get_data_kontakte'));
-        if (!resC.ok) throw new Error(`Kontakte Fehler: ${resC.status}`);
-        const jsonC = await resC.json();
-        
-        await delay(500);
-
-        // 3. Besuche
-        const resB = await fetch(fetchUrl('get_data_besuche'));
-        if (!resB.ok) throw new Error(`Besuche Fehler: ${resB.status}`);
-        const jsonB = await resB.json();
-
-        await delay(500);
-
-        // 4. Tasks
-        const resT = await fetch(fetchUrl('get_tasks'));
-        if (!resT.ok) throw new Error(`Tasks Fehler: ${resT.status}`);
-        const jsonT = await resT.json();
-
-        // --- VERARBEITUNG ---
-        const extract = (json: any) => {
-            if (!json) return [];
-            if (json.data && Array.isArray(json.data)) {
-               if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
-               return json.data;
-            }
-            return Array.isArray(json) ? json : [];
-        };
-
-        setContactData(extract(jsonC));
-
-        const rawBesuche = extract(jsonB);
-        const mappedBesuche = rawBesuche.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
-        const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
-            const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
-            const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
-            return dA - dB;
-        });
-
-        // Highlight Check
-        if (besucheRef.current.length > 0) {
-            const changes: string[] = [];
-            sortedBesuche.forEach(newItem => {
-                const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
-                    changes.push(newItem.id);
-                }
-            });
-            if (changes.length > 0) {
-                setHighlightedIds(changes);
-                setTimeout(() => setHighlightedIds([]), 180000);
-            }
+      const extract = (json: any) => {
+        if (!json) return [];
+        if (json.data && Array.isArray(json.data)) {
+           if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
+           return json.data;
         }
+        return Array.isArray(json) ? json : [];
+      };
 
-        setBesuche(sortedBesuche);
-        besucheRef.current = sortedBesuche;
-        
-        const rawTasks = extract(jsonT);
-        setTasks(rawTasks.map((t: any) => {
+      // SCHRITT 1: Patienten
+      try {
+          const jsonP = await safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
+          if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+      } catch (e) { console.warn("Fehler bei Patientendaten", e); }
+
+      await delay(1000); // 1 Sekunde Pause für n8n
+
+      // SCHRITT 2: Kontakte
+      try {
+          const jsonC = await safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
+          setContactData(extract(jsonC));
+      } catch (e) { console.warn("Fehler bei Kontakten", e); }
+
+      await delay(1000); // 1 Sekunde Pause
+
+      // SCHRITT 3: Besuche (Wichtigster Teil)
+      let rawBesuche: any[] = [];
+      try {
+          const jsonB = await safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
+          rawBesuche = extract(jsonB);
+      } catch (e) { console.warn("Fehler bei Besuchen", e); }
+
+      await delay(1000); // 1 Sekunde Pause
+
+      // SCHRITT 4: Tasks
+      try {
+          const jsonT = await safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
+          const rawTasks = extract(jsonT);
+          setTasks(rawTasks.map((t: any) => {
             const data = t.fields || t; 
             return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
-        }));
+          }));
+      } catch (e) { console.warn("Fehler bei Tasks", e); }
 
-    } catch (e: any) {
-        console.error("CRITICAL ERROR:", e);
-        setErrorMsg(e.message || "Verbindungsfehler");
-    } finally {
-        isFetchingRef.current = false;
-        setLoading(false);
+      // --- VERARBEITUNG ---
+      const mappedBesuche = rawBesuche.map((b: any) => {
+          const fields = b.fields || b;
+          return { id: b.id, ...fields };
+      });
+      
+      const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
+          const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
+          const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
+          return dA - dB;
+      });
+
+      // CHANGE DETECTION
+      if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
+          const changes: string[] = [];
+          sortedBesuche.forEach(newItem => {
+              const oldItem = besucheRef.current.find(old => old.id === newItem.id);
+              // Prüfen auf Änderungen in Status, Zeit oder Notiz
+              if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) || unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
+                  changes.push(newItem.id);
+              }
+          });
+
+          if (changes.length > 0) {
+              if (background) {
+                  setShowUpdateBanner(true);
+              } else {
+                  setHighlightedIds(changes);
+                  setTimeout(() => setHighlightedIds([]), 180000); // 3 Minuten Highlight
+              }
+          }
+      }
+
+      // Nur updaten wenn wir Daten bekommen haben
+      if (sortedBesuche.length > 0) {
+          setBesuche(sortedBesuche);
+          besucheRef.current = sortedBesuche; 
+      }
+
+    } catch (e: any) { 
+        console.error("Gesamt-Ladefehler:", e);
+        if (!background) setErrorMsg("Verbindungsfehler. Bitte später erneut versuchen.");
+    } finally { 
+        isFetchingRef.current = false; 
+        if (!background) setLoading(false); 
     }
   };
 
-  // --- INITIAL LOAD ONLY ---
-  // Kein Interval, kein Auto-Update. Nur 1x beim Start.
+  // --- AUTOMATISIERUNG ---
+  // Initial Laden (Einmalig)
   useEffect(() => { 
-      if (patientId) fetchData();
+      if (patientId) fetchData(false); 
   }, [patientId]);
+
+  // Tab-Wechsel / Fokus Update
+  useEffect(() => {
+      const handleFocus = () => { if (patientId) fetchData(true); };
+      window.addEventListener('focus', handleFocus);
+      document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && patientId) fetchData(true);
+      });
+      return () => { 
+          window.removeEventListener('focus', handleFocus); 
+          // Cleanup für Eventlistener
+      };
+  }, [patientId]);
+
+  // Tab-Wechsel innerhalb der App
+  useEffect(() => { 
+      if (patientId) fetchData(true); 
+  }, [activeTab]);
 
 
   // --- ACTIONS ---
@@ -266,10 +305,8 @@ export default function App() {
       const data = await res.json();
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
-      } else {
-          alert("Login fehlgeschlagen. Bitte prüfen.");
       }
-    } catch (e) { console.error(e); alert("Server-Fehler beim Login."); } finally { setIsLoggingIn(false); }
+    } catch (e) { console.error(e); setErrorMsg("Login fehlgeschlagen"); } finally { setIsLoggingIn(false); }
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
@@ -287,8 +324,8 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(fetchData, 2000);
-    } catch(e) { console.error(e); }
+        setTimeout(() => fetchData(true), 2000);
+    } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
   const handleTerminReschedule = async (recordId: string, oldDateRaw: string) => {
@@ -302,12 +339,15 @@ export default function App() {
         formData.append('patientId', patientId!);
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
+        
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
+        
         formData.append('nachricht', nachricht);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(fetchData, 2000);
+        setTimeout(() => fetchData(true), 2000);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -324,11 +364,17 @@ export default function App() {
         let note = `Wunschtermin: ${formatDate(requestDate)}`;
         if (requestTime) note += ` um ${requestTime} Uhr`;
         formData.append('nachricht', note);
+        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        
         setSentStatus('success');
         setTimeout(() => { 
-            setActiveModal(null); setSentStatus('idle'); setRequestDate(""); setRequestTime(""); setRequestReason("");
-            setTimeout(fetchData, 2000); 
+            setActiveModal(null); 
+            setSentStatus('idle'); 
+            setRequestDate(""); 
+            setRequestTime(""); 
+            setRequestReason("");
+            setTimeout(() => fetchData(true), 2500); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -348,14 +394,23 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(); }, 1500);
+      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
+  };
+
+  const handleBannerClick = () => {
+      setLoading(true); 
+      fetchData(false).then(() => {
+          setLoading(false); 
+          setShowUpdateBanner(false); 
+      });
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
 
   const openTasksCount = tasks.filter(t => !t.done).length;
+
   const today = new Date();
   today.setHours(0,0,0,0);
   
@@ -378,24 +433,38 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* ERROR MONITORING - Zeigt an wenn was kaputt ist */}
+      {/* ERROR BANNER */}
       {errorMsg && (
-          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3">
-              <AlertTriangle size={24}/>
+          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top">
+              <AlertTriangle size={24} className="shrink-0"/>
               <div>
-                  <strong className="font-bold">Verbindungsfehler!</strong>
-                  <span className="block text-sm">{errorMsg} - Bitte später probieren.</span>
+                  <strong className="font-bold">Verbindungsproblem</strong>
+                  <span className="block text-xs mt-1">Der Server antwortet nicht. Wir versuchen es später automatisch wieder.</span>
               </div>
               <button onClick={() => setErrorMsg(null)} className="absolute top-2 right-2"><X size={16}/></button>
           </div>
+      )}
+
+      {/* UPDATE BANNER */}
+      {showUpdateBanner && (
+          <button 
+            onClick={handleBannerClick}
+            className="fixed top-0 left-0 right-0 z-[100] bg-[#3A3A3A] text-white p-8 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-[#b5a48b]"
+          >
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="bg-white/20 p-3 rounded-full animate-bounce"><Bell size={32} /></div>
+                  <span className="font-black text-xl uppercase tracking-wide">Neuer Hinweis für Sie</span>
+              </div>
+              <p className="text-base opacity-90 font-bold underline decoration-2 underline-offset-4 text-[#b5a48b]">Hier tippen zum Aktualisieren</p>
+          </button>
       )}
 
       <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             <button onClick={() => fetchData()} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
-             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
+             <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
         </div>
