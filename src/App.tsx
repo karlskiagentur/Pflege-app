@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, Clock, AlertCircle, History
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -37,7 +37,7 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
-// NEU: Langes Datum für Geburtstag (25. Januar 2026)
+// Langes Datum für Geburtstag (25. Januar 2026)
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -156,7 +156,7 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN (Auto-Refresh) ---
+  // --- DATEN LADEN (NUR MANUELL ODER BEI START) ---
   const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -210,13 +210,11 @@ export default function App() {
     finally { if (!background) setLoading(false); }
   };
 
+  // !!! REINE PUSH FUNKTION - KEIN INTERVAL !!!
   useEffect(() => { 
       if (patientId) {
-          fetchData(false);
-          const interval = setInterval(() => {
-              fetchData(true);
-          }, 5000); 
-          return () => clearInterval(interval);
+          fetchData(false); // Lädt EINMALIG beim Start
+          // Kein setInterval mehr. Die App ist jetzt still, bis der User etwas tut.
       }
   }, [patientId]);
 
@@ -233,9 +231,11 @@ export default function App() {
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
+    // Optimistisches UI Update (sofort anzeigen)
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
       await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus }) });
+      // KEIN fetchData nötig, da wir den State schon lokal geändert haben
     } catch (e) { console.error(e); }
   };
 
@@ -247,6 +247,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        // Push: Nach Aktion neu laden
         setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
@@ -270,6 +271,7 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
+        // Push: Nach Aktion neu laden
         setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error(e); }
     setIsSending(false);
@@ -297,6 +299,7 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
+            // Push: Nach Aktion neu laden
             setTimeout(() => fetchData(true), 1500); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
@@ -317,7 +320,12 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); }, 1500);
+      setTimeout(() => { 
+        if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); 
+        setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); 
+        // Push: Nach Upload neu laden, falls sich was geändert hat
+        fetchData(true);
+      }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
   };
@@ -347,13 +355,23 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
-      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm"><img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" /><div className="flex flex-col items-end"><button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full mb-1"><LogOut size={18}/></button><p className="text-[10px] font-bold italic">{unbox(patientData?.Name)}</p></div></header>
+      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
+        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
+        <div className="flex flex-col items-end">
+          <div className="flex items-center gap-2 mb-1">
+             {/* NEU: Manueller Refresh Button - Falls der User doch mal schauen will */}
+             <button onClick={() => fetchData(true)} className={`bg-white/20 p-2 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={14}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full"><LogOut size={14}/></button>
+          </div>
+          <p className="text-[10px] font-bold italic">{unbox(patientData?.Name)}</p>
+        </div>
+      </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div><CalendarIcon size={28}/></div>
-            <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>{loading && <RefreshCw size={14} className="animate-spin text-gray-300"/>}</div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
+            <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3></div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { const data = c.fields || c; return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(data.Name || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{unbox(data.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(data['Rolle/Funktion'])}</p></div></div>{unbox(data.Telefon) && <a href={`tel:${unbox(data.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
           </div>
