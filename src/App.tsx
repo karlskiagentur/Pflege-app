@@ -98,6 +98,9 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
+// Hilfsfunktion für Pausen
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export default function App() {
   // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
@@ -151,7 +154,7 @@ export default function App() {
   // Refs
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
-  const abortControllerRef = useRef<AbortController | null>(null); // NEU: Abbruch-Signal
+  const abortControllerRef = useRef<AbortController | null>(null); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -163,14 +166,13 @@ export default function App() {
     });
   };
 
-  // --- ROBUSRE DATEN-LADE FUNKTION ---
+  // --- WASSERFALL LADE-LOGIK (1 Sekunde Pause zwischen Requests) ---
   const fetchData = async (background = false) => {
-    if (isFetchingRef.current) return; // Wenn schon geladen wird, sofort raus.
+    if (isFetchingRef.current) return; 
     
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
-    // Alten Request abbrechen falls vorhanden
     if (abortControllerRef.current) abortControllerRef.current.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -178,41 +180,49 @@ export default function App() {
     isFetchingRef.current = true; 
     if (!background) setLoading(true);
     
-    // Timeout Promise: Bricht nach 10 Sekunden hart ab
-    const timeoutId = setTimeout(() => controller.abort(), 10000); 
+    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20 Sek Timeout für alles
 
     try {
       const fetchWithSignal = (url: string) => fetch(url, { signal: controller.signal });
-
-      const responses = await Promise.all([
-        fetchWithSignal(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
-        fetchWithSignal(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
-        fetchWithSignal(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`),
-        fetchWithSignal(`${N8N_BASE_URL}/get_tasks?patientId=${id}`)
-      ]);
-
-      // JSON Parsing sicher machen
-      const [jsonP, jsonC, jsonB, jsonT] = await Promise.all(
-          responses.map(r => r.ok ? r.json() : Promise.resolve({})) // Fehlerhafte Responses ignorieren
-      );
-
-      clearTimeout(timeoutId); // Timeout löschen, da erfolgreich
-
-      if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-      
       const extract = (json: any) => {
         if (!json) return [];
         if (json.data && Array.isArray(json.data)) {
            if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
            return json.data;
         }
-        if (Array.isArray(json)) return json;
-        return [];
+        return Array.isArray(json) ? json : [];
       };
 
+      // 1. PATIENTEN LADEN
+      const resP = await fetchWithSignal(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
+      const jsonP = await resP.json();
+      if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+      
+      // PAUSE 1 Sekunde (Entlastet n8n)
+      await delay(1000);
+
+      // 2. KONTAKTE LADEN
+      const resC = await fetchWithSignal(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
+      const jsonC = await resC.json();
       setContactData(extract(jsonC));
 
-      // BESUCHE
+      // PAUSE 1 Sekunde
+      await delay(1000);
+
+      // 3. BESUCHE LADEN (Wichtigste Daten)
+      const resB = await fetchWithSignal(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
+      const jsonB = await resB.json();
+      
+      // PAUSE 1 Sekunde
+      await delay(1000);
+
+      // 4. TASKS LADEN
+      const resT = await fetchWithSignal(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
+      const jsonT = await resT.json();
+
+      clearTimeout(timeoutId); // Fertig!
+
+      // --- DATEN VERARBEITEN ---
       const rawBesuche = extract(jsonB);
       const mappedBesuche = rawBesuche.map((b: any) => {
           const fields = b.fields || b;
@@ -240,7 +250,7 @@ export default function App() {
                   setShowUpdateBanner(true);
               } else {
                   setHighlightedIds(changes);
-                  setTimeout(() => setHighlightedIds([]), 180000); // 3 Min Highlight
+                  setTimeout(() => setHighlightedIds([]), 180000); // 3 Min
               }
           }
       }
@@ -255,18 +265,14 @@ export default function App() {
       }));
 
     } catch (e: any) { 
-        if (e.name === 'AbortError') {
-            console.log("Fetch abgebrochen (Timeout oder Navigation)");
-        } else {
-            console.error("Ladefehler:", e); 
-        }
+        if (e.name !== 'AbortError') console.error("Ladefehler (Sequenziell):", e);
     } finally { 
         isFetchingRef.current = false; 
         if (!background) setLoading(false); 
     }
   };
 
-  // --- SMART POLLING ---
+  // --- UPDATE LOGIK ---
   const triggerFastPolling = () => {
       setIsFastPolling(true);
       setTimeout(() => setIsFastPolling(false), 120000); 
@@ -285,6 +291,7 @@ export default function App() {
   useEffect(() => {
       let interval: any;
       if (patientId) {
+          // Standard: 15 Min, Fast: 10 Sek
           const time = isFastPolling ? 10000 : 900000; 
           interval = setInterval(() => { fetchData(true); }, time);
       }
@@ -320,7 +327,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1500);
+        setTimeout(() => fetchData(true), 2000);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
@@ -344,7 +351,7 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(() => fetchData(true), 1500);
+        setTimeout(() => fetchData(true), 2000);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -432,7 +439,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* BANNER MIT NEUEM TEXT */}
+      {/* BANNER */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -480,7 +487,6 @@ export default function App() {
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
                 
-                // HIGHLIGHT LOGIK
                 const isHighlighted = highlightedIds.includes(b.id);
 
                 return (
