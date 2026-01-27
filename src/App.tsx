@@ -123,7 +123,7 @@ export default function App() {
   
   // Banner & Highlight
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
-  const [highlightedIds, setHighlightedIds] = useState<string[]>([]); // NEU: IDs die aufblinken sollen
+  const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
   // Termin Management
@@ -148,8 +148,9 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // Refs für Vergleiche
+  // Refs für Sicherheit & Vergleiche
   const besucheRef = useRef<any[]>([]);
+  const isFetchingRef = useRef(false); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -161,14 +162,17 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN MIT CHANGE DETECTION ---
+  // --- SICHERES DATEN LADEN MIT HIGHLIGHTING ---
   const fetchData = async (background = false) => {
+    if (isFetchingRef.current) return;
+    
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
+    isFetchingRef.current = true; 
+    if (!background) setLoading(true);
+    
     try {
-      if (!background) setLoading(true);
-      
       const [resP, resC, resB, resT] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
         fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
@@ -193,7 +197,7 @@ export default function App() {
 
       setContactData(extract(jsonC));
 
-      // BESUCHE VERARBEITEN
+      // BESUCHE
       const rawBesuche = extract(jsonB);
       const mappedBesuche = rawBesuche.map((b: any) => {
           const fields = b.fields || b;
@@ -206,30 +210,24 @@ export default function App() {
           return dA - dB;
       });
 
-      // --- LOGIK: WAS HAT SICH GEÄNDERT? ---
+      // CHANGE DETECTION
       if (besucheRef.current.length > 0) {
           const changes: string[] = [];
-          
           sortedBesuche.forEach(newItem => {
               const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-              // Check: Ist es neu ODER hat sich Status/Zeit/Notiz geändert?
-              if (!oldItem || 
-                  unbox(oldItem.Status) !== unbox(newItem.Status) || 
-                  unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) ||
-                  unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
+              if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) || unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
                   changes.push(newItem.id);
               }
           });
 
           if (changes.length > 0) {
               if (background) {
-                  // Im Hintergrund: Nur Banner zeigen
                   setShowUpdateBanner(true);
               } else {
-                  // Manuell (Banner Klick): Hervorheben!
+                  // Manuelles Update: Highlight setzen
                   setHighlightedIds(changes);
-                  // Highlight nach 3 Sekunden entfernen
-                  setTimeout(() => setHighlightedIds([]), 3000);
+                  // Highlight nach 3 MINUTEN (180.000 ms) entfernen
+                  setTimeout(() => setHighlightedIds([]), 180000);
               }
           }
       }
@@ -243,19 +241,21 @@ export default function App() {
         return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
       }));
 
-    } catch (e) { console.error("Ladefehler:", e); } 
-    finally { if (!background) setLoading(false); }
+    } catch (e) { 
+        console.error("Ladefehler:", e); 
+    } finally { 
+        isFetchingRef.current = false; 
+        if (!background) setLoading(false); 
+    }
   };
 
-  // --- SMART POLLING ---
+  // --- SMART UPDATE LOGIK ---
   const triggerFastPolling = () => {
       setIsFastPolling(true);
       setTimeout(() => setIsFastPolling(false), 120000); 
   };
 
-  useEffect(() => { 
-      if (patientId) fetchData(true); // Tab Wechsel Refresh
-  }, [patientId, activeTab]);
+  useEffect(() => { if (patientId) fetchData(true); }, [patientId, activeTab]);
 
   useEffect(() => {
       const handleResume = () => { if (document.visibilityState === 'visible' && patientId) fetchData(true); };
@@ -267,9 +267,8 @@ export default function App() {
 
   useEffect(() => {
       let interval: any;
-      if (patientId) {
-          const time = isFastPolling ? 10000 : 900000; // 10s oder 15min
-          interval = setInterval(() => { fetchData(true); }, time);
+      if (patientId && isFastPolling) {
+          interval = setInterval(() => { fetchData(true); }, 10000);
       }
       return () => clearInterval(interval);
   }, [patientId, isFastPolling]);
@@ -303,7 +302,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1000);
+        setTimeout(() => fetchData(true), 1500);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
@@ -327,7 +326,7 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(() => fetchData(true), 1000);
+        setTimeout(() => fetchData(true), 1500);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -355,7 +354,7 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
-            setTimeout(() => fetchData(true), 1500); 
+            setTimeout(() => fetchData(true), 2000); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -381,7 +380,6 @@ export default function App() {
     setIsSending(false);
   };
 
-  // BANNER CLICK: Löst Refresh aus, was wiederum das Highlighting auslöst
   const handleBannerClick = () => {
       setLoading(true); 
       fetchData(false).then(() => {
@@ -416,7 +414,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* BANNER MIT NEUEM TEXT */}
+      {/* BANNER */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -434,7 +432,6 @@ export default function App() {
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             {/* REFRESH BUTTON DREHT SICH JETZT (animate-spin) */}
              <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
           </div>
@@ -465,7 +462,7 @@ export default function App() {
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
                 
-                // HIGHLIGHT LOGIK: Goldener Rahmen + Schimmer
+                // HIGHLIGHT LOGIK
                 const isHighlighted = highlightedIds.includes(b.id);
 
                 return (
