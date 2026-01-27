@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -18,7 +18,6 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// Standard Datum (24.01.2026)
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -37,7 +36,6 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
-// Langes Datum für Geburtstag (25. Januar 2026)
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -50,7 +48,6 @@ const formatDateLong = (raw: any) => {
   } catch { return val; }
 };
 
-// Uhrzeit aus ISO String
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -124,6 +121,9 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
+  // NEU: Banner State
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  
   // Archiv Toggle
   const [showArchive, setShowArchive] = useState(false);
 
@@ -131,6 +131,9 @@ export default function App() {
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
+  
+  // Polling Status
+  const [isFastPolling, setIsFastPolling] = useState(false);
   
   // Formular Daten
   const [newTerminDate, setNewTerminDate] = useState(""); 
@@ -146,6 +149,9 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
+  // Refs für Vergleiche
+  const besucheRef = useRef<any[]>([]);
+
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
     const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
@@ -156,7 +162,7 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN (NUR MANUELL ODER BEI START) ---
+  // --- DATEN LADEN MIT VERGLEICH (Für das Banner) ---
   const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -188,17 +194,33 @@ export default function App() {
 
       setContactData(extract(jsonC));
 
+      // BESUCHE VERARBEITEN
       const rawBesuche = extract(jsonB);
       const mappedBesuche = rawBesuche.map((b: any) => {
           const fields = b.fields || b;
           return { id: b.id, ...fields };
       });
       
-      setBesuche(mappedBesuche.sort((a:any, b:any) => {
+      const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
           const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
           const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
           return dA - dB;
-      }));
+      });
+
+      // CHANGE DETECTION: Hat sich was geändert?
+      if (background && besucheRef.current.length > 0) {
+          // Einfacher Vergleich: JSON Stringify. Reicht für diese Datenmenge.
+          const oldData = JSON.stringify(besucheRef.current.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
+          const newData = JSON.stringify(sortedBesuche.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
+          
+          if (oldData !== newData) {
+              setShowUpdateBanner(true); // BANNER ANZEIGEN
+              setTimeout(() => setShowUpdateBanner(false), 5000); // Nach 5 Sek ausblenden
+          }
+      }
+
+      setBesuche(sortedBesuche);
+      besucheRef.current = sortedBesuche; // Referenz aktualisieren
       
       const rawTasks = extract(jsonT);
       setTasks(rawTasks.map((t: any) => {
@@ -210,13 +232,42 @@ export default function App() {
     finally { if (!background) setLoading(false); }
   };
 
-  // !!! REINE PUSH FUNKTION - KEIN INTERVAL !!!
+  // --- SMART POLLING & FOKUS ---
+  const triggerFastPolling = () => {
+      setIsFastPolling(true);
+      setTimeout(() => setIsFastPolling(false), 120000); 
+  };
+
   useEffect(() => { 
       if (patientId) {
-          fetchData(false); // Lädt EINMALIG beim Start
-          // Kein setInterval mehr. Die App ist jetzt still, bis der User etwas tut.
+          fetchData(false); 
+          
+          const onFocus = () => fetchData(true);
+          window.addEventListener('focus', onFocus);
+          document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') fetchData(true);
+          });
+
+          return () => {
+              window.removeEventListener('focus', onFocus);
+              document.removeEventListener('visibilitychange', onFocus);
+          };
       }
   }, [patientId]);
+
+  useEffect(() => {
+      let interval: any;
+      if (patientId) {
+          // Normal: 60s (Heartbeat), Nach Aktion: 10s (Fast)
+          const time = isFastPolling ? 10000 : 60000;
+          
+          interval = setInterval(() => {
+              fetchData(true);
+          }, time);
+      }
+      return () => clearInterval(interval);
+  }, [patientId, isFastPolling]);
+
 
   // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -231,23 +282,21 @@ export default function App() {
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
-    // Optimistisches UI Update (sofort anzeigen)
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
       await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus }) });
-      // KEIN fetchData nötig, da wir den State schon lokal geändert haben
     } catch (e) { console.error(e); }
   };
 
   const handleTerminConfirm = async (recordId: string) => {
     setConfirmedTermine([...confirmedTermine, recordId]); 
+    triggerFastPolling(); 
     try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        // Push: Nach Aktion neu laden
         setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
@@ -257,6 +306,7 @@ export default function App() {
     setIsSending(true);
     setPendingChanges([...pendingChanges, recordId]);
     setEditingTermin(null);
+    triggerFastPolling();
 
     try {
         const formData = new FormData();
@@ -271,7 +321,6 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        // Push: Nach Aktion neu laden
         setTimeout(() => fetchData(true), 1000);
     } catch(e) { console.error(e); }
     setIsSending(false);
@@ -280,6 +329,7 @@ export default function App() {
   const handleNewTerminRequest = async () => {
       if(!requestDate) return;
       setIsSending(true);
+      triggerFastPolling();
       try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
@@ -299,7 +349,6 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
-            // Push: Nach Aktion neu laden
             setTimeout(() => fetchData(true), 1500); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
@@ -308,6 +357,7 @@ export default function App() {
 
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
+    triggerFastPolling();
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
@@ -320,12 +370,7 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { 
-        if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); 
-        setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); 
-        // Push: Nach Upload neu laden, falls sich was geändert hat
-        fetchData(true);
-      }, 1500);
+      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
   };
@@ -355,11 +400,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
+      {/* UPDATE BANNER (FÄHRT OBEN REIN) */}
+      {showUpdateBanner && (
+          <div className="fixed top-4 left-4 right-4 z-[100] bg-[#3A3A3A] text-white p-4 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top duration-500">
+              <div className="bg-white/20 p-2 rounded-full"><Bell size={20} /></div>
+              <div><p className="font-bold text-sm">Plan aktualisiert</p><p className="text-[10px] opacity-80">Neue Daten vom Pflegedienst.</p></div>
+          </div>
+      )}
+
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-2 mb-1">
-             {/* NEU: Manueller Refresh Button - Falls der User doch mal schauen will */}
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-2 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={14}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full"><LogOut size={14}/></button>
           </div>
