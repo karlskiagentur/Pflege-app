@@ -9,12 +9,12 @@ import {
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
-// --- HELFER-FUNKTIONEN ---
+// --- HELFER ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
-  if (Array.isArray(val) && val.length > 0) return unbox(val[0]); 
+  if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
   if (Array.isArray(val) && val.length === 0) return "";
-  if (typeof val === 'object') return ""; 
+  if (typeof val === 'object') return "";
   return String(val);
 };
 
@@ -24,10 +24,7 @@ const formatDate = (raw: any, short = false) => {
   try {
     const d = new Date(val);
     if (!isNaN(d.getTime())) {
-        if (short) { 
-          const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; 
-          return days[d.getDay()]; 
-        }
+        if (short) { const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']; return days[d.getDay()]; }
         const day = String(d.getDate()).padStart(2, '0');
         const month = String(d.getMonth() + 1).padStart(2, '0');
         return `${day}.${month}.${d.getFullYear()}`;
@@ -69,7 +66,6 @@ const getDisplayTitle = (b: any) => {
   const title = unbox(b.Tätigkeit);
   const note = unbox(b.Notiz_Patient);
   const status = unbox(b.Status);
-  
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
@@ -80,13 +76,11 @@ const getDisplayTitle = (b: any) => {
 const getProposedDetails = (b: any) => {
     const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
-    
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
             const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
             let pDate = datePart;
             let pTime = "--:--";
-
             if (datePart.includes(" um ")) {
                 const parts = datePart.split(" um ");
                 pDate = parts[0];
@@ -98,7 +92,7 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
-// HELFER FÜR PAUSEN (DAS RETTET DEN SERVER)
+// PAUSE HELFER
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function App() {
@@ -118,14 +112,14 @@ export default function App() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [showAllTasks, setShowAllTasks] = useState(false);
 
-  // UI / Modals
+  // UI
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Banner & Highlight
+  // Features
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
@@ -135,7 +129,7 @@ export default function App() {
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   
-  // Formular Daten
+  // Forms
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   const [requestDate, setRequestDate] = useState("");
@@ -147,9 +141,9 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // Refs
+  // REFS
   const besucheRef = useRef<any[]>([]);
-  const isFetchingRef = useRef(false); // Die Türsteher-Funktion
+  const isFetchingRef = useRef(false); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -161,140 +155,112 @@ export default function App() {
     });
   };
 
-  // --- DER "WASSERFALL" FETCH (SEQUENZIELL) ---
+  // --- STRICT SEQUENTIAL FETCH (NO LOOPS) ---
   const fetchData = async (background = false) => {
-    if (isFetchingRef.current) return; // Blockieren, wenn schon geladen wird
+    if (isFetchingRef.current) return; // Verhindert Überlappung
     
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
-    isFetchingRef.current = true; 
+    isFetchingRef.current = true;
     if (!background) setLoading(true);
     setErrorMsg(null);
-    
-    try {
-      // Hilfsfunktion für den Fetch
-      const safeFetch = async (url: string) => {
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return await res.json();
-      };
 
-      const extract = (json: any) => {
+    const safeFetch = async (url: string) => {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.warn("Fetch Error:", url, e);
+            return null; // Gibt null zurück statt zu crashen
+        }
+    };
+
+    const extract = (json: any) => {
         if (!json) return [];
         if (json.data && Array.isArray(json.data)) {
            if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
            return json.data;
         }
         return Array.isArray(json) ? json : [];
-      };
+    };
 
-      // SCHRITT 1: Patienten
-      try {
-          const jsonP = await safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
-          if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-      } catch (e) { console.warn("Fehler bei Patientendaten", e); }
+    try {
+        // 1. PATIENTEN
+        const jsonP = await safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
+        if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+        else if (!jsonP) throw new Error("Server antwortet nicht (Patienten)");
 
-      await delay(1000); // 1 Sekunde Pause für n8n
+        await delay(1000); // 1s Pause
 
-      // SCHRITT 2: Kontakte
-      try {
-          const jsonC = await safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
-          setContactData(extract(jsonC));
-      } catch (e) { console.warn("Fehler bei Kontakten", e); }
+        // 2. KONTAKTE
+        const jsonC = await safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
+        if (jsonC) setContactData(extract(jsonC));
 
-      await delay(1000); // 1 Sekunde Pause
+        await delay(1000); // 1s Pause
 
-      // SCHRITT 3: Besuche (Wichtigster Teil)
-      let rawBesuche: any[] = [];
-      try {
-          const jsonB = await safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
-          rawBesuche = extract(jsonB);
-      } catch (e) { console.warn("Fehler bei Besuchen", e); }
+        // 3. BESUCHE
+        const jsonB = await safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
+        let rawBesuche: any[] = [];
+        if (jsonB) rawBesuche = extract(jsonB);
 
-      await delay(1000); // 1 Sekunde Pause
+        await delay(1000); // 1s Pause
 
-      // SCHRITT 4: Tasks
-      try {
-          const jsonT = await safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
-          const rawTasks = extract(jsonT);
-          setTasks(rawTasks.map((t: any) => {
-            const data = t.fields || t; 
-            return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
-          }));
-      } catch (e) { console.warn("Fehler bei Tasks", e); }
+        // 4. TASKS
+        const jsonT = await safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
+        if (jsonT) {
+            const rawTasks = extract(jsonT);
+            setTasks(rawTasks.map((t: any) => {
+                const data = t.fields || t; 
+                return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
+            }));
+        }
 
-      // --- VERARBEITUNG ---
-      const mappedBesuche = rawBesuche.map((b: any) => {
-          const fields = b.fields || b;
-          return { id: b.id, ...fields };
-      });
-      
-      const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
-          const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
-          const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
-          return dA - dB;
-      });
+        // DATEN VERARBEITEN
+        const mappedBesuche = rawBesuche.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
+        const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
+            const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
+            const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
+            return dA - dB;
+        });
 
-      // CHANGE DETECTION
-      if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
-          const changes: string[] = [];
-          sortedBesuche.forEach(newItem => {
-              const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-              // Prüfen auf Änderungen in Status, Zeit oder Notiz
-              if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) || unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
-                  changes.push(newItem.id);
-              }
-          });
+        // Banner & Highlight Logik
+        if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
+            const changes: string[] = [];
+            sortedBesuche.forEach(newItem => {
+                const oldItem = besucheRef.current.find(old => old.id === newItem.id);
+                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
+                    changes.push(newItem.id);
+                }
+            });
+            if (changes.length > 0) {
+                if (background) setShowUpdateBanner(true);
+                else {
+                    setHighlightedIds(changes);
+                    setTimeout(() => setHighlightedIds([]), 180000);
+                }
+            }
+        }
 
-          if (changes.length > 0) {
-              if (background) {
-                  setShowUpdateBanner(true);
-              } else {
-                  setHighlightedIds(changes);
-                  setTimeout(() => setHighlightedIds([]), 180000); // 3 Minuten Highlight
-              }
-          }
-      }
+        setBesuche(sortedBesuche);
+        besucheRef.current = sortedBesuche;
 
-      // Nur updaten wenn wir Daten bekommen haben
-      if (sortedBesuche.length > 0) {
-          setBesuche(sortedBesuche);
-          besucheRef.current = sortedBesuche; 
-      }
-
-    } catch (e: any) { 
-        console.error("Gesamt-Ladefehler:", e);
-        if (!background) setErrorMsg("Verbindungsfehler. Bitte später erneut versuchen.");
-    } finally { 
-        isFetchingRef.current = false; 
-        if (!background) setLoading(false); 
+    } catch (e: any) {
+        console.error("Critical Load Error:", e);
+        if (!background) setErrorMsg("Verbindungsproblem: " + (e.message || "Server überlastet"));
+    } finally {
+        isFetchingRef.current = false;
+        if (!background) setLoading(false);
     }
   };
 
-  // --- AUTOMATISIERUNG ---
-  // Initial Laden (Einmalig)
+  // --- SAFE INITIAL LOAD ---
+  // Lädt NUR EINMAL beim Starten. Keine Loops.
   useEffect(() => { 
-      if (patientId) fetchData(false); 
-  }, [patientId]);
-
-  // Tab-Wechsel / Fokus Update
-  useEffect(() => {
-      const handleFocus = () => { if (patientId) fetchData(true); };
-      window.addEventListener('focus', handleFocus);
-      document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible' && patientId) fetchData(true);
-      });
-      return () => { 
-          window.removeEventListener('focus', handleFocus); 
-          // Cleanup für Eventlistener
-      };
-  }, [patientId]);
-
-  // Tab-Wechsel innerhalb der App
-  useEffect(() => { 
-      if (patientId) fetchData(true); 
-  }, [activeTab]);
+      if (patientId) fetchData(false);
+  }, [patientId]); 
+  // WICHTIG: Hier steht KEIN [activeTab] oder ähnliches. Das verhindert die Loop.
 
 
   // --- ACTIONS ---
@@ -305,8 +271,8 @@ export default function App() {
       const data = await res.json();
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
-      }
-    } catch (e) { console.error(e); setErrorMsg("Login fehlgeschlagen"); } finally { setIsLoggingIn(false); }
+      } else { alert("Falsche Daten"); }
+    } catch (e) { alert("Login Error"); } finally { setIsLoggingIn(false); }
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
@@ -324,8 +290,8 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 2000);
-    } catch(e) { console.error("Fehler beim Bestätigen", e); }
+        setTimeout(() => fetchData(false), 2000);
+    } catch(e) { console.error(e); }
   };
 
   const handleTerminReschedule = async (recordId: string, oldDateRaw: string) => {
@@ -333,21 +299,17 @@ export default function App() {
     setIsSending(true);
     setPendingChanges([...pendingChanges, recordId]);
     setEditingTermin(null);
-
     try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
-        
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
-        
         formData.append('nachricht', nachricht);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(() => fetchData(true), 2000);
+        setTimeout(() => fetchData(false), 2000);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -364,17 +326,11 @@ export default function App() {
         let note = `Wunschtermin: ${formatDate(requestDate)}`;
         if (requestTime) note += ` um ${requestTime} Uhr`;
         formData.append('nachricht', note);
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        
         setSentStatus('success');
         setTimeout(() => { 
-            setActiveModal(null); 
-            setSentStatus('idle'); 
-            setRequestDate(""); 
-            setRequestTime(""); 
-            setRequestReason("");
-            setTimeout(() => fetchData(true), 2500); 
+            setActiveModal(null); setSentStatus('idle'); setRequestDate(""); setRequestTime(""); setRequestReason("");
+            setTimeout(() => fetchData(false), 2000); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -394,23 +350,19 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
+      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(false); }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
   };
 
   const handleBannerClick = () => {
       setLoading(true); 
-      fetchData(false).then(() => {
-          setLoading(false); 
-          setShowUpdateBanner(false); 
-      });
+      fetchData(false).then(() => setShowUpdateBanner(false));
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
 
   const openTasksCount = tasks.filter(t => !t.done).length;
-
   const today = new Date();
   today.setHours(0,0,0,0);
   
@@ -433,13 +385,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* ERROR BANNER */}
+      {/* FEHLER BANNER */}
       {errorMsg && (
-          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top">
+          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top shadow-lg">
               <AlertTriangle size={24} className="shrink-0"/>
               <div>
                   <strong className="font-bold">Verbindungsproblem</strong>
-                  <span className="block text-xs mt-1">Der Server antwortet nicht. Wir versuchen es später automatisch wieder.</span>
+                  <span className="block text-xs mt-1">Server antwortet nicht. Bitte später manuell aktualisieren.</span>
               </div>
               <button onClick={() => setErrorMsg(null)} className="absolute top-2 right-2"><X size={16}/></button>
           </div>
