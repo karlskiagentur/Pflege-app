@@ -18,6 +18,7 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
+// Standard Datum (24.01.2026)
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -36,6 +37,7 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
+// Langes Datum für Geburtstag (25. Januar 2026)
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -48,6 +50,7 @@ const formatDateLong = (raw: any) => {
   } catch { return val; }
 };
 
+// Uhrzeit aus ISO String
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -121,10 +124,8 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // NEU: Banner State
+  // Banner & Archiv
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
-  
-  // Archiv Toggle
   const [showArchive, setShowArchive] = useState(false);
 
   // Termin Management
@@ -162,7 +163,7 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN MIT VERGLEICH (Für das Banner) ---
+  // --- DATEN LADEN MIT VERGLEICH ---
   const fetchData = async (background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -209,18 +210,16 @@ export default function App() {
 
       // CHANGE DETECTION: Hat sich was geändert?
       if (background && besucheRef.current.length > 0) {
-          // Einfacher Vergleich: JSON Stringify. Reicht für diese Datenmenge.
           const oldData = JSON.stringify(besucheRef.current.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
           const newData = JSON.stringify(sortedBesuche.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
           
           if (oldData !== newData) {
-              setShowUpdateBanner(true); // BANNER ANZEIGEN
-              setTimeout(() => setShowUpdateBanner(false), 5000); // Nach 5 Sek ausblenden
+              setShowUpdateBanner(true); 
           }
       }
 
       setBesuche(sortedBesuche);
-      besucheRef.current = sortedBesuche; // Referenz aktualisieren
+      besucheRef.current = sortedBesuche; 
       
       const rawTasks = extract(jsonT);
       setTasks(rawTasks.map((t: any) => {
@@ -258,8 +257,8 @@ export default function App() {
   useEffect(() => {
       let interval: any;
       if (patientId) {
-          // Normal: 60s (Heartbeat), Nach Aktion: 10s (Fast)
-          const time = isFastPolling ? 10000 : 60000;
+          // Fast Polling: 10s | Slow Polling (Background): 15 Minuten (900000)
+          const time = isFastPolling ? 10000 : 900000;
           
           interval = setInterval(() => {
               fetchData(true);
@@ -375,6 +374,15 @@ export default function App() {
     setIsSending(false);
   };
 
+  // BANNER CLICK HANDLER
+  const handleBannerClick = () => {
+      setLoading(true); // Ladekreis an
+      fetchData(false).then(() => {
+          setLoading(false); // Ladekreis aus
+          setShowUpdateBanner(false); // Banner weg
+      });
+  };
+
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
 
   const openTasksCount = tasks.filter(t => !t.done).length;
@@ -400,15 +408,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
-      {/* UPDATE BANNER (FÄHRT OBEN REIN) */}
+      
+      {/* GROSSES UPDATE BANNER */}
       {showUpdateBanner && (
-          <div className="fixed top-4 left-4 right-4 z-[100] bg-[#3A3A3A] text-white p-4 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-top duration-500">
-              <div className="bg-white/20 p-2 rounded-full"><Bell size={20} /></div>
-              <div><p className="font-bold text-sm">Plan aktualisiert</p><p className="text-[10px] opacity-80">Neue Daten vom Pflegedienst.</p></div>
-          </div>
+          <button 
+            onClick={handleBannerClick}
+            className="fixed top-0 left-0 right-0 z-[100] bg-[#3A3A3A] text-white p-8 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-[#b5a48b]"
+          >
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="bg-white/20 p-3 rounded-full animate-bounce"><Bell size={32} /></div>
+                  <span className="font-black text-xl uppercase tracking-wide">Neue Information für Sie</span>
+              </div>
+              <p className="text-base opacity-90 font-bold underline decoration-2 underline-offset-4 text-[#b5a48b]">Hier tippen zum Aktualisieren</p>
+          </button>
       )}
 
-      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
+      <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-2 mb-1">
