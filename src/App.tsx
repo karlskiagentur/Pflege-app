@@ -18,7 +18,6 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// Standard Datum (24.01.2026)
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -37,7 +36,6 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
-// Langes Datum für Geburtstag (25. Januar 2026)
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -50,7 +48,6 @@ const formatDateLong = (raw: any) => {
   } catch { return val; }
 };
 
-// Uhrzeit aus ISO String
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -208,7 +205,7 @@ export default function App() {
           return dA - dB;
       });
 
-      // CHANGE DETECTION: Hat sich was geändert?
+      // CHANGE DETECTION
       if (background && besucheRef.current.length > 0) {
           const oldData = JSON.stringify(besucheRef.current.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
           const newData = JSON.stringify(sortedBesuche.map(b => ({ s: b.Status, u: b.Uhrzeit, n: b.Notiz_Patient })));
@@ -231,38 +228,41 @@ export default function App() {
     finally { if (!background) setLoading(false); }
   };
 
-  // --- SMART POLLING & FOKUS ---
+  // --- SMART POLLING, FOKUS & NAVIGATION ---
   const triggerFastPolling = () => {
       setIsFastPolling(true);
       setTimeout(() => setIsFastPolling(false), 120000); 
   };
 
+  // 1. Initial Laden & Navigation Update (NEU: activeTab Dependency)
   useEffect(() => { 
       if (patientId) {
-          fetchData(false); 
-          
-          const onFocus = () => fetchData(true);
-          window.addEventListener('focus', onFocus);
-          document.addEventListener('visibilitychange', () => {
-              if (document.visibilityState === 'visible') fetchData(true);
-          });
-
-          return () => {
-              window.removeEventListener('focus', onFocus);
-              document.removeEventListener('visibilitychange', onFocus);
-          };
+          fetchData(true); // Lädt neu bei jedem Tab-Wechsel (leise)
       }
+  }, [patientId, activeTab]); // <--- HIER: activeTab hinzugefügt
+
+  // 2. Fokus & Sichtbarkeit
+  useEffect(() => {
+      const handleResume = () => {
+          if (document.visibilityState === 'visible' && patientId) fetchData(true);
+      };
+      const handleFocus = () => { if (patientId) fetchData(true); };
+
+      document.addEventListener('visibilitychange', handleResume);
+      window.addEventListener('focus', handleFocus);
+
+      return () => {
+          document.removeEventListener('visibilitychange', handleResume);
+          window.removeEventListener('focus', handleFocus);
+      };
   }, [patientId]);
 
+  // 3. Intervalle (Fast / Slow)
   useEffect(() => {
       let interval: any;
       if (patientId) {
-          // Fast Polling: 10s | Slow Polling (Background): 15 Minuten (900000)
-          const time = isFastPolling ? 10000 : 900000;
-          
-          interval = setInterval(() => {
-              fetchData(true);
-          }, time);
+          const time = isFastPolling ? 10000 : 900000; // 10s oder 15min
+          interval = setInterval(() => { fetchData(true); }, time);
       }
       return () => clearInterval(interval);
   }, [patientId, isFastPolling]);
@@ -374,12 +374,11 @@ export default function App() {
     setIsSending(false);
   };
 
-  // BANNER CLICK HANDLER
   const handleBannerClick = () => {
-      setLoading(true); // Ladekreis an
+      setLoading(true); 
       fetchData(false).then(() => {
-          setLoading(false); // Ladekreis aus
-          setShowUpdateBanner(false); // Banner weg
+          setLoading(false); 
+          setShowUpdateBanner(false); 
       });
   };
 
@@ -409,7 +408,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* GROSSES UPDATE BANNER */}
+      {/* UPDATE BANNER */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -426,11 +425,11 @@ export default function App() {
       <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
-          <div className="flex items-center gap-2 mb-1">
-             <button onClick={() => fetchData(true)} className={`bg-white/20 p-2 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={14}/></button>
-             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full"><LogOut size={14}/></button>
+          <div className="flex items-center gap-3 mb-1.5">
+             <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
           </div>
-          <p className="text-[10px] font-bold italic">{unbox(patientData?.Name)}</p>
+          <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
         </div>
       </header>
 
