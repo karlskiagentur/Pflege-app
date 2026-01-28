@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 
 // Deine n8n Live-URL
-// WICHTIG: Der Pfad muss /get_full_app_data sein!
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
@@ -64,10 +63,12 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
+// EXAKTE NAMEN AUS DEINEN SCREENSHOTS
 const getDisplayTitle = (b: any) => {
-  const title = unbox(b.Tätigkeit);
-  const note = unbox(b.Notiz_Patient);
+  const title = unbox(b.Tätigkeit); // Screenshot: Tätigkeit
+  const note = unbox(b.Notiz_Patient); // Screenshot: Notiz_Patient
   const status = unbox(b.Status);
+  
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
@@ -76,7 +77,7 @@ const getDisplayTitle = (b: any) => {
 };
 
 const getProposedDetails = (b: any) => {
-    const note = unbox(b.Notiz_Patient);
+    const note = unbox(b.Notiz_Patient); // Screenshot: Notiz_Patient
     const status = unbox(b.Status);
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
@@ -94,8 +95,9 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export default function App() {
-  // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -104,31 +106,26 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
-  // Daten
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [showAllTasks, setShowAllTasks] = useState(false);
 
-  // UI
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Features
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
-  // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   
-  // Forms
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   const [requestDate, setRequestDate] = useState("");
@@ -140,7 +137,6 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // REFS
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
   const lastFetchTimeRef = useRef<number>(0); 
@@ -155,14 +151,13 @@ export default function App() {
     });
   };
 
-  // --- THE AGGREGATOR FETCH (SINGLE CALL) ---
+  // --- FETCH LOGIC ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
-    if (isFetchingRef.current) return; // Blockieren
+    if (isFetchingRef.current) return; 
 
-    // Caching: 15 Minuten Ruhe, außer bei Force
     const now = Date.now();
     const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
@@ -174,10 +169,10 @@ export default function App() {
     setErrorMsg(null);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s Zeit für den großen Call
+    const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        // EIN AUFRUF FÜR ALLES
+        console.log("Starte Fetch...");
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -188,7 +183,8 @@ export default function App() {
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        // Checken ob n8n das JSON richtig gebaut hat (siehe Code-Node)
+        console.log("Empfangene Daten:", json);
+
         if (json.data) {
             // 1. Patient
             if (json.data.patienten_daten) setPatientData(json.data.patienten_daten);
@@ -197,16 +193,28 @@ export default function App() {
             const cData = json.data.kontakte || [];
             setContactData(cData.map((x:any) => x.fields || x));
 
-            // 3. Besuche
+            // 3. Besuche (MAPPING EXAKT NACH SCREENSHOT "BESUCHE")
             const bData = json.data.besuche || [];
-            const mappedBesuche = bData.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
+            const mappedBesuche = bData.map((b: any) => {
+                const data = b.fields || b;
+                return { 
+                    id: b.id, 
+                    // Hier sind die exakten Airtable Namen aus deinem Bild:
+                    Tätigkeit: unbox(data.Tätigkeit), 
+                    Uhrzeit: unbox(data.Uhrzeit),
+                    Status: unbox(data.Status),
+                    Notiz_Patient: unbox(data.Notiz_Patient),
+                    Pfleger_Name: unbox(data.Pfleger_Name),
+                    // Restliche Daten
+                    ...data
+                }; 
+            });
             const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
                 const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
                 const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
                 return dA - dB;
             });
 
-            // Highlight Logik
             if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
                 const changes: string[] = [];
                 sortedBesuche.forEach(newItem => {
@@ -226,31 +234,32 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Tasks
+            // 4. Tasks (MAPPING EXAKT NACH SCREENSHOT "AUFGABEN")
             const tData = json.data.tasks || [];
             setTasks(tData.map((t: any) => {
-                const data = t.fields || t; 
-                return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
+                const data = t.fields || t;
+                return { 
+                    id: t.id, 
+                    // Hier: "Aufgabentext" aus Screenshot
+                    text: unbox(data.Aufgabentext), 
+                    done: unbox(data.Status) === "Erledigt" 
+                };
             }));
-        } else {
-            console.warn("Unerwartetes Datenformat von n8n", json);
         }
 
     } catch (e: any) {
         console.error("Fetch Error:", e);
-        if (e.name !== 'AbortError' && !background) setErrorMsg("Verbindungsfehler.");
+        if (e.name !== 'AbortError' && !background) setErrorMsg("Daten konnten nicht geladen werden.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
     }
   };
 
-  // --- TRIGGER ---
   useEffect(() => { 
       if (patientId) fetchData(false);
   }, [patientId]); 
 
-  // On Focus nur wenn Cache abgelaufen
   useEffect(() => {
       const handleFocus = () => { if (patientId) fetchData(false); };
       window.addEventListener('focus', handleFocus);
@@ -260,8 +269,6 @@ export default function App() {
       return () => { window.removeEventListener('focus', handleFocus); };
   }, [patientId]);
 
-
-  // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoggingIn(true);
     try {
@@ -382,7 +389,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* ERROR BANNER */}
       {errorMsg && (
           <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top shadow-lg">
               <AlertTriangle size={24} className="shrink-0"/>
@@ -394,7 +400,6 @@ export default function App() {
           </div>
       )}
 
-      {/* UPDATE BANNER */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -433,17 +438,13 @@ export default function App() {
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Besuchs-Planer</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p></div>
-            
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
-            
             {upcomingBesuche.map((b, i) => {
                 const proposed = getProposedDetails(b);
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
-                
                 const isHighlighted = highlightedIds.includes(b.id);
-
                 return (
                   <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                     <div className="p-6 flex items-center gap-6">
@@ -469,7 +470,6 @@ export default function App() {
                   </div>
                 );
             })}
-
             {pastBesuche.length > 0 && (
                 <div className="pt-8 text-center">
                     <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">{showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})</button>
@@ -490,6 +490,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Andere Tabs bleiben unverändert */}
         {activeTab === 'hochladen' && (<div className="space-y-4 animate-in fade-in"><div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Dokumente</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p></div><div className="flex flex-col gap-4"><button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"><div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div><div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div><ChevronRight className="text-gray-300" /></button><button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"><div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div><div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div><ChevronRight className="text-gray-300" /></button></div><div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top"><button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"><Play size={14} fill="#b5a48b" /> So funktioniert's</button><div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs"><p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p><button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button></div></div></div>)}
         {activeTab === 'urlaub' && (<div className="space-y-6 animate-in fade-in"><div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Plane size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Urlaubsplanung</h2><p className="text-xs text-gray-400 mt-2 px-6">Teilen Sie uns ihre Abwesenheiten mit.</p></div><div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6"><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Von wann</label><div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubStart} onChange={(e)=>setUrlaubStart(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label><div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div></div><button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${formatDate(urlaubStart)} bis ${formatDate(urlaubEnde)}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">{isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span></button></div><p className="text-[10px] text-gray-300 text-center px-10">Hinweis: Einsätze pausieren in diesem Zeitraum.</p></div>)}
       </main>
