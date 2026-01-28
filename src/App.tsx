@@ -10,7 +10,7 @@ import {
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
-// --- MASTER HELFER ---
+// --- MASTER HELFER: FINDET DATEN IMMER ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
   if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
@@ -19,12 +19,12 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// DER SPÜRHUND: Findet Daten egal wo sie liegen
+// DER SPÜRHUND: Findet Daten egal wo sie liegen (Direkt oder in 'fields')
 const getValue = (item: any, fieldName: string) => {
     if (!item) return "";
-    // 1. Versuch: Liegt es direkt im Objekt? (z.B. durch n8n Code Node flach gemacht)
+    // 1. Versuch: Liegt es direkt im Objekt? (Vom n8n Aggregator)
     if (item[fieldName] !== undefined) return unbox(item[fieldName]);
-    // 2. Versuch: Liegt es im Airtable "fields" Ordner? (Standard Airtable API)
+    // 2. Versuch: Liegt es im Airtable "fields" Ordner? (Standard Airtable)
     if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
     return ""; // Nicht gefunden
 };
@@ -73,10 +73,10 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
-// EXAKTE SPALTENNAMEN (Hardcoded)
+// EXAKTE SPALTENNAMEN (Hardcoded aus Screenshots)
 const getDisplayTitle = (b: any) => {
-  const title = getValue(b, 'Tätigkeit'); 
-  const note = getValue(b, 'Notiz_Patient');
+  const title = getValue(b, 'Tätigkeit'); //
+  const note = getValue(b, 'Notiz_Patient'); //
   const status = getValue(b, 'Status');
   
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
@@ -105,7 +105,10 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export default function App() {
+  // --- STATES ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -159,14 +162,13 @@ export default function App() {
     });
   };
 
-  // --- FETCH LOGIC (Aggregator) ---
+  // --- THE AGGREGATOR FETCH ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
     if (isFetchingRef.current) return; 
 
-    // Caching 15 min
     const now = Date.now();
     const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
@@ -181,6 +183,7 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
+        console.log("Starte Fetch...", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -191,34 +194,31 @@ export default function App() {
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        // Debugging für dich:
-        console.log("🔥 EMPFANGENE DATEN:", json);
+        console.log("Daten:", json);
 
         if (json.data) {
             // 1. Patient
-            if (json.data.patienten_daten) {
-                // Auch hier: Sicherer Zugriff
-                const p = json.data.patienten_daten;
-                setPatientData(p.fields ? p.fields : p);
-            }
+            if (json.data.patienten_daten) setPatientData(json.data.patienten_daten);
 
             // 2. Kontakte
             const cData = json.data.kontakte || [];
-            setContactData(cData.map((x:any) => x.fields || x));
+            // Wir mappen hier nicht mehr manuell auf fields, getValue regelt das bei Bedarf
+            setContactData(cData);
 
-            // 3. Besuche (Nutzt jetzt getValue Spürhund)
+            // 3. Besuche (Das war das Problem! Jetzt nutzen wir getValue)
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
+                // Wir nehmen das Roh-Objekt (egal ob flach oder nested)
                 return { 
                     id: b.id, 
-                    // Wir speichern alles flach ab für einfachen Zugriff
-                    ...(b.fields || b),
-                    // Explizit extrahieren mit Spürhund
+                    // Hier holen wir die Werte SICHER:
                     Tätigkeit: getValue(b, 'Tätigkeit'), 
                     Uhrzeit: getValue(b, 'Uhrzeit'),
                     Status: getValue(b, 'Status'),
                     Notiz_Patient: getValue(b, 'Notiz_Patient'),
-                    Pfleger_Name: getValue(b, 'Pfleger_Name')
+                    Pfleger_Name: getValue(b, 'Pfleger_Name'),
+                    // Alles andere auch mitschleifen für Sicherheit
+                    ...(b.fields || b) 
                 }; 
             });
             const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
@@ -247,23 +247,21 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Tasks (Nutzt jetzt getValue Spürhund)
+            // 4. Tasks (Auch hier getValue nutzen!)
             const tData = json.data.tasks || [];
             setTasks(tData.map((t: any) => {
                 return { 
                     id: t.id, 
-                    // Sucht nach 'Aufgabentext' egal wo er steckt
-                    text: getValue(t, 'Aufgabentext') || "Aufgabe ohne Text", 
+                    // Hier: "Aufgabentext" aus Screenshot
+                    text: getValue(t, 'Aufgabentext') || "Aufgabe", 
                     done: getValue(t, 'Status') === "Erledigt" 
                 };
             }));
-        } else {
-            console.error("JSON Format falsch:", json);
         }
 
     } catch (e: any) {
         console.error("Fetch Error:", e);
-        if (e.name !== 'AbortError' && !background) setErrorMsg("Ladefehler.");
+        if (e.name !== 'AbortError' && !background) setErrorMsg("Verbindungsfehler.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
@@ -339,7 +337,7 @@ export default function App() {
       try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
-        formData.append('patientName', unbox(patientData?.Name));
+        formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Terminanfrage');
         formData.append('betreff', requestReason || "Terminanfrage");
         let note = `Wunschtermin: ${formatDate(requestDate)}`;
