@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, Clock, AlertCircle, History
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell
 } from 'lucide-react';
 
 // Deine n8n Live-URL
@@ -18,7 +18,6 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// Standard Datum (24.01.2026)
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -37,7 +36,6 @@ const formatDate = (raw: any, short = false) => {
   } catch { return val; }
 };
 
-// NEU: Langes Datum für Geburtstag (25. Januar 2026)
 const formatDateLong = (raw: any) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -50,7 +48,6 @@ const formatDateLong = (raw: any) => {
   } catch { return val; }
 };
 
-// Uhrzeit aus ISO String
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -124,13 +121,18 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Archiv Toggle
+  // Banner & Highlight
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
   // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
+  
+  // Polling Status
+  const [isFastPolling, setIsFastPolling] = useState(false);
   
   // Formular Daten
   const [newTerminDate, setNewTerminDate] = useState(""); 
@@ -146,6 +148,10 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
+  // Refs für Sicherheit & Vergleiche
+  const besucheRef = useRef<any[]>([]);
+  const isFetchingRef = useRef(false); // DER TÜRSTEHER: Verhindert doppelte Requests
+
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
     const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
@@ -156,14 +162,18 @@ export default function App() {
     });
   };
 
-  // --- DATEN LADEN (Auto-Refresh) ---
+  // --- SICHERES DATEN LADEN ---
   const fetchData = async (background = false) => {
+    // TÜRSTEHER-CHECK: Lädt er schon? Wenn ja, abbrechen!
+    if (isFetchingRef.current) return;
+    
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
+    isFetchingRef.current = true; // Tür zu: Ich lade jetzt.
+    if (!background) setLoading(true);
+    
     try {
-      if (!background) setLoading(true);
-      
       const [resP, resC, resB, resT] = await Promise.all([
         fetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
         fetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
@@ -188,17 +198,41 @@ export default function App() {
 
       setContactData(extract(jsonC));
 
+      // BESUCHE
       const rawBesuche = extract(jsonB);
       const mappedBesuche = rawBesuche.map((b: any) => {
           const fields = b.fields || b;
           return { id: b.id, ...fields };
       });
       
-      setBesuche(mappedBesuche.sort((a:any, b:any) => {
+      const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
           const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
           const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
           return dA - dB;
-      }));
+      });
+
+      // CHANGE DETECTION
+      if (besucheRef.current.length > 0) {
+          const changes: string[] = [];
+          sortedBesuche.forEach(newItem => {
+              const oldItem = besucheRef.current.find(old => old.id === newItem.id);
+              if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit) || unbox(oldItem.Notiz_Patient) !== unbox(newItem.Notiz_Patient)) {
+                  changes.push(newItem.id);
+              }
+          });
+
+          if (changes.length > 0) {
+              if (background) {
+                  setShowUpdateBanner(true);
+              } else {
+                  setHighlightedIds(changes);
+                  setTimeout(() => setHighlightedIds([]), 3000);
+              }
+          }
+      }
+
+      setBesuche(sortedBesuche);
+      besucheRef.current = sortedBesuche; 
       
       const rawTasks = extract(jsonT);
       setTasks(rawTasks.map((t: any) => {
@@ -206,19 +240,43 @@ export default function App() {
         return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
       }));
 
-    } catch (e) { console.error("Ladefehler:", e); } 
-    finally { if (!background) setLoading(false); }
+    } catch (e) { 
+        console.error("Ladefehler:", e); 
+        // Falls Fehler, UI trotzdem freigeben, damit man es nochmal versuchen kann
+    } finally { 
+        isFetchingRef.current = false; // Tür wieder auf.
+        if (!background) setLoading(false); 
+    }
   };
 
-  useEffect(() => { 
-      if (patientId) {
-          fetchData(false);
-          const interval = setInterval(() => {
-              fetchData(true);
-          }, 5000); 
-          return () => clearInterval(interval);
-      }
+  // --- UPDATE LOGIK ---
+  const triggerFastPolling = () => {
+      setIsFastPolling(true);
+      setTimeout(() => setIsFastPolling(false), 120000); 
+  };
+
+  // Tab Wechsel Refresh
+  useEffect(() => { if (patientId) fetchData(true); }, [patientId, activeTab]);
+
+  // Fokus & Visibility
+  useEffect(() => {
+      const handleResume = () => { if (document.visibilityState === 'visible' && patientId) fetchData(true); };
+      const handleFocus = () => { if (patientId) fetchData(true); };
+      document.addEventListener('visibilitychange', handleResume);
+      window.addEventListener('focus', handleFocus);
+      return () => { document.removeEventListener('visibilitychange', handleResume); window.removeEventListener('focus', handleFocus); };
   }, [patientId]);
+
+  // Intervalle
+  useEffect(() => {
+      let interval: any;
+      if (patientId) {
+          const time = isFastPolling ? 10000 : 900000; 
+          interval = setInterval(() => { fetchData(true); }, time);
+      }
+      return () => clearInterval(interval);
+  }, [patientId, isFastPolling]);
+
 
   // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -241,13 +299,14 @@ export default function App() {
 
   const handleTerminConfirm = async (recordId: string) => {
     setConfirmedTermine([...confirmedTermine, recordId]); 
+    triggerFastPolling(); 
     try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1000);
+        setTimeout(() => fetchData(true), 1500);
     } catch(e) { console.error("Fehler beim Bestätigen", e); }
   };
 
@@ -256,6 +315,7 @@ export default function App() {
     setIsSending(true);
     setPendingChanges([...pendingChanges, recordId]);
     setEditingTermin(null);
+    triggerFastPolling();
 
     try {
         const formData = new FormData();
@@ -270,7 +330,7 @@ export default function App() {
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
         
         setNewTerminDate(""); setNewTerminTime(""); 
-        setTimeout(() => fetchData(true), 1000);
+        setTimeout(() => fetchData(true), 1500);
     } catch(e) { console.error(e); }
     setIsSending(false);
   };
@@ -278,6 +338,7 @@ export default function App() {
   const handleNewTerminRequest = async () => {
       if(!requestDate) return;
       setIsSending(true);
+      triggerFastPolling();
       try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
@@ -297,7 +358,7 @@ export default function App() {
             setRequestDate(""); 
             setRequestTime(""); 
             setRequestReason("");
-            setTimeout(() => fetchData(true), 1500); 
+            setTimeout(() => fetchData(true), 2000); 
         }, 1500);
       } catch (e) { setSentStatus('error'); }
       setIsSending(false);
@@ -305,6 +366,7 @@ export default function App() {
 
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
+    triggerFastPolling();
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
@@ -317,9 +379,17 @@ export default function App() {
           await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
       }
       setSentStatus('success');
-      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); }, 1500);
+      setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
     } catch (e) { console.error(e); setSentStatus('error'); }
     setIsSending(false);
+  };
+
+  const handleBannerClick = () => {
+      setLoading(true); 
+      fetchData(false).then(() => {
+          setLoading(false); 
+          setShowUpdateBanner(false); 
+      });
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
@@ -347,13 +417,37 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
-      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm"><img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" /><div className="flex flex-col items-end"><button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-2 rounded-full mb-1"><LogOut size={18}/></button><p className="text-[10px] font-bold italic">{unbox(patientData?.Name)}</p></div></header>
+      
+      {/* UPDATE BANNER */}
+      {showUpdateBanner && (
+          <button 
+            onClick={handleBannerClick}
+            className="fixed top-0 left-0 right-0 z-[100] bg-[#3A3A3A] text-white p-8 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-[#b5a48b]"
+          >
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="bg-white/20 p-3 rounded-full animate-bounce"><Bell size={32} /></div>
+                  <span className="font-black text-xl uppercase tracking-wide">Neuer Hinweis für Sie</span>
+              </div>
+              <p className="text-base opacity-90 font-bold underline decoration-2 underline-offset-4 text-[#b5a48b]">Hier tippen zum Aktualisieren</p>
+          </button>
+      )}
+
+      <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
+        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
+        <div className="flex flex-col items-end">
+          <div className="flex items-center gap-3 mb-1.5">
+             <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={18}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={18}/></button>
+          </div>
+          <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
+        </div>
+      </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div><CalendarIcon size={28}/></div>
-            <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>{loading && <RefreshCw size={14} className="animate-spin text-gray-300"/>}</div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
+            <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3></div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
             <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { const data = c.fields || c; return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(data.Name || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{unbox(data.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(data['Rolle/Funktion'])}</p></div></div>{unbox(data.Telefon) && <a href={`tel:${unbox(data.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
           </div>
@@ -371,9 +465,12 @@ export default function App() {
                 const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
                 const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
                 const isProposed = !unbox(b.Uhrzeit) && proposed; 
+                
+                // HIGHLIGHT LOGIK
+                const isHighlighted = highlightedIds.includes(b.id);
 
                 return (
-                  <div key={b.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 text-left overflow-hidden">
+                  <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                     <div className="p-6 flex items-center gap-6">
                         <div className="text-center min-w-[60px]">
                             <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
