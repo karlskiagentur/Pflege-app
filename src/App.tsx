@@ -159,14 +159,14 @@ export default function App() {
     });
   };
 
-  // --- FETCH DATA (AGGREGATOR) ---
+  // --- FETCH LOGIC (MIT ARRAY FIX) ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
     if (isFetchingRef.current) return; 
 
-    // Cache Check (15 min)
+    // Cache Check
     const now = Date.now();
     const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
@@ -181,43 +181,65 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
+        console.log("Starte Fetch für ID:", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
         
         if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
         
-        const json = await response.json();
+        // ROHDATEN LADEN
+        let json = await response.json();
+        
+        // 🔥 DER FIX: ARRAY ENTPACKEN 🔥
+        // Wenn n8n eine Liste [ { data: ... } ] schickt, nimm das erste Element!
+        if (Array.isArray(json) && json.length > 0) {
+            console.log("⚠️ Array erkannt - entpacke erstes Element...");
+            json = json[0];
+        }
+
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        // --- DATEN VERARBEITUNG (Optimiert für dein flaches JSON) ---
+        console.log("✅ Verarbeitetes JSON:", json);
+
         if (json.data) {
-            
-            // 1. Patientendaten
+            // 1. Patient
             if (json.data.patienten_daten) {
-                setPatientData(json.data.patienten_daten);
+                const p = json.data.patienten_daten;
+                setPatientData(p.fields ? p.fields : p);
             }
 
-            // 2. Kontakte (Direkt übernehmen)
+            // 2. Kontakte
             const cData = json.data.kontakte || [];
             setContactData(cData);
 
-            // 3. Besuche (Sortieren nach Uhrzeit)
+            // 3. Besuche
             const bData = json.data.besuche || [];
-            const sortedBesuche = bData.sort((a:any, b:any) => {
-                const dA = new Date(unbox(a['Uhrzeit'])).getTime() || 0;
-                const dB = new Date(unbox(b['Uhrzeit'])).getTime() || 0;
+            
+            const mappedBesuche = bData.map((b: any) => {
+                return { 
+                    id: b.id, 
+                    ...b,
+                    // Hole Daten sicher
+                    Tätigkeit: getValue(b, 'Tätigkeit'), 
+                    Uhrzeit: getValue(b, 'Uhrzeit'),
+                    Status: getValue(b, 'Status'),
+                    Notiz_Patient: getValue(b, 'Notiz_Patient'),
+                    Pfleger_Name: getValue(b, 'Pfleger_Name')
+                }; 
+            });
+            const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
+                const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
+                const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
                 return dA - dB;
             });
 
-            // Änderungserkennung (für Banner/Highlight)
             if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
                 const changes: string[] = [];
                 sortedBesuche.forEach(newItem => {
                     const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-                    // Vergleiche Status als String
-                    if (!oldItem || unbox(oldItem['Status']) !== unbox(newItem['Status'])) {
+                    if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
                         changes.push(newItem.id);
                     }
                 });
@@ -232,16 +254,18 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Aufgaben
+            // 4. Tasks
             const tData = json.data.tasks || [];
-            // Map auf internes Format für die Anzeige
-            const mappedTasks = tData.map((t: any) => ({
-                id: t.id,
-                text: unbox(t['Aufgabentext']) || "Aufgabe", // Exakter Key aus JSON
-                done: unbox(t['Status']) === "Erledigt"      // Exakter Key aus JSON
+            setTasks(tData.map((t: any) => {
+                return { 
+                    id: t.id, 
+                    text: getValue(t, 'Aufgabentext') || "Aufgabe", 
+                    done: getValue(t, 'Status') === "Erledigt" 
+                };
             }));
-            setTasks(mappedTasks);
-
+        } else {
+            console.warn("JSON hat kein 'data' Feld (oder falsches Format):", json);
+            setErrorMsg("Datenformat ungültig.");
         }
 
     } catch (e: any) {
