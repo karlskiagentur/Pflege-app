@@ -7,9 +7,9 @@ import {
 } from 'lucide-react';
 
 // Deine n8n Live-URL
-// WICHTIG: Erstelle in n8n diesen EINEN Workflow, der ALLES liefert!
+// WICHTIG: Der Pfad muss /get_full_app_data sein!
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
-const AGGREGATOR_ENDPOINT = 'get_full_app_data'; // Dein neuer n8n Workflow Name
+const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
 // --- HELFER ---
 const unbox = (val: any): string => {
@@ -143,7 +143,7 @@ export default function App() {
   // REFS
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
-  const lastFetchTimeRef = useRef<number>(0); // Für Caching
+  const lastFetchTimeRef = useRef<number>(0); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -160,14 +160,12 @@ export default function App() {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
-    if (isFetchingRef.current) return; // Blockieren bei laufendem Fetch
+    if (isFetchingRef.current) return; // Blockieren
 
-    // CACHING LOGIK:
-    // Wenn nicht 'force' (manuell), und der letzte Abruf jünger als 15 Minuten ist -> ABBRUCH (Spart Geld)
+    // Caching: 15 Minuten Ruhe, außer bei Force
     const now = Date.now();
-    const CACHE_TIME = 15 * 60 * 1000; // 15 Minuten
+    const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
-        console.log("Benutze Cache - kein neuer Aufruf.");
         return; 
     }
     
@@ -175,12 +173,11 @@ export default function App() {
     if (!background) setLoading(true);
     setErrorMsg(null);
 
-    // Timeout nach 15s
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s Zeit für den großen Call
 
     try {
-        // --- DER EINE RING (EIN AUFRUF FÜR ALLES) ---
+        // EIN AUFRUF FÜR ALLES
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -189,73 +186,71 @@ export default function App() {
         
         const json = await response.json();
         clearTimeout(timeoutId);
-        lastFetchTimeRef.current = Date.now(); // Cache Zeitstempel setzen
+        lastFetchTimeRef.current = Date.now();
 
-        // --- VERARBEITUNG DER AGGREGIERTEN DATEN ---
-        // Annahme: n8n liefert { patient: {}, contacts: [], visits: [], tasks: [] }
-        
-        // 1. Patient
-        const pData = json.patient || json.patienten_daten; // Fallback für Naming
-        if (pData) setPatientData(pData);
+        // Checken ob n8n das JSON richtig gebaut hat (siehe Code-Node)
+        if (json.data) {
+            // 1. Patient
+            if (json.data.patienten_daten) setPatientData(json.data.patienten_daten);
 
-        // 2. Kontakte
-        const cData = json.contacts || json.kontakte || [];
-        setContactData(cData.map((x:any) => x.fields || x));
+            // 2. Kontakte
+            const cData = json.data.kontakte || [];
+            setContactData(cData.map((x:any) => x.fields || x));
 
-        // 3. Besuche
-        const bData = json.visits || json.besuche || [];
-        const mappedBesuche = bData.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
-        const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
-            const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
-            const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
-            return dA - dB;
-        });
-
-        // Highlight Check
-        if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
-            const changes: string[] = [];
-            sortedBesuche.forEach(newItem => {
-                const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
-                    changes.push(newItem.id);
-                }
+            // 3. Besuche
+            const bData = json.data.besuche || [];
+            const mappedBesuche = bData.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
+            const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
+                const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
+                const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
+                return dA - dB;
             });
-            if (changes.length > 0) {
-                if (background) setShowUpdateBanner(true);
-                else {
-                    setHighlightedIds(changes);
-                    setTimeout(() => setHighlightedIds([]), 180000);
+
+            // Highlight Logik
+            if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
+                const changes: string[] = [];
+                sortedBesuche.forEach(newItem => {
+                    const oldItem = besucheRef.current.find(old => old.id === newItem.id);
+                    if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
+                        changes.push(newItem.id);
+                    }
+                });
+                if (changes.length > 0) {
+                    if (background) setShowUpdateBanner(true);
+                    else {
+                        setHighlightedIds(changes);
+                        setTimeout(() => setHighlightedIds([]), 180000);
+                    }
                 }
             }
-        }
-        setBesuche(sortedBesuche);
-        besucheRef.current = sortedBesuche;
+            setBesuche(sortedBesuche);
+            besucheRef.current = sortedBesuche;
 
-        // 4. Tasks
-        const tData = json.tasks || [];
-        setTasks(tData.map((t: any) => {
-            const data = t.fields || t; 
-            return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
-        }));
+            // 4. Tasks
+            const tData = json.data.tasks || [];
+            setTasks(tData.map((t: any) => {
+                const data = t.fields || t; 
+                return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
+            }));
+        } else {
+            console.warn("Unerwartetes Datenformat von n8n", json);
+        }
 
     } catch (e: any) {
         console.error("Fetch Error:", e);
-        if (e.name !== 'AbortError' && !background) setErrorMsg("Verbindungsfehler. Bitte aktualisieren.");
+        if (e.name !== 'AbortError' && !background) setErrorMsg("Verbindungsfehler.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
     }
   };
 
-  // --- TRIGGERS ---
-  
-  // 1. Initial Start (Soft Load - nutzt Cache falls vorhanden)
+  // --- TRIGGER ---
   useEffect(() => { 
       if (patientId) fetchData(false);
   }, [patientId]); 
 
-  // 2. Tab Wechsel / Fokus (Soft Load - nutzt Cache!)
-  // Das ist sicher, weil die fetchData Funktion jetzt prüft, ob 15 Min vorbei sind.
+  // On Focus nur wenn Cache abgelaufen
   useEffect(() => {
       const handleFocus = () => { if (patientId) fetchData(false); };
       window.addEventListener('focus', handleFocus);
@@ -293,7 +288,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1500); // Force Refresh nach Aktion
+        setTimeout(() => fetchData(true), 1500); 
     } catch(e) { console.error(e); }
   };
 
