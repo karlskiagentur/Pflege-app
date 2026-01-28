@@ -7,7 +7,9 @@ import {
 } from 'lucide-react';
 
 // Deine n8n Live-URL
+// WICHTIG: Erstelle in n8n diesen EINEN Workflow, der ALLES liefert!
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
+const AGGREGATOR_ENDPOINT = 'get_full_app_data'; // Dein neuer n8n Workflow Name
 
 // --- HELFER ---
 const unbox = (val: any): string => {
@@ -121,6 +123,7 @@ export default function App() {
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
+  // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
@@ -137,9 +140,10 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // Refs
+  // REFS
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
+  const lastFetchTimeRef = useRef<number>(0); // Für Caching
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -151,12 +155,21 @@ export default function App() {
     });
   };
 
-  // --- MANUAL FETCH (PARALLEL & SCHNELL) ---
-  const fetchData = async (background = false) => {
-    if (isFetchingRef.current) return; 
-    
+  // --- THE AGGREGATOR FETCH (SINGLE CALL) ---
+  const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
+
+    if (isFetchingRef.current) return; // Blockieren bei laufendem Fetch
+
+    // CACHING LOGIK:
+    // Wenn nicht 'force' (manuell), und der letzte Abruf jünger als 15 Minuten ist -> ABBRUCH (Spart Geld)
+    const now = Date.now();
+    const CACHE_TIME = 15 * 60 * 1000; // 15 Minuten
+    if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
+        console.log("Benutze Cache - kein neuer Aufruf.");
+        return; 
+    }
     
     isFetchingRef.current = true;
     if (!background) setLoading(true);
@@ -166,61 +179,39 @@ export default function App() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const safeFetch = async (url: string) => {
-        const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status} bei ${url}`);
-        return await res.json();
-    };
-
-    const extract = (json: any) => {
-        if (!json) return [];
-        if (json.data && Array.isArray(json.data)) {
-           if (json.data[0]?.data && Array.isArray(json.data[0].data)) return json.data[0].data;
-           return json.data;
-        }
-        return Array.isArray(json) ? json : [];
-    };
-
     try {
-        console.log("Starte Datenabruf für ID:", id);
-
-        // KORRIGIERTE URLS (ohne _v2)
-        const [jsonP, jsonC, jsonB, jsonT] = await Promise.all([
-            safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
-            safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
-            safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`),
-            safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`)
-        ]);
-
-        clearTimeout(timeoutId);
-
-        console.log("Daten empfangen:", { jsonP, jsonC, jsonB, jsonT });
-
-        if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-        else console.warn("Patientendaten unvollständig");
-
-        if (jsonC) setContactData(extract(jsonC));
+        // --- DER EINE RING (EIN AUFRUF FÜR ALLES) ---
+        const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
+            signal: controller.signal 
+        });
         
-        let rawBesuche: any[] = [];
-        if (jsonB) rawBesuche = extract(jsonB);
+        if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
+        
+        const json = await response.json();
+        clearTimeout(timeoutId);
+        lastFetchTimeRef.current = Date.now(); // Cache Zeitstempel setzen
 
-        if (jsonT) {
-            const rawTasks = extract(jsonT);
-            setTasks(rawTasks.map((t: any) => {
-                const data = t.fields || t; 
-                return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
-            }));
-        }
+        // --- VERARBEITUNG DER AGGREGIERTEN DATEN ---
+        // Annahme: n8n liefert { patient: {}, contacts: [], visits: [], tasks: [] }
+        
+        // 1. Patient
+        const pData = json.patient || json.patienten_daten; // Fallback für Naming
+        if (pData) setPatientData(pData);
 
-        // Verarbeiten
-        const mappedBesuche = rawBesuche.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
+        // 2. Kontakte
+        const cData = json.contacts || json.kontakte || [];
+        setContactData(cData.map((x:any) => x.fields || x));
+
+        // 3. Besuche
+        const bData = json.visits || json.besuche || [];
+        const mappedBesuche = bData.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
         const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
             const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
             const dB = new Date(unbox(b.Uhrzeit)).getTime() || 0;
             return dA - dB;
         });
 
-        // Banner Logik (Nur bei Hintergrund-Update relevant, hier eher selten)
+        // Highlight Check
         if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
             const changes: string[] = [];
             sortedBesuche.forEach(newItem => {
@@ -233,27 +224,46 @@ export default function App() {
                 if (background) setShowUpdateBanner(true);
                 else {
                     setHighlightedIds(changes);
-                    setTimeout(() => setHighlightedIds([]), 180000); // 3 Min
+                    setTimeout(() => setHighlightedIds([]), 180000);
                 }
             }
         }
-
         setBesuche(sortedBesuche);
         besucheRef.current = sortedBesuche;
 
+        // 4. Tasks
+        const tData = json.tasks || [];
+        setTasks(tData.map((t: any) => {
+            const data = t.fields || t; 
+            return { id: t.id, text: unbox(data.Aufgabentext || data.text || "Aufgabe"), done: unbox(data.Status) === "Erledigt" };
+        }));
+
     } catch (e: any) {
-        console.error("Ladefehler Detail:", e);
-        if (e.name !== 'AbortError') setErrorMsg("Fehler beim Laden: " + e.message);
+        console.error("Fetch Error:", e);
+        if (e.name !== 'AbortError' && !background) setErrorMsg("Verbindungsfehler. Bitte aktualisieren.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
     }
   };
 
-  // --- INITIAL LOAD ONLY ---
+  // --- TRIGGERS ---
+  
+  // 1. Initial Start (Soft Load - nutzt Cache falls vorhanden)
   useEffect(() => { 
       if (patientId) fetchData(false);
   }, [patientId]); 
+
+  // 2. Tab Wechsel / Fokus (Soft Load - nutzt Cache!)
+  // Das ist sicher, weil die fetchData Funktion jetzt prüft, ob 15 Min vorbei sind.
+  useEffect(() => {
+      const handleFocus = () => { if (patientId) fetchData(false); };
+      window.addEventListener('focus', handleFocus);
+      document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && patientId) fetchData(false);
+      });
+      return () => { window.removeEventListener('focus', handleFocus); };
+  }, [patientId]);
 
 
   // --- ACTIONS ---
@@ -283,7 +293,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1500);
+        setTimeout(() => fetchData(true), 1500); // Force Refresh nach Aktion
     } catch(e) { console.error(e); }
   };
 
@@ -349,7 +359,7 @@ export default function App() {
   };
 
   const handleBannerClick = () => {
-      fetchData(false).then(() => setShowUpdateBanner(false));
+      fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
@@ -407,7 +417,7 @@ export default function App() {
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
+             <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
