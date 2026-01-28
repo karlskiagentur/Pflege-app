@@ -19,12 +19,12 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// DER SPÜRHUND: Findet Daten egal ob flach oder in fields
+// DER SPÜRHUND: Findet Daten egal wo sie liegen
 const getValue = (item: any, fieldName: string) => {
     if (!item) return "";
-    // 1. Direkt (vom n8n Code Node)
+    // 1. Versuch: Liegt es direkt im Objekt?
     if (item[fieldName] !== undefined) return unbox(item[fieldName]);
-    // 2. In fields (Airtable Standard)
+    // 2. Versuch: Liegt es im Airtable "fields" Ordner?
     if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
     return ""; 
 };
@@ -73,9 +73,8 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
-// INTELLIGENTE TITEL SUCHE
 const getDisplayTitle = (b: any) => {
-  const title = getValue(b, 'Tätigkeit');
+  const title = getValue(b, 'Tätigkeit'); 
   const note = getValue(b, 'Notiz_Patient');
   const status = getValue(b, 'Status');
   
@@ -180,7 +179,6 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        console.log("Starte Fetch für ID:", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -190,8 +188,6 @@ export default function App() {
         const json = await response.json();
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
-
-        console.log("🔥 n8n Antwort:", json);
 
         if (json.data) {
             // 1. Patient
@@ -206,13 +202,10 @@ export default function App() {
 
             // 3. Besuche
             const bData = json.data.besuche || [];
-            console.log("Anzahl Besuche empfangen:", bData.length);
-            
             const mappedBesuche = bData.map((b: any) => {
                 return { 
                     id: b.id, 
-                    ...b,
-                    // Hole Daten sicher
+                    ...(b.fields || b),
                     Tätigkeit: getValue(b, 'Tätigkeit'), 
                     Uhrzeit: getValue(b, 'Uhrzeit'),
                     Status: getValue(b, 'Status'),
@@ -247,8 +240,6 @@ export default function App() {
 
             // 4. Tasks
             const tData = json.data.tasks || [];
-            console.log("Anzahl Tasks empfangen:", tData.length);
-            
             setTasks(tData.map((t: any) => {
                 return { 
                     id: t.id, 
@@ -256,8 +247,6 @@ export default function App() {
                     done: getValue(t, 'Status') === "Erledigt" 
                 };
             }));
-        } else {
-            console.warn("JSON ungültig:", json);
         }
 
     } catch (e: any) {
@@ -399,6 +388,201 @@ export default function App() {
       return new Date(zeitVal) < today;
   });
 
+  // --- RENDER FUNCTIONS (CLEAN ARCHITECTURE) ---
+  const renderDashboard = () => (
+    <div className="space-y-8 animate-in fade-in">
+        <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
+            <div>
+                <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
+                <h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2>
+            </div>
+            <CalendarIcon size={28}/>
+        </div>
+        
+        <section className="space-y-4">
+            <div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4">
+                <h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>
+            </div>
+            <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">
+                {tasks.length > 0 ? tasks.slice(0,5).map((t) => (
+                    <button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">
+                        {t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}
+                        <span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span>
+                    </button>
+                )) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}
+                {tasks.length > 5 && (
+                    <button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">
+                        {showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}
+                    </button>
+                )}
+            </div>
+        </section>
+
+        <section className="space-y-6">
+            <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3>
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm">
+                <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(getValue(patientData, 'Geburtsdatum'))}</span></div>
+                <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValue(patientData, 'Versicherung')}</span></div>
+                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValue(patientData, 'Anschrift')}</p></div>
+            </div>
+        </section>
+
+        <section className="space-y-6">
+            <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3>
+            <div className="space-y-3">
+                {contactData.map((c: any, i: number) => { 
+                    return (
+                        <div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100">
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(getValue(c, 'Name') || "?")[0]}</div>
+                                <div className="text-left"><p className="font-black text-lg leading-tight">{getValue(c, 'Name')}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{getValue(c, 'Rolle/Funktion')}</p></div>
+                            </div>
+                            {getValue(c, 'Telefon') && <a href={`tel:${getValue(c, 'Telefon')}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
+                        </div>
+                    ); 
+                })}
+            </div>
+        </section>
+    </div>
+  );
+
+  const renderPlaner = () => (
+    <div className="space-y-6 animate-in fade-in pb-12">
+        <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
+            <h2 className="text-3xl font-black">Besuchs-Planer</h2>
+            <p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p>
+        </div>
+        
+        <div className="flex justify-center">
+            <button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">
+                <PlusCircle size={16} /> Termin anfragen
+            </button>
+        </div>
+        
+        {upcomingBesuche.map((b, i) => {
+            const proposed = getProposedDetails(b);
+            const showTime = getValue(b, 'Uhrzeit') ? formatTime(getValue(b, 'Uhrzeit')) : (proposed ? proposed.time : "--:--");
+            const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
+            const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
+            const isHighlighted = highlightedIds.includes(b.id);
+
+            return (
+              <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
+                <div className="p-6 flex items-center gap-6">
+                    <div className="text-center min-w-[60px]">
+                        <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
+                    </div>
+                    <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                        <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
+                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
+                        <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
+                    </div>
+                </div>
+                {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
+                    <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
+                ) : pendingChanges.includes(b.id) || getValue(b, 'Status') === "Änderungswunsch" || getValue(b, 'Status') === "Anfrage" ? (
+                    <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
+                ) : editingTermin === b.id ? (
+                    <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
+                        <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p>
+                        <div className="flex gap-2 mb-2">
+                            <input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} />
+                            <input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button>
+                            <button onClick={() => handleTerminReschedule(b.id, unbox(getValue(b, 'Uhrzeit')))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex border-t border-gray-100">
+                        <button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button>
+                        <button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button>
+                    </div>
+                )}
+              </div>
+            );
+        })}
+
+        {pastBesuche.length > 0 && (
+            <div className="pt-8 text-center">
+                <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">
+                    {showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})
+                </button>
+                {showArchive && (
+                    <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-4">
+                        {pastBesuche.slice().reverse().map((b, i) => (
+                            <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
+                                <div className="p-6 flex items-center gap-6">
+                                    <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(getValue(b, 'Uhrzeit'))}</p></div>
+                                    <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(getValue(b, 'Uhrzeit'))}</p></div><History size={20} className="text-gray-300 mr-2"/>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        )}
+    </div>
+  );
+
+  const renderHochladen = () => (
+    <div className="space-y-4 animate-in fade-in">
+        <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
+            <h2 className="text-3xl font-black">Dokumente</h2>
+            <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
+        </div>
+        <div className="flex flex-col gap-4">
+            <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
+                <div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
+                <ChevronRight className="text-gray-300" />
+            </button>
+            <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div>
+                <div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
+                <ChevronRight className="text-gray-300" />
+            </button>
+        </div>
+        <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
+            <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
+                <Play size={14} fill="#b5a48b" /> So funktioniert's
+            </button>
+            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs">
+                <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
+                <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+            </div>
+        </div>
+    </div>
+  );
+
+  const renderUrlaub = () => (
+    <div className="space-y-6 animate-in fade-in">
+        <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Plane size={32} className="text-[#b5a48b]" /></div>
+            <h2 className="text-3xl font-black">Urlaubsplanung</h2>
+            <p className="text-xs text-gray-400 mt-2 px-6">Teilen Sie uns ihre Abwesenheiten mit.</p>
+        </div>
+        <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100 space-y-6">
+            <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-[#b5a48b]">Von wann</label>
+                <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubStart} onChange={(e)=>setUrlaubStart(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
+            </div>
+            <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-[#b5a48b]">Bis wann</label>
+                <div className="bg-[#F9F7F4] p-2 rounded-2xl flex items-center px-4"><CalendarIcon size={20} className="text-gray-400 mr-3"/><input type="date" value={urlaubEnde} onChange={(e)=>setUrlaubEnde(e.target.value)} className="bg-transparent w-full p-2 outline-none font-bold" style={{ colorScheme: 'light' }} /></div>
+            </div>
+            <button onClick={() => submitData('Urlaubsmeldung', `Urlaub von ${formatDate(urlaubStart)} bis ${formatDate(urlaubEnde)}`)} disabled={isSending || !urlaubStart || !urlaubEnde} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg disabled:opacity-50 active:scale-95 transition-all flex items-center justify-center gap-3">
+                {isSending ? <RefreshCw className="animate-spin" /> : <Send size={18} />} <span>{sentStatus === 'success' ? 'Eingetragen!' : 'Eintragen'}</span>
+            </button>
+        </div>
+        <p className="text-[10px] text-gray-300 text-center px-10">Hinweis: Einsätze pausieren in diesem Zeitraum.</p>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
@@ -438,73 +622,20 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
-        {activeTab === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in">
-            <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2></div><CalendarIcon size={28}/></div>
-            <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3></div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(getValue(patientData, 'Geburtsdatum'))}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValue(patientData, 'Versicherung')}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValue(patientData, 'Anschrift')}</p></div></div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(getValue(c, 'Name') || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{getValue(c, 'Name')}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{getValue(c, 'Rolle/Funktion')}</p></div></div>{getValue(c, 'Telefon') && <a href={`tel:${getValue(c, 'Telefon')}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
-          </div>
-        )}
-
-        {/* PLANER */}
-        {activeTab === 'planer' && (
-          <div className="space-y-6 animate-in fade-in pb-12">
-            <div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Besuchs-Planer</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p></div>
-            <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
-            {upcomingBesuche.map((b, i) => {
-                const proposed = getProposedDetails(b);
-                const showTime = getValue(b, 'Uhrzeit') ? formatTime(getValue(b, 'Uhrzeit')) : (proposed ? proposed.time : "--:--");
-                const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
-                const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
-                const isHighlighted = highlightedIds.includes(b.id);
-                return (
-                  <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
-                    <div className="p-6 flex items-center gap-6">
-                        <div className="text-center min-w-[60px]">
-                            <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
-                        </div>
-                        <div className="flex-1 border-l border-gray-100 pl-5 text-left">
-                            <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
-                            <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
-                            <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
-                        </div>
-                    </div>
-                    {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
-                        <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
-                    ) : pendingChanges.includes(b.id) || getValue(b, 'Status') === "Änderungswunsch" || getValue(b, 'Status') === "Anfrage" ? (
-                        <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
-                    ) : editingTermin === b.id ? (
-                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(getValue(b, 'Uhrzeit')))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
-                    ) : (
-                        <div className="flex border-t border-gray-100"><button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button><button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button></div>
-                    )}
-                  </div>
-                );
-            })}
-            {pastBesuche.length > 0 && (
-                <div className="pt-8 text-center">
-                    <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">{showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})</button>
-                    {showArchive && (
-                        <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-4">
-                            {pastBesuche.slice().reverse().map((b, i) => (
-                                <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
-                                    <div className="p-6 flex items-center gap-6">
-                                        <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(getValue(b, 'Uhrzeit'))}</p></div>
-                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(getValue(b, 'Uhrzeit'))}</p></div><History size={20} className="text-gray-300 mr-2"/>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-          </div>
-        )}
-
-        {/* Andere Tabs bleiben unverändert */}
-        {activeTab === 'hochladen' && (<div className="space-y-4 animate-in fade-in"><div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Dokumente</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p></div><div className="flex flex-col gap-4"><button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"><div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div><div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div><ChevronRight className="text-gray-300" /></button><button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left"><div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div><div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div><ChevronRight className="text-gray-300" /></button></div><div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top"><button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"><Play size={14} fill="#b5a48b" /> So funktioniert's</button><div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs"><p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p><button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button></div></div></div>)}
+        {activeTab === 'dashboard' && renderDashboard()}
+        {activeTab === 'planer' && renderPlaner()}
+        {activeTab === 'hochladen' && renderHochladen()}
+        {activeTab === 'urlaub' && renderUrlaub()}
+      </main>
+      
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (<button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} /><span className="text-[9px] font-black uppercase">{t.label}</span></button>))}</nav>
+      <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform cursor-move"><Mic size={24} fill="white" /><span className="text-[9px] font-bold mt-0.5 leading-tight text-center">24h<br/>KI Hilfe</span></button>
+      
+      {activeModal && (<div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in"><div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
+         {activeModal === 'video' && (<div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white"><X size={20}/></button><div className="text-white text-center"><PlayCircle size={64} className="opacity-20 mx-auto"/><p className="mt-4 font-bold text-xs uppercase tracking-widest">Video wird geladen...</p></div></div>)}
+         {activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
+         {activeModal === 'new-appointment' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3><p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label><input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Uhrzeit (Optional)</label><input type="time" value={requestTime} onChange={(e)=>setRequestTime(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund (Tätigkeit)</label><input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Einkaufen, Arzt..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" /></div><button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />} {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}</button></div></div>)}
+         {activeModal === 'folder' && (<div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10"><div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black">{uploadContext}</h3><button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button></div><button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all"><Plus size={20}/> Neu hochladen</button><div className="space-y-4"><p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p><div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50"><FileText className="text-gray-300"/><p className="text-sm font-bold text-gray-400">Archiv ist leer</p></div></div></div>)}
          {activeModal === 'upload' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3">{uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} Hochladen</h3><div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative"><input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" /><Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/><p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p></div><button onClick={() => submitData(uploadContext + '-Upload', 'Dokument')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending && <RefreshCw className="animate-spin" size={16}/>}{sentStatus === 'success' ? 'Erfolgreich!' : 'Absenden'}</button></div></div>)}
       </div>)}
     </div>
