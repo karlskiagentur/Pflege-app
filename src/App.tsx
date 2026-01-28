@@ -92,7 +92,6 @@ const getProposedDetails = (b: any) => {
     return null;
 };
 
-// PAUSE HELFER
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function App() {
@@ -124,7 +123,6 @@ export default function App() {
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
-  // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
@@ -155,9 +153,9 @@ export default function App() {
     });
   };
 
-  // --- STRICT SEQUENTIAL FETCH (NO LOOPS) ---
+  // --- MANUAL FETCH ONLY ---
   const fetchData = async (background = false) => {
-    if (isFetchingRef.current) return; // Verhindert Überlappung
+    if (isFetchingRef.current) return; // Blockiert doppelte Klicks
     
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -173,7 +171,7 @@ export default function App() {
             return await res.json();
         } catch (e) {
             console.warn("Fetch Error:", url, e);
-            return null; // Gibt null zurück statt zu crashen
+            return null; 
         }
     };
 
@@ -190,22 +188,22 @@ export default function App() {
         // 1. PATIENTEN
         const jsonP = await safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`);
         if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
-        else if (!jsonP) throw new Error("Server antwortet nicht (Patienten)");
+        else if (!jsonP) throw new Error("Server antwortet nicht");
 
-        await delay(1000); // 1s Pause
+        await delay(1000); 
 
         // 2. KONTAKTE
         const jsonC = await safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`);
         if (jsonC) setContactData(extract(jsonC));
 
-        await delay(1000); // 1s Pause
+        await delay(1000); 
 
         // 3. BESUCHE
         const jsonB = await safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`);
         let rawBesuche: any[] = [];
         if (jsonB) rawBesuche = extract(jsonB);
 
-        await delay(1000); // 1s Pause
+        await delay(1000); 
 
         // 4. TASKS
         const jsonT = await safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`);
@@ -225,20 +223,20 @@ export default function App() {
             return dA - dB;
         });
 
-        // Banner & Highlight Logik
+        // Banner & Highlight Logik (Nur wenn manuell getriggert)
         if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
             const changes: string[] = [];
             sortedBesuche.forEach(newItem => {
                 const oldItem = besucheRef.current.find(old => old.id === newItem.id);
-                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status)) {
+                if (!oldItem || unbox(oldItem.Status) !== unbox(newItem.Status) || unbox(oldItem.Uhrzeit) !== unbox(newItem.Uhrzeit)) {
                     changes.push(newItem.id);
                 }
             });
             if (changes.length > 0) {
-                if (background) setShowUpdateBanner(true);
+                if (background) setShowUpdateBanner(true); // Wird aktuell nicht genutzt, da background=true nie aufgerufen wird
                 else {
                     setHighlightedIds(changes);
-                    setTimeout(() => setHighlightedIds([]), 180000);
+                    setTimeout(() => setHighlightedIds([]), 180000); // 3 Minuten
                 }
             }
         }
@@ -248,19 +246,18 @@ export default function App() {
 
     } catch (e: any) {
         console.error("Critical Load Error:", e);
-        if (!background) setErrorMsg("Verbindungsproblem: " + (e.message || "Server überlastet"));
+        if (!background) setErrorMsg("Verbindungsproblem. Bitte später aktualisieren.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
     }
   };
 
-  // --- SAFE INITIAL LOAD ---
-  // Lädt NUR EINMAL beim Starten. Keine Loops.
+  // --- INITIAL LOAD ---
   useEffect(() => { 
       if (patientId) fetchData(false);
   }, [patientId]); 
-  // WICHTIG: Hier steht KEIN [activeTab] oder ähnliches. Das verhindert die Loop.
+  // KEINE WEITEREN TRIGGER (kein activeTab, kein Focus)
 
 
   // --- ACTIONS ---
@@ -356,7 +353,6 @@ export default function App() {
   };
 
   const handleBannerClick = () => {
-      setLoading(true); 
       fetchData(false).then(() => setShowUpdateBanner(false));
   };
 
@@ -385,7 +381,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
-      {/* FEHLER BANNER */}
+      {/* ERROR BANNER */}
       {errorMsg && (
           <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top shadow-lg">
               <AlertTriangle size={24} className="shrink-0"/>
@@ -397,7 +393,7 @@ export default function App() {
           </div>
       )}
 
-      {/* UPDATE BANNER */}
+      {/* UPDATE BANNER (Kommt nur bei manueller Aktualisierung, wenn sich Daten geändert haben) */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
