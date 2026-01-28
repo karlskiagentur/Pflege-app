@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 
 // Deine n8n Live-URL
-// WICHTIG: Stelle sicher, dass die Endpunkte in n8n aktiv sind!
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
 // --- HELFER ---
@@ -122,7 +121,6 @@ export default function App() {
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
-  // Termin Management
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
@@ -142,7 +140,6 @@ export default function App() {
   // Refs
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
-  const lastFetchRef = useRef<number>(0); // Zeitstempel für Throttling
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -154,31 +151,24 @@ export default function App() {
     });
   };
 
-  // --- PARALLEL FETCH (SCHNELL & SPARSAM) ---
-  const fetchData = async (force = false) => {
-    // 1. Verhindere doppelte Klicks
-    if (isFetchingRef.current) return;
+  // --- MANUAL FETCH (PARALLEL & SCHNELL) ---
+  const fetchData = async (background = false) => {
+    if (isFetchingRef.current) return; 
     
-    // 2. Throttling: Wenn nicht "force" (manuell), dann nur alle 10 Sekunden erlauben
-    // Das verhindert Executions-Explosion beim schnellen Tab-Wechseln
-    const now = Date.now();
-    if (!force && (now - lastFetchRef.current < 10000)) return;
-
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
     
     isFetchingRef.current = true;
-    lastFetchRef.current = now;
-    setLoading(true);
+    if (!background) setLoading(true);
     setErrorMsg(null);
 
-    // Controller für Timeout nach 15 Sekunden
+    // Timeout nach 15s
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const safeFetch = async (url: string) => {
         const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status} bei ${url}`);
         return await res.json();
     };
 
@@ -192,19 +182,23 @@ export default function App() {
     };
 
     try {
-        // PARALLELES LADEN (Da dein Server jetzt stark genug ist)
-        // Achte darauf, ob du _v2 benutzt oder nicht. Hier stehen die Standard-Pfade.
+        console.log("Starte Datenabruf für ID:", id);
+
+        // KORRIGIERTE URLS (ohne _v2)
         const [jsonP, jsonC, jsonB, jsonT] = await Promise.all([
-            safeFetch(`${N8N_BASE_URL}/get_data_patienten_v2?patientId=${id}`).catch(e => null),
-            safeFetch(`${N8N_BASE_URL}/get_data_kontakte_v2?patientId=${id}`).catch(e => null),
-            safeFetch(`${N8N_BASE_URL}/get_data_besuche_v2?patientId=${id}`).catch(e => null),
-            safeFetch(`${N8N_BASE_URL}/get_tasks_v2?patientId=${id}`).catch(e => null)
+            safeFetch(`${N8N_BASE_URL}/get_data_patienten?patientId=${id}`),
+            safeFetch(`${N8N_BASE_URL}/get_data_kontakte?patientId=${id}`),
+            safeFetch(`${N8N_BASE_URL}/get_data_besuche?patientId=${id}`),
+            safeFetch(`${N8N_BASE_URL}/get_tasks?patientId=${id}`)
         ]);
 
         clearTimeout(timeoutId);
 
-        // Daten setzen
+        console.log("Daten empfangen:", { jsonP, jsonC, jsonB, jsonT });
+
         if (jsonP && jsonP.status === "success") setPatientData(jsonP.patienten_daten);
+        else console.warn("Patientendaten unvollständig");
+
         if (jsonC) setContactData(extract(jsonC));
         
         let rawBesuche: any[] = [];
@@ -218,7 +212,7 @@ export default function App() {
             }));
         }
 
-        // Besuche verarbeiten & Highlight
+        // Verarbeiten
         const mappedBesuche = rawBesuche.map((b: any) => ({ id: b.id, ...(b.fields || b) }));
         const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
             const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
@@ -226,6 +220,7 @@ export default function App() {
             return dA - dB;
         });
 
+        // Banner Logik (Nur bei Hintergrund-Update relevant, hier eher selten)
         if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
             const changes: string[] = [];
             sortedBesuche.forEach(newItem => {
@@ -235,12 +230,11 @@ export default function App() {
                 }
             });
             if (changes.length > 0) {
-                // Bei manuellem Refresh direkt highlighten, kein Banner nötig
-                setHighlightedIds(changes);
-                setTimeout(() => setHighlightedIds([]), 180000); // 3 Min
-                // Optional: Banner kurz anzeigen als "Erfolg"
-                setShowUpdateBanner(true);
-                setTimeout(() => setShowUpdateBanner(false), 4000);
+                if (background) setShowUpdateBanner(true);
+                else {
+                    setHighlightedIds(changes);
+                    setTimeout(() => setHighlightedIds([]), 180000); // 3 Min
+                }
             }
         }
 
@@ -248,39 +242,18 @@ export default function App() {
         besucheRef.current = sortedBesuche;
 
     } catch (e: any) {
-        console.error("Ladefehler:", e);
-        if (e.name !== 'AbortError') setErrorMsg("Fehler beim Laden. Bitte prüfen Sie Ihre Verbindung.");
+        console.error("Ladefehler Detail:", e);
+        if (e.name !== 'AbortError') setErrorMsg("Fehler beim Laden: " + e.message);
     } finally {
         isFetchingRef.current = false;
-        setLoading(false);
+        if (!background) setLoading(false);
     }
   };
 
-  // --- TRIGGER LOGIK (SPARSAM) ---
-  
-  // 1. Initial Load (Einmalig bei App Start)
+  // --- INITIAL LOAD ONLY ---
   useEffect(() => { 
-      if (patientId) fetchData(true);
-  }, [patientId]);
-
-  // 2. On Focus (Wenn Kunde App öffnet/wechselt)
-  useEffect(() => {
-      const handleFocus = () => { 
-          // Lädt nur neu, wenn > 10 Sekunden vergangen sind (durch fetchData Logik)
-          if (patientId) fetchData(false); 
-      };
-      
-      window.addEventListener('focus', handleFocus);
-      document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') handleFocus();
-      });
-
-      return () => { 
-          window.removeEventListener('focus', handleFocus); 
-      };
-  }, [patientId]);
-
-  // KEIN setInterval mehr! Null Hintergrund-Last.
+      if (patientId) fetchData(false);
+  }, [patientId]); 
 
 
   // --- ACTIONS ---
@@ -310,7 +283,7 @@ export default function App() {
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1500); // Auto-Refresh nach Aktion
+        setTimeout(() => fetchData(true), 1500);
     } catch(e) { console.error(e); }
   };
 
@@ -376,7 +349,7 @@ export default function App() {
   };
 
   const handleBannerClick = () => {
-      fetchData(true).then(() => setShowUpdateBanner(false));
+      fetchData(false).then(() => setShowUpdateBanner(false));
   };
 
   if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
@@ -416,7 +389,7 @@ export default function App() {
           </div>
       )}
 
-      {/* UPDATE BANNER - Erscheint nur bei echten Änderungen nach Refresh */}
+      {/* UPDATE BANNER */}
       {showUpdateBanner && (
           <button 
             onClick={handleBannerClick}
@@ -434,7 +407,7 @@ export default function App() {
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
-             <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
+             <button onClick={() => fetchData(false)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
