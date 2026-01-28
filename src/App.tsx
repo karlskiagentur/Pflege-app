@@ -10,7 +10,7 @@ import {
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
-// --- HELFER ---
+// --- HELFER (V61 Original) ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
   if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
@@ -63,10 +63,9 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
-// EXAKTE NAMEN AUS DEINEN SCREENSHOTS
 const getDisplayTitle = (b: any) => {
-  const title = unbox(b.Tätigkeit); // Screenshot: Tätigkeit
-  const note = unbox(b.Notiz_Patient); // Screenshot: Notiz_Patient
+  const title = unbox(b.Tätigkeit); // Exakter Name aus Screenshot
+  const note = unbox(b.Notiz_Patient); // Exakter Name aus Screenshot
   const status = unbox(b.Status);
   
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
@@ -77,7 +76,7 @@ const getDisplayTitle = (b: any) => {
 };
 
 const getProposedDetails = (b: any) => {
-    const note = unbox(b.Notiz_Patient); // Screenshot: Notiz_Patient
+    const note = unbox(b.Notiz_Patient);
     const status = unbox(b.Status);
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
@@ -94,8 +93,6 @@ const getProposedDetails = (b: any) => {
     }
     return null;
 };
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default function App() {
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
@@ -172,7 +169,7 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        console.log("Starte Fetch...");
+        console.log("Starte Fetch...", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -183,30 +180,30 @@ export default function App() {
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        console.log("Empfangene Daten:", json);
+        console.log("Daten:", json);
 
         if (json.data) {
             // 1. Patient
             if (json.data.patienten_daten) setPatientData(json.data.patienten_daten);
 
-            // 2. Kontakte
+            // 2. Kontakte (Dual-Check: Felder oder direkt)
             const cData = json.data.kontakte || [];
             setContactData(cData.map((x:any) => x.fields || x));
 
-            // 3. Besuche (MAPPING EXAKT NACH SCREENSHOT "BESUCHE")
+            // 3. Besuche (V61 Logik + Dual-Check)
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
+                // Wir holen die Daten egal ob sie flach (n8n) oder verschachtelt (Airtable raw) sind
                 const data = b.fields || b;
                 return { 
                     id: b.id, 
-                    // Hier sind die exakten Airtable Namen aus deinem Bild:
+                    ...data, // Spread alles, damit wir nichts vergessen
+                    // Explizit die wichtigen Felder sicherstellen
                     Tätigkeit: unbox(data.Tätigkeit), 
                     Uhrzeit: unbox(data.Uhrzeit),
                     Status: unbox(data.Status),
                     Notiz_Patient: unbox(data.Notiz_Patient),
-                    Pfleger_Name: unbox(data.Pfleger_Name),
-                    // Restliche Daten
-                    ...data
+                    Pfleger_Name: unbox(data.Pfleger_Name)
                 }; 
             });
             const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
@@ -215,6 +212,7 @@ export default function App() {
                 return dA - dB;
             });
 
+            // Highlight Logik
             if (besucheRef.current.length > 0 && sortedBesuche.length > 0) {
                 const changes: string[] = [];
                 sortedBesuche.forEach(newItem => {
@@ -234,14 +232,14 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Tasks (MAPPING EXAKT NACH SCREENSHOT "AUFGABEN")
+            // 4. Tasks (Exakter Match nach Screenshot: Aufgabentext)
             const tData = json.data.tasks || [];
             setTasks(tData.map((t: any) => {
                 const data = t.fields || t;
                 return { 
                     id: t.id, 
-                    // Hier: "Aufgabentext" aus Screenshot
-                    text: unbox(data.Aufgabentext), 
+                    // Hier prüfen wir beides, sicher ist sicher
+                    text: unbox(data.Aufgabentext || data.text), 
                     done: unbox(data.Status) === "Erledigt" 
                 };
             }));
@@ -249,7 +247,7 @@ export default function App() {
 
     } catch (e: any) {
         console.error("Fetch Error:", e);
-        if (e.name !== 'AbortError' && !background) setErrorMsg("Daten konnten nicht geladen werden.");
+        if (e.name !== 'AbortError' && !background) setErrorMsg("Ladefehler.");
     } finally {
         isFetchingRef.current = false;
         if (!background) setLoading(false);
@@ -474,6 +472,7 @@ export default function App() {
                   </div>
                 );
             })}
+
             {pastBesuche.length > 0 && (
                 <div className="pt-8 text-center">
                     <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">{showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})</button>
