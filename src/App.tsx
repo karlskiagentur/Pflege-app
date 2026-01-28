@@ -11,16 +11,22 @@ const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
 // --- HELFER: SICHERES ENTPACKEN ---
-// Wandelt alles (Array, Objekt, null) in einen sicheren String um
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
-  // Falls es ein Array ist (z.B. ["Maria"]), nimm das erste Element
   if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
-  // Falls leeres Array
   if (Array.isArray(val) && val.length === 0) return "";
-  // Falls Objekt (sollte nicht passieren bei flachen Daten, aber zur Sicherheit)
   if (typeof val === 'object') return "";
   return String(val);
+};
+
+// DER SPÜRHUND: Findet Daten egal wo sie liegen
+const getValue = (item: any, fieldName: string) => {
+    if (!item) return "";
+    // 1. Versuch: Liegt es direkt im Objekt?
+    if (item[fieldName] !== undefined) return unbox(item[fieldName]);
+    // 2. Versuch: Liegt es im Airtable "fields" Ordner?
+    if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
+    return ""; 
 };
 
 const formatDate = (raw: any, short = false) => {
@@ -67,11 +73,10 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
-// Titel aus Besuchen generieren
 const getDisplayTitle = (b: any) => {
-  const title = unbox(b['Tätigkeit']); // Zugriff direkt auf Key
-  const note = unbox(b['Notiz_Patient']);
-  const status = unbox(b['Status']);
+  const title = getValue(b, 'Tätigkeit'); 
+  const note = getValue(b, 'Notiz_Patient');
+  const status = getValue(b, 'Status');
   
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
@@ -80,10 +85,9 @@ const getDisplayTitle = (b: any) => {
   return title || "Termin";
 };
 
-// Details für Anfragen aus Notiz parsen
 const getProposedDetails = (b: any) => {
-    const note = unbox(b['Notiz_Patient']);
-    const status = unbox(b['Status']);
+    const note = getValue(b, 'Notiz_Patient');
+    const status = getValue(b, 'Status');
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
             const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
@@ -101,7 +105,6 @@ const getProposedDetails = (b: any) => {
 };
 
 export default function App() {
-  // --- STATE ---
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
@@ -110,29 +113,26 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
-  // DATEN STATE
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
-  
-  // UI STATE
   const [showAllTasks, setShowAllTasks] = useState(false);
+
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
-  // Termin Logik
   const [confirmedTermine, setConfirmedTermine] = useState<string[]>([]);
   const [editingTermin, setEditingTermin] = useState<string | null>(null);
   const [pendingChanges, setPendingChanges] = useState<string[]>([]);
   
-  // Formulare
   const [newTerminDate, setNewTerminDate] = useState(""); 
   const [newTerminTime, setNewTerminTime] = useState(""); 
   const [requestDate, setRequestDate] = useState("");
@@ -144,7 +144,6 @@ export default function App() {
   const [kiPos, setKiPos] = useState({ x: 24, y: 120 });
   const isDragging = useRef(false);
 
-  // Refs für Vergleiche
   const besucheRef = useRef<any[]>([]);
   const isFetchingRef = useRef(false); 
   const lastFetchTimeRef = useRef<number>(0); 
@@ -159,14 +158,13 @@ export default function App() {
     });
   };
 
-  // --- FETCH LOGIC (MIT ARRAY FIX) ---
+  // --- FETCH LOGIC (ARRAY FIX + DEBUG) ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
     if (isFetchingRef.current) return; 
 
-    // Cache Check
     const now = Date.now();
     const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
@@ -188,11 +186,9 @@ export default function App() {
         
         if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
         
-        // ROHDATEN LADEN
         let json = await response.json();
         
-        // 🔥 DER FIX: ARRAY ENTPACKEN 🔥
-        // Wenn n8n eine Liste [ { data: ... } ] schickt, nimm das erste Element!
+        // --- ARRAY FIX: Entpacken falls n8n eine Liste sendet ---
         if (Array.isArray(json) && json.length > 0) {
             console.log("⚠️ Array erkannt - entpacke erstes Element...");
             json = json[0];
@@ -216,12 +212,10 @@ export default function App() {
 
             // 3. Besuche
             const bData = json.data.besuche || [];
-            
             const mappedBesuche = bData.map((b: any) => {
                 return { 
                     id: b.id, 
                     ...b,
-                    // Hole Daten sicher
                     Tätigkeit: getValue(b, 'Tätigkeit'), 
                     Uhrzeit: getValue(b, 'Uhrzeit'),
                     Status: getValue(b, 'Status'),
@@ -264,8 +258,7 @@ export default function App() {
                 };
             }));
         } else {
-            console.warn("JSON hat kein 'data' Feld (oder falsches Format):", json);
-            setErrorMsg("Datenformat ungültig.");
+            console.warn("JSON hat kein 'data' Feld:", json);
         }
 
     } catch (e: any) {
@@ -277,7 +270,6 @@ export default function App() {
     }
   };
 
-  // --- EFFEKTE ---
   useEffect(() => { 
       if (patientId) fetchData(false);
   }, [patientId]); 
@@ -291,7 +283,6 @@ export default function App() {
       return () => { window.removeEventListener('focus', handleFocus); };
   }, [patientId]);
 
-  // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); setIsLoggingIn(true);
     try {
@@ -348,7 +339,7 @@ export default function App() {
       try {
         const formData = new FormData();
         formData.append('patientId', patientId!);
-        formData.append('patientName', unbox(patientData?.Name));
+        formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Terminanfrage');
         formData.append('betreff', requestReason || "Terminanfrage");
         let note = `Wunschtermin: ${formatDate(requestDate)}`;
@@ -369,7 +360,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
-      formData.append('patientName', unbox(patientData?.Name));
+      formData.append('patientName', getValue(patientData, 'Name'));
       if (activeModal === 'upload' && selectedFiles.length > 0) {
           formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]); 
           await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
@@ -394,28 +385,28 @@ export default function App() {
   today.setHours(0,0,0,0);
   
   const upcomingBesuche = besuche.filter(b => {
-      const status = unbox(b['Status']);
-      const zeitVal = unbox(b['Uhrzeit']); 
+      const status = getValue(b, 'Status');
+      const zeitVal = getValue(b, 'Uhrzeit'); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
       if (!zeitVal) return false;
       return new Date(zeitVal) >= today;
   });
 
   const pastBesuche = besuche.filter(b => {
-      const status = unbox(b['Status']);
-      const zeitVal = unbox(b['Uhrzeit']); 
+      const status = getValue(b, 'Status');
+      const zeitVal = getValue(b, 'Uhrzeit'); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
       if (!zeitVal) return false;
       return new Date(zeitVal) < today;
   });
 
-  // --- RENDER FUNCTIONS ---
+  // --- RENDER COMPONENTS (CLEAN) ---
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
             <div>
                 <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
-                <h2 className="text-3xl font-black">{unbox(patientData?.['Pflegegrad'])}</h2>
+                <h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2>
             </div>
             <CalendarIcon size={28}/>
         </div>
@@ -442,9 +433,9 @@ export default function App() {
         <section className="space-y-6">
             <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3>
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm">
-                <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(patientData?.['Geburtsdatum'])}</span></div>
-                <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.['Versicherung'])}</span></div>
-                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.['Anschrift'])}</p></div>
+                <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(getValue(patientData, 'Geburtsdatum'))}</span></div>
+                <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValue(patientData, 'Versicherung')}</span></div>
+                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValue(patientData, 'Anschrift')}</p></div>
             </div>
         </section>
 
@@ -455,10 +446,10 @@ export default function App() {
                     return (
                         <div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100">
                             <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(c['Name'] || "?")[0]}</div>
-                                <div className="text-left"><p className="font-black text-lg leading-tight">{unbox(c['Name'])}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(c['Rolle/Funktion'])}</p></div>
+                                <div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(getValue(c, 'Name') || "?")[0]}</div>
+                                <div className="text-left"><p className="font-black text-lg leading-tight">{getValue(c, 'Name')}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{getValue(c, 'Rolle/Funktion')}</p></div>
                             </div>
-                            {unbox(c['Telefon']) && <a href={`tel:${unbox(c['Telefon'])}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
+                            {getValue(c, 'Telefon') && <a href={`tel:${getValue(c, 'Telefon')}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
                         </div>
                     ); 
                 })}
@@ -483,9 +474,9 @@ export default function App() {
         
         {upcomingBesuche.map((b, i) => {
             const proposed = getProposedDetails(b);
-            const showTime = unbox(b['Uhrzeit']) ? formatTime(b['Uhrzeit']) : (proposed ? proposed.time : "--:--");
-            const showDate = unbox(b['Uhrzeit']) ? formatDate(b['Uhrzeit']) : (proposed ? proposed.date : "-");
-            const isProposed = !unbox(b['Uhrzeit']) && proposed; 
+            const showTime = getValue(b, 'Uhrzeit') ? formatTime(getValue(b, 'Uhrzeit')) : (proposed ? proposed.time : "--:--");
+            const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
+            const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
             const isHighlighted = highlightedIds.includes(b.id);
 
             return (
@@ -497,13 +488,13 @@ export default function App() {
                     </div>
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
                         <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
-                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b['Pfleger_Name']) || "Zuweisung folgt"}</p></div>
+                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                         <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                     </div>
                 </div>
-                {confirmedTermine.includes(b.id) || unbox(b['Status']) === "Bestätigt" ? (
+                {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
-                ) : pendingChanges.includes(b.id) || unbox(b['Status']) === "Änderungswunsch" || unbox(b['Status']) === "Anfrage" ? (
+                ) : pendingChanges.includes(b.id) || getValue(b, 'Status') === "Änderungswunsch" || getValue(b, 'Status') === "Anfrage" ? (
                     <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
                 ) : editingTermin === b.id ? (
                     <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2">
@@ -514,7 +505,7 @@ export default function App() {
                         </div>
                         <div className="flex justify-end gap-2">
                             <button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button>
-                            <button onClick={() => handleTerminReschedule(b.id, unbox(b['Uhrzeit']))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button>
+                            <button onClick={() => handleTerminReschedule(b.id, unbox(getValue(b, 'Uhrzeit')))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button>
                         </div>
                     </div>
                 ) : (
@@ -537,8 +528,8 @@ export default function App() {
                         {pastBesuche.slice().reverse().map((b, i) => (
                             <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
                                 <div className="p-6 flex items-center gap-6">
-                                    <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(b['Uhrzeit'])}</p></div>
-                                    <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b['Uhrzeit'])}</p></div><History size={20} className="text-gray-300 mr-2"/>
+                                    <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(getValue(b, 'Uhrzeit'))}</p></div>
+                                    <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(getValue(b, 'Uhrzeit'))}</p></div><History size={20} className="text-gray-300 mr-2"/>
                                 </div>
                             </div>
                         ))}
@@ -638,7 +629,7 @@ export default function App() {
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
-          <p className="text-xs font-bold italic">{unbox(patientData?.['Name'])}</p>
+          <p className="text-xs font-bold italic">{getValue(patientData, 'Name')}</p>
         </div>
       </header>
 
