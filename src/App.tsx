@@ -10,13 +10,23 @@ import {
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
-// --- HELFER (V61 Original) ---
+// --- MASTER HELFER ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
   if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
   if (Array.isArray(val) && val.length === 0) return "";
   if (typeof val === 'object') return "";
   return String(val);
+};
+
+// DER SPÜRHUND: Findet Daten egal wo sie liegen
+const getValue = (item: any, fieldName: string) => {
+    if (!item) return "";
+    // 1. Versuch: Liegt es direkt im Objekt? (z.B. durch n8n Code Node flach gemacht)
+    if (item[fieldName] !== undefined) return unbox(item[fieldName]);
+    // 2. Versuch: Liegt es im Airtable "fields" Ordner? (Standard Airtable API)
+    if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
+    return ""; // Nicht gefunden
 };
 
 const formatDate = (raw: any, short = false) => {
@@ -63,10 +73,11 @@ const formatTime = (raw: any) => {
   } catch { return "--:--"; }
 };
 
+// EXAKTE SPALTENNAMEN (Hardcoded)
 const getDisplayTitle = (b: any) => {
-  const title = unbox(b.Tätigkeit); // Exakter Name aus Screenshot
-  const note = unbox(b.Notiz_Patient); // Exakter Name aus Screenshot
-  const status = unbox(b.Status);
+  const title = getValue(b, 'Tätigkeit'); 
+  const note = getValue(b, 'Notiz_Patient');
+  const status = getValue(b, 'Status');
   
   if ((title === "Terminanfrage App" || status === "Anfrage") && note) {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
@@ -76,8 +87,8 @@ const getDisplayTitle = (b: any) => {
 };
 
 const getProposedDetails = (b: any) => {
-    const note = unbox(b.Notiz_Patient);
-    const status = unbox(b.Status);
+    const note = getValue(b, 'Notiz_Patient');
+    const status = getValue(b, 'Status');
     if (status === 'Anfrage' && note && note.includes("Wunschtermin:")) {
         try {
             const datePart = note.split("Wunschtermin:")[1].split("\n")[0].trim();
@@ -148,13 +159,14 @@ export default function App() {
     });
   };
 
-  // --- FETCH LOGIC ---
+  // --- FETCH LOGIC (Aggregator) ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
 
     if (isFetchingRef.current) return; 
 
+    // Caching 15 min
     const now = Date.now();
     const CACHE_TIME = 15 * 60 * 1000; 
     if (!force && (now - lastFetchTimeRef.current < CACHE_TIME) && patientData) {
@@ -169,7 +181,6 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        console.log("Starte Fetch...", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -180,30 +191,34 @@ export default function App() {
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        console.log("Daten:", json);
+        // Debugging für dich:
+        console.log("🔥 EMPFANGENE DATEN:", json);
 
         if (json.data) {
             // 1. Patient
-            if (json.data.patienten_daten) setPatientData(json.data.patienten_daten);
+            if (json.data.patienten_daten) {
+                // Auch hier: Sicherer Zugriff
+                const p = json.data.patienten_daten;
+                setPatientData(p.fields ? p.fields : p);
+            }
 
-            // 2. Kontakte (Dual-Check: Felder oder direkt)
+            // 2. Kontakte
             const cData = json.data.kontakte || [];
             setContactData(cData.map((x:any) => x.fields || x));
 
-            // 3. Besuche (V61 Logik + Dual-Check)
+            // 3. Besuche (Nutzt jetzt getValue Spürhund)
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
-                // Wir holen die Daten egal ob sie flach (n8n) oder verschachtelt (Airtable raw) sind
-                const data = b.fields || b;
                 return { 
                     id: b.id, 
-                    ...data, // Spread alles, damit wir nichts vergessen
-                    // Explizit die wichtigen Felder sicherstellen
-                    Tätigkeit: unbox(data.Tätigkeit), 
-                    Uhrzeit: unbox(data.Uhrzeit),
-                    Status: unbox(data.Status),
-                    Notiz_Patient: unbox(data.Notiz_Patient),
-                    Pfleger_Name: unbox(data.Pfleger_Name)
+                    // Wir speichern alles flach ab für einfachen Zugriff
+                    ...(b.fields || b),
+                    // Explizit extrahieren mit Spürhund
+                    Tätigkeit: getValue(b, 'Tätigkeit'), 
+                    Uhrzeit: getValue(b, 'Uhrzeit'),
+                    Status: getValue(b, 'Status'),
+                    Notiz_Patient: getValue(b, 'Notiz_Patient'),
+                    Pfleger_Name: getValue(b, 'Pfleger_Name')
                 }; 
             });
             const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
@@ -232,17 +247,18 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Tasks (Exakter Match nach Screenshot: Aufgabentext)
+            // 4. Tasks (Nutzt jetzt getValue Spürhund)
             const tData = json.data.tasks || [];
             setTasks(tData.map((t: any) => {
-                const data = t.fields || t;
                 return { 
                     id: t.id, 
-                    // Hier prüfen wir beides, sicher ist sicher
-                    text: unbox(data.Aufgabentext || data.text), 
-                    done: unbox(data.Status) === "Erledigt" 
+                    // Sucht nach 'Aufgabentext' egal wo er steckt
+                    text: getValue(t, 'Aufgabentext') || "Aufgabe ohne Text", 
+                    done: getValue(t, 'Status') === "Erledigt" 
                 };
             }));
+        } else {
+            console.error("JSON Format falsch:", json);
         }
 
     } catch (e: any) {
@@ -344,7 +360,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('patientId', patientId!);
-      formData.append('patientName', unbox(patientData?.Name));
+      formData.append('patientName', getValue(patientData, 'Name'));
       if (activeModal === 'upload' && selectedFiles.length > 0) {
           formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]); 
           await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
@@ -369,16 +385,16 @@ export default function App() {
   today.setHours(0,0,0,0);
   
   const upcomingBesuche = besuche.filter(b => {
-      const status = unbox(b.Status);
-      const zeitVal = unbox(b.Uhrzeit); 
+      const status = getValue(b, 'Status');
+      const zeitVal = getValue(b, 'Uhrzeit'); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
       if (!zeitVal) return false;
       return new Date(zeitVal) >= today;
   });
 
   const pastBesuche = besuche.filter(b => {
-      const status = unbox(b.Status);
-      const zeitVal = unbox(b.Uhrzeit); 
+      const status = getValue(b, 'Status');
+      const zeitVal = getValue(b, 'Uhrzeit'); 
       if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
       if (!zeitVal) return false;
       return new Date(zeitVal) < today;
@@ -418,17 +434,17 @@ export default function App() {
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
              <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
-          <p className="text-xs font-bold italic">{unbox(patientData?.Name)}</p>
+          <p className="text-xs font-bold italic">{getValue(patientData, 'Name')}</p>
         </div>
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in">
-            <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{unbox(patientData?.Pflegegrad)}</h2></div><CalendarIcon size={28}/></div>
+            <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center"><div><p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p><h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2></div><CalendarIcon size={28}/></div>
             <section className="space-y-4"><div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4"><h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3></div><div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-3">{tasks.length > 0 ? tasks.slice(0,5).map((t) => (<button key={t.id} onClick={() => toggleTask(t.id, t.done)} className="w-full flex items-center gap-3 text-left active:opacity-70 transition-opacity group">{t.done ? <CheckCircle2 size={24} className="text-[#dccfbc] shrink-0" /> : <Circle size={24} className="text-gray-200 shrink-0 group-hover:text-[#b5a48b]" />}<span className={`text-sm ${t.done ? 'text-gray-300 line-through' : 'font-bold text-gray-700'}`}>{t.text}</span></button>)) : <p className="text-center text-gray-300 py-4 italic text-xs">Keine Aufgaben aktuell.</p>}{tasks.length > 5 && (<button onClick={() => setShowAllTasks(!showAllTasks)} className="w-full text-center text-[10px] font-black uppercase text-[#b5a48b] pt-2 border-t mt-2 flex items-center justify-center gap-1">{showAllTasks ? <><ChevronUp size={12}/> Weniger anzeigen</> : <><ChevronDown size={12}/> {tasks.length-5} weitere anzeigen</>}</button>)}</div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(patientData?.Geburtsdatum)}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{unbox(patientData?.Versicherung)}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{unbox(patientData?.Anschrift)}</p></div></div></section>
-            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { const data = c.fields || c; return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(data.Name || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{unbox(data.Name)}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{unbox(data['Rolle/Funktion'])}</p></div></div>{unbox(data.Telefon) && <a href={`tel:${unbox(data.Telefon)}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
+            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3><div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm"><div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(getValue(patientData, 'Geburtsdatum'))}</span></div><div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValue(patientData, 'Versicherung')}</span></div><div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValue(patientData, 'Anschrift')}</p></div></div></section>
+            <section className="space-y-6"><h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Kontakte</h3><div className="space-y-3">{contactData.map((c: any, i: number) => { return (<div key={i} className="bg-white rounded-[2rem] p-4 flex items-center justify-between shadow-sm border border-gray-100"><div className="flex items-center gap-4"><div className="w-12 h-12 bg-[#F9F7F4] rounded-2xl flex items-center justify-center font-black text-[#dccfbc] text-lg">{unbox(getValue(c, 'Name') || "?")[0]}</div><div className="text-left"><p className="font-black text-lg leading-tight">{getValue(c, 'Name')}</p><p className="text-[10px] font-bold text-gray-400 uppercase">{getValue(c, 'Rolle/Funktion')}</p></div></div>{getValue(c, 'Telefon') && <a href={`tel:${getValue(c, 'Telefon')}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}</div>); })}</div></section>
           </div>
         )}
 
@@ -436,17 +452,13 @@ export default function App() {
         {activeTab === 'planer' && (
           <div className="space-y-6 animate-in fade-in pb-12">
             <div className="text-center mb-6"><div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div><h2 className="text-3xl font-black">Besuchs-Planer</h2><p className="text-xs text-gray-400 mt-2 px-6">Ihre kommenden Termine & Einsätze.</p></div>
-            
             <div className="flex justify-center"><button onClick={() => setActiveModal('new-appointment')} className="bg-white py-3 px-6 rounded-full shadow-sm border border-[#F9F7F4] flex items-center gap-2 text-[#b5a48b] font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"><PlusCircle size={16} /> Termin anfragen</button></div>
-            
             {upcomingBesuche.map((b, i) => {
                 const proposed = getProposedDetails(b);
-                const showTime = unbox(b.Uhrzeit) ? formatTime(b.Uhrzeit) : (proposed ? proposed.time : "--:--");
-                const showDate = unbox(b.Uhrzeit) ? formatDate(b.Uhrzeit) : (proposed ? proposed.date : "-");
-                const isProposed = !unbox(b.Uhrzeit) && proposed; 
-                
+                const showTime = getValue(b, 'Uhrzeit') ? formatTime(getValue(b, 'Uhrzeit')) : (proposed ? proposed.time : "--:--");
+                const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
+                const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
                 const isHighlighted = highlightedIds.includes(b.id);
-
                 return (
                   <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                     <div className="p-6 flex items-center gap-6">
@@ -456,23 +468,22 @@ export default function App() {
                         </div>
                         <div className="flex-1 border-l border-gray-100 pl-5 text-left">
                             <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
-                            <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{unbox(b.Pfleger_Name) || "Zuweisung folgt"}</p></div>
+                            <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                             <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                         </div>
                     </div>
-                    {confirmedTermine.includes(b.id) || unbox(b.Status) === "Bestätigt" ? (
+                    {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                         <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
-                    ) : pendingChanges.includes(b.id) || unbox(b.Status) === "Änderungswunsch" || unbox(b.Status) === "Anfrage" ? (
+                    ) : pendingChanges.includes(b.id) || getValue(b, 'Status') === "Änderungswunsch" || getValue(b, 'Status') === "Anfrage" ? (
                         <div className="bg-[#fff7ed] text-[#c2410c] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><AlertCircle size={16} strokeWidth={3}/> Warten auf Rückmeldung</div>
                     ) : editingTermin === b.id ? (
-                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(b.Uhrzeit))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
+                        <div className="bg-[#fdfcfb] border-t p-4 animate-in slide-in-from-bottom-2"><p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Neuen Wunschtermin wählen:</p><div className="flex gap-2 mb-2"><input type="date" value={newTerminDate} onChange={(e)=>setNewTerminDate(e.target.value)} className="bg-white border rounded-xl p-2 flex-1 text-sm outline-none min-w-0" style={{ colorScheme: 'light' }} /><input type="time" value={newTerminTime} onChange={(e)=>setNewTerminTime(e.target.value)} className="bg-white border rounded-xl p-2 w-24 text-sm outline-none" style={{ colorScheme: 'light' }} /></div><div className="flex justify-end gap-2"><button onClick={() => { setEditingTermin(null); setNewTerminTime(""); }} className="p-2 bg-gray-100 rounded-xl"><X size={18} className="text-gray-400"/></button><button onClick={() => handleTerminReschedule(b.id, unbox(getValue(b, 'Uhrzeit')))} className="px-4 py-2 bg-[#b5a48b] text-white rounded-xl font-bold text-xs uppercase flex-1">Senden</button></div></div>
                     ) : (
                         <div className="flex border-t border-gray-100"><button onClick={() => handleTerminConfirm(b.id)} className="flex-1 bg-[#e6f4ea] hover:bg-[#d1e7d8] text-[#1e4620] py-4 font-black uppercase text-[10px] tracking-wider transition-colors border-r border-white">Termin ok</button><button onClick={() => setEditingTermin(b.id)} className="flex-1 bg-[#fce8e6] hover:bg-[#fadbd8] text-[#8a1c14] py-4 font-black uppercase text-[10px] tracking-wider transition-colors">Termin ändern</button></div>
                     )}
                   </div>
                 );
             })}
-
             {pastBesuche.length > 0 && (
                 <div className="pt-8 text-center">
                     <button onClick={() => setShowArchive(!showArchive)} className="text-[#b5a48b] font-black uppercase text-[10px] flex items-center justify-center gap-2 mx-auto active:opacity-50">{showArchive ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} Vergangene Besuche ({pastBesuche.length})</button>
@@ -481,8 +492,8 @@ export default function App() {
                             {pastBesuche.slice().reverse().map((b, i) => (
                                 <div key={b.id} className="bg-gray-50 rounded-[2rem] border border-gray-100 text-left overflow-hidden opacity-70 grayscale">
                                     <div className="p-6 flex items-center gap-6">
-                                        <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(b.Uhrzeit)}</p></div>
-                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(b.Uhrzeit)}</p></div><History size={20} className="text-gray-300 mr-2"/>
+                                        <div className="text-center min-w-[60px]"><p className="text-xl font-bold text-gray-400">{formatTime(getValue(b, 'Uhrzeit'))}</p></div>
+                                        <div className="flex-1 border-l border-gray-200 pl-5 text-left"><p className="font-bold text-gray-500 text-lg mb-1">{getDisplayTitle(b)}</p><p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider text-left">War am {formatDate(getValue(b, 'Uhrzeit'))}</p></div><History size={20} className="text-gray-300 mr-2"/>
                                     </div>
                                 </div>
                             ))}
