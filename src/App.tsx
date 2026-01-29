@@ -158,7 +158,7 @@ export default function App() {
     });
   };
 
-  // --- FETCH LOGIC (ARRAY FIX + DEBUG) ---
+  // --- FETCH LOGIC ---
   const fetchData = async (force = false, background = false) => {
     const id = patientId || localStorage.getItem('active_patient_id');
     if (!id || id === "null") return;
@@ -179,7 +179,6 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        console.log("Starte Fetch für ID:", id);
         const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
             signal: controller.signal 
         });
@@ -188,29 +187,22 @@ export default function App() {
         
         let json = await response.json();
         
-        // --- ARRAY FIX: Entpacken falls n8n eine Liste sendet ---
         if (Array.isArray(json) && json.length > 0) {
-            console.log("⚠️ Array erkannt - entpacke erstes Element...");
             json = json[0];
         }
 
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
 
-        console.log("✅ Verarbeitetes JSON:", json);
-
         if (json.data) {
-            // 1. Patient
             if (json.data.patienten_daten) {
                 const p = json.data.patienten_daten;
                 setPatientData(p.fields ? p.fields : p);
             }
 
-            // 2. Kontakte
             const cData = json.data.kontakte || [];
             setContactData(cData);
 
-            // 3. Besuche
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
                 return { 
@@ -248,7 +240,6 @@ export default function App() {
             setBesuche(sortedBesuche);
             besucheRef.current = sortedBesuche;
 
-            // 4. Tasks
             const tData = json.data.tasks || [];
             setTasks(tData.map((t: any) => {
                 return { 
@@ -257,12 +248,9 @@ export default function App() {
                     done: getValue(t, 'Status') === "Erledigt" 
                 };
             }));
-        } else {
-            console.warn("JSON hat kein 'data' Feld:", json);
         }
 
     } catch (e: any) {
-        console.error("Fetch Error:", e);
         if (e.name !== 'AbortError' && !background) setErrorMsg("Ladefehler.");
     } finally {
         isFetchingRef.current = false;
@@ -333,25 +321,58 @@ export default function App() {
     setIsSending(false);
   };
 
+  // --- HIER IST DIE MAGIE FÜR DEIN PROBLEM ---
   const handleNewTerminRequest = async () => {
       if(!requestDate) return;
+      
+      // 1. OPTIMISTIC UPDATE: Wir tun so, als wäre er schon da!
+      // Wir bauen ein "Fake"-Objekt, das genau so aussieht wie ein echter Besuch
+      const tempId = "temp-" + Date.now();
+      const fakeVisit = {
+          id: tempId,
+          Tätigkeit: requestReason || "Terminanfrage",
+          // Wir bauen ein Datum-String, damit er richtig sortiert wird
+          Uhrzeit: requestTime ? `${requestDate}T${requestTime}:00` : `${requestDate}T00:00:00`,
+          Status: "Anfrage", // DAS ist wichtig für "Warten auf Rückmeldung"
+          Notiz_Patient: `Wunschtermin: ${formatDate(requestDate)}`,
+          Pfleger_Name: "Wird zugewiesen"
+      };
+
+      // Sofort in die Liste ballern
+      setBesuche(prev => [...prev, fakeVisit]);
+      
+      // Modal zumachen & Reset
+      setActiveModal(null);
+      setSentStatus('success'); 
+      const saveDate = requestDate;
+      const saveTime = requestTime;
+      const saveReason = requestReason;
+      
+      // Formular resetten
+      setRequestDate(""); setRequestTime(""); setRequestReason("");
+
       setIsSending(true);
       try {
+        // 2. Jetzt erst senden wir an n8n
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Terminanfrage');
-        formData.append('betreff', requestReason || "Terminanfrage");
-        let note = `Wunschtermin: ${formatDate(requestDate)}`;
-        if (requestTime) note += ` um ${requestTime} Uhr`;
+        formData.append('betreff', saveReason || "Terminanfrage");
+        let note = `Wunschtermin: ${formatDate(saveDate)}`;
+        if (saveTime) note += ` um ${saveTime} Uhr`;
         formData.append('nachricht', note);
+        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setSentStatus('success');
-        setTimeout(() => { 
-            setActiveModal(null); setSentStatus('idle'); setRequestDate(""); setRequestTime(""); setRequestReason("");
-            setTimeout(() => fetchData(true), 1500); 
-        }, 1500);
-      } catch (e) { setSentStatus('error'); }
+        
+        // 3. Nach 2 Sekunden echte Daten holen (ersetzt dann den Fake-Eintrag)
+        setTimeout(() => fetchData(true), 2000);
+        
+      } catch (e) { 
+          setSentStatus('error');
+          // Falls Fehler: Fake-Eintrag wieder löschen (optional, aber sauber)
+          setBesuche(prev => prev.filter(b => b.id !== tempId));
+      }
       setIsSending(false);
   };
 
@@ -400,7 +421,7 @@ export default function App() {
       return new Date(zeitVal) < today;
   });
 
-  // --- RENDER COMPONENTS (CLEAN) ---
+  // --- RENDER COMPONENTS ---
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
