@@ -3,14 +3,14 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink
 } from 'lucide-react';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
 
-// --- HELFER: SICHERES ENTPACKEN ---
+// --- HELFER ---
 const unbox = (val: any): string => {
   if (val === undefined || val === null) return "";
   if (Array.isArray(val) && val.length > 0) return unbox(val[0]);
@@ -19,14 +19,21 @@ const unbox = (val: any): string => {
   return String(val);
 };
 
-// DER SPÜRHUND: Findet Daten egal wo sie liegen
 const getValue = (item: any, fieldName: string) => {
     if (!item) return "";
-    // 1. Versuch: Liegt es direkt im Objekt?
     if (item[fieldName] !== undefined) return unbox(item[fieldName]);
-    // 2. Versuch: Liegt es im Airtable "fields" Ordner?
     if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
     return ""; 
+};
+
+// DATEI-EXTRAKTOR
+const getFileUrl = (item: any, fieldName: string) => {
+    if (!item) return "";
+    let fileData = item[fieldName] || (item.fields ? item.fields[fieldName] : null);
+    if (Array.isArray(fileData) && fileData.length > 0) {
+        return fileData[0].url || ""; 
+    }
+    return "";
 };
 
 const formatDate = (raw: any, short = false) => {
@@ -113,12 +120,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
+  // DATEN
   const [patientData, setPatientData] = useState<any>(null);
   const [contactData, setContactData] = useState<any[]>([]);
   const [besuche, setBesuche] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
-  const [showAllTasks, setShowAllTasks] = useState(false);
+  const [documents, setDocuments] = useState<any[]>([]);
 
+  const [showAllTasks, setShowAllTasks] = useState(false);
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -202,6 +211,15 @@ export default function App() {
 
             const cData = json.data.kontakte || [];
             setContactData(cData);
+
+            // Dokumente laden
+            const dData = json.data.dokumente || [];
+            setDocuments(dData.map((d:any) => ({
+                id: d.id,
+                Typ: getValue(d, 'Typ'),
+                Dateiname: getValue(d, 'Dateiname'),
+                Link: getFileUrl(d, 'Datei') 
+            })));
 
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
@@ -321,39 +339,26 @@ export default function App() {
     setIsSending(false);
   };
 
-  // --- HIER IST DIE MAGIE FÜR DEIN PROBLEM ---
   const handleNewTerminRequest = async () => {
       if(!requestDate) return;
-      
-      // 1. OPTIMISTIC UPDATE: Wir tun so, als wäre er schon da!
-      // Wir bauen ein "Fake"-Objekt, das genau so aussieht wie ein echter Besuch
       const tempId = "temp-" + Date.now();
       const fakeVisit = {
           id: tempId,
           Tätigkeit: requestReason || "Terminanfrage",
-          // Wir bauen ein Datum-String, damit er richtig sortiert wird
           Uhrzeit: requestTime ? `${requestDate}T${requestTime}:00` : `${requestDate}T00:00:00`,
-          Status: "Anfrage", // DAS ist wichtig für "Warten auf Rückmeldung"
+          Status: "Anfrage",
           Notiz_Patient: `Wunschtermin: ${formatDate(requestDate)}`,
           Pfleger_Name: "Wird zugewiesen"
       };
-
-      // Sofort in die Liste ballern
       setBesuche(prev => [...prev, fakeVisit]);
-      
-      // Modal zumachen & Reset
       setActiveModal(null);
       setSentStatus('success'); 
       const saveDate = requestDate;
       const saveTime = requestTime;
       const saveReason = requestReason;
-      
-      // Formular resetten
       setRequestDate(""); setRequestTime(""); setRequestReason("");
-
       setIsSending(true);
       try {
-        // 2. Jetzt erst senden wir an n8n
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('patientName', getValue(patientData, 'Name'));
@@ -362,15 +367,10 @@ export default function App() {
         let note = `Wunschtermin: ${formatDate(saveDate)}`;
         if (saveTime) note += ` um ${saveTime} Uhr`;
         formData.append('nachricht', note);
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        
-        // 3. Nach 2 Sekunden echte Daten holen (ersetzt dann den Fake-Eintrag)
         setTimeout(() => fetchData(true), 2000);
-        
       } catch (e) { 
           setSentStatus('error');
-          // Falls Fehler: Fake-Eintrag wieder löschen (optional, aber sauber)
           setBesuche(prev => prev.filter(b => b.id !== tempId));
       }
       setIsSending(false);
@@ -421,7 +421,6 @@ export default function App() {
       return new Date(zeitVal) < today;
   });
 
-  // --- RENDER COMPONENTS ---
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
@@ -561,36 +560,41 @@ export default function App() {
     </div>
   );
 
-  const renderHochladen = () => (
-    <div className="space-y-4 animate-in fade-in">
-        <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
-            <h2 className="text-3xl font-black">Dokumente</h2>
-            <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
-        </div>
-        <div className="flex flex-col gap-4">
-            <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
-                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
-                <div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
-                <ChevronRight className="text-gray-300" />
-            </button>
-            <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
-                <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div>
-                <div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
-                <ChevronRight className="text-gray-300" />
-            </button>
-        </div>
-        <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
-            <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
-                <Play size={14} fill="#b5a48b" /> So funktioniert's
-            </button>
-            <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs">
-                <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
-                <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+  const renderHochladen = () => {
+    // FILTER: Nur Dokumente anzeigen, die zum aktuellen Context (Rechnung vs Leistungsnachweis) passen
+    const filteredDocs = documents.filter(d => unbox(d.Typ) === uploadContext);
+
+    return (
+        <div className="space-y-4 animate-in fade-in">
+            <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
+                <h2 className="text-3xl font-black">Dokumente</h2>
+                <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
+            </div>
+            <div className="flex flex-col gap-4">
+                <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                    <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
+                    <div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
+                    <ChevronRight className="text-gray-300" />
+                </button>
+                <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                    <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div>
+                    <div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
+                    <ChevronRight className="text-gray-300" />
+                </button>
+            </div>
+            <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
+                <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
+                    <Play size={14} fill="#b5a48b" /> So funktioniert's
+                </button>
+                <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs">
+                    <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
+                    <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
+                </div>
             </div>
         </div>
-    </div>
-  );
+    );
+  };
 
   const renderUrlaub = () => (
     <div className="space-y-6 animate-in fade-in">
@@ -661,14 +665,79 @@ export default function App() {
         {activeTab === 'urlaub' && renderUrlaub()}
       </main>
       
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (<button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}><t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} /><span className="text-[9px] font-black uppercase">{t.label}</span></button>))}</nav>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
+        <button 
+            key={t.id} 
+            onClick={() => setActiveTab(t.id)} 
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
+        >
+            <div className="relative">
+                <t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} />
+                
+                {/* HIER IST DER ROTE BADGE */}
+                {t.id === 'hochladen' && documents.length > 0 && (
+                    <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
+                        {documents.length}
+                    </div>
+                )}
+            </div>
+            <span className="text-[9px] font-black uppercase">{t.label}</span>
+        </button>
+      ))}</nav>
+      
       <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform cursor-move"><Mic size={24} fill="white" /><span className="text-[9px] font-bold mt-0.5 leading-tight text-center">24h<br/>KI Hilfe</span></button>
       
       {activeModal && (<div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in"><div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
          {activeModal === 'video' && (<div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white"><X size={20}/></button><div className="text-white text-center"><PlayCircle size={64} className="opacity-20 mx-auto"/><p className="mt-4 font-bold text-xs uppercase tracking-widest">Video wird geladen...</p></div></div>)}
          {activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
          {activeModal === 'new-appointment' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3><p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label><input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Uhrzeit (Optional)</label><input type="time" value={requestTime} onChange={(e)=>setRequestTime(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund (Tätigkeit)</label><input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Einkaufen, Arzt..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" /></div><button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />} {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}</button></div></div>)}
-         {activeModal === 'folder' && (<div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10"><div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-black">{uploadContext}</h3><button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button></div><button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all"><Plus size={20}/> Neu hochladen</button><div className="space-y-4"><p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p><div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50"><FileText className="text-gray-300"/><p className="text-sm font-bold text-gray-400">Archiv ist leer</p></div></div></div>)}
+         
+         {activeModal === 'folder' && (
+            <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10">
+                <div className="flex justify-between items-center mb-8">
+                    <h3 className="text-2xl font-black">{uploadContext}</h3>
+                    <button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+                </div>
+                <button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all">
+                    <Plus size={20}/> Neu hochladen
+                </button>
+                
+                <div className="space-y-4">
+                    <p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p>
+                    
+                    {/* HIER IST DIE NEUE LISTE */}
+                    {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
+                        <div className="space-y-3">
+                            {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => (
+                                <a 
+                                    key={doc.id} 
+                                    href={doc.Link} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="bg-white border border-gray-100 p-4 rounded-2xl flex items-center gap-4 hover:shadow-md transition-shadow group"
+                                >
+                                    <div className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b] group-hover:bg-[#dccfbc]/20 transition-colors">
+                                        <FileText size={20}/>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-bold text-gray-700 truncate">{unbox(doc.Dateiname) || "Dokument"}</p>
+                                        <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1">
+                                            Öffnen <ExternalLink size={10}/>
+                                        </p>
+                                    </div>
+                                </a>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50">
+                            <FileText className="text-gray-300"/>
+                            <p className="text-sm font-bold text-gray-400">Archiv ist leer</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+         )}
+
          {activeModal === 'upload' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal('folder')} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3">{uploadContext === 'Rechnung' ? <Euro className="text-[#dccfbc]"/> : <FileText className="text-[#dccfbc]"/>} Hochladen</h3><div className="border-2 border-dashed border-[#dccfbc] rounded-[2rem] p-8 text-center bg-[#F9F7F4] relative"><input type="file" multiple accept="image/*,.pdf" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} className="absolute inset-0 opacity-0 cursor-pointer" /><Upload className="mx-auto text-[#dccfbc] mb-2" size={32}/><p className="text-xs font-black text-[#b5a48b] uppercase tracking-widest">{selectedFiles.length > 0 ? `${selectedFiles.length} ausgewählt` : "Datei auswählen"}</p></div><button onClick={() => submitData(uploadContext + '-Upload', 'Dokument')} disabled={isSending || selectedFiles.length === 0} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending && <RefreshCw className="animate-spin" size={16}/>}{sentStatus === 'success' ? 'Erfolgreich!' : 'Absenden'}</button></div></div>)}
       </div>)}
     </div>
