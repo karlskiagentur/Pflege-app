@@ -116,6 +116,12 @@ export default function App() {
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null); // NEU: Login Fehler
+  
+  // NEU: Einwilligungs-States
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [showConsentInfo, setShowConsentInfo] = useState(false);
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -128,7 +134,7 @@ export default function App() {
   const [documents, setDocuments] = useState<any[]>([]);
 
   const [showAllTasks, setShowAllTasks] = useState(false);
-  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | null>(null);
+  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -290,14 +296,49 @@ export default function App() {
   }, [patientId]);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); setIsLoggingIn(true);
+    e.preventDefault(); 
+    setLoginError(null);
+
+    // 1. Check Consent
+    if (!consentGiven) {
+        setLoginError("Bitte stimmen Sie dem elektronischen Versand zu.");
+        return;
+    }
+
+    setIsLoggingIn(true);
     try {
       const res = await fetch(`${N8N_BASE_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
       const data = await res.json();
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
-      } else { alert("Falsche Daten"); }
-    } catch (e) { alert("Login Error"); } finally { setIsLoggingIn(false); }
+      } else { 
+          // 2. Schönerer Error statt Alert
+          setLoginError("Der Name oder Login-Code ist falsch."); 
+      }
+    } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
+  };
+
+  const handleRevokeConsent = async () => {
+    setIsSending(true);
+    try {
+        const formData = new FormData();
+        formData.append('patientId', patientId!);
+        formData.append('patientName', getValue(patientData, 'Name'));
+        formData.append('typ', 'Widerruf_Digitale_Rechnung'); // Das ist das Signal für n8n
+        formData.append('nachricht', 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.');
+        
+        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        
+        setSentStatus('success');
+        setTimeout(() => { 
+            setActiveModal(null); 
+            setSentStatus('idle'); 
+            alert("Einstellung gespeichert. Sie erhalten Rechnungen zukünftig per Post.");
+        }, 1500);
+    } catch (e) {
+        setSentStatus('error');
+    }
+    setIsSending(false);
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
@@ -399,7 +440,56 @@ export default function App() {
       fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
-  if (!patientId) return <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6"><form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm"><img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" /><input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required /><input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required /><button type="submit" className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg">Anmelden</button></form></div>;
+  // LOGIN SCREEN UPDATE
+  if (!patientId) return (
+    <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
+        <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm">
+            <img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" />
+            <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required />
+            <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required />
+            
+            {/* NEU: EINWILLIGUNG */}
+            <div className="mb-4">
+                <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
+                        {consentGiven && <Check size={14} className="text-white" />}
+                    </div>
+                    <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
+                    <span className="text-xs text-gray-500 leading-tight select-none">
+                        Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) über diese App oder E-Mail zu erhalten. Mir ist bekannt, dass diese qualifiziert elektronisch signiert sein können.
+                    </span>
+                </label>
+            </div>
+
+            {/* NEU: AKKORDEON INFOS */}
+            <div className="mb-6">
+                <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
+                    {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
+                    🔎 Weitere Informationen zur digitalen Rechnungsstellung
+                </button>
+                {showConsentInfo && (
+                    <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
+                        <p><strong className="text-gray-700">Hinweise:</strong> Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt.</p>
+                        <p>Diese Dokumente können eine qualifizierte elektronische Signatur (gemäß eIDAS) enthalten, die der handschriftlichen Unterschrift rechtlich gleichgestellt ist.</p>
+                        <p>Zur Signatur wird ein zertifizierter Vertrauensdiensteanbieter (z.B. D-Trust GmbH) genutzt.</p>
+                        <p>Die Verarbeitung dient ausschließlich Abrechnungszwecken. Sie können diese Einwilligung jederzeit widerrufen.</p>
+                    </div>
+                )}
+            </div>
+
+            {/* NEU: FEHLERMELDUNG */}
+            {loginError && (
+                <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 animate-pulse">
+                    <AlertTriangle size={16}/> {loginError}
+                </div>
+            )}
+
+            <button type="submit" disabled={isLoggingIn} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50">
+                {isLoggingIn ? <RefreshCw className="animate-spin mx-auto"/> : 'Anmelden'}
+            </button>
+        </form>
+    </div>
+  );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
   const today = new Date();
@@ -565,7 +655,7 @@ export default function App() {
     const filteredDocs = documents.filter(d => unbox(d.Typ) === uploadContext);
 
     return (
-        <div className="space-y-4 animate-in fade-in">
+        <div className="space-y-4 animate-in fade-in pb-12">
             <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Upload size={32} className="text-[#b5a48b]" /></div>
                 <h2 className="text-3xl font-black">Dokumente</h2>
@@ -591,6 +681,13 @@ export default function App() {
                     <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
                     <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
                 </div>
+            </div>
+
+            {/* NEU: WIDERRUF LINK */}
+            <div className="mt-8 text-center border-t border-gray-100 pt-6">
+                <button onClick={() => setActiveModal('revoke-consent')} className="text-red-400 text-[10px] font-bold uppercase hover:text-red-600 transition-colors">
+                    ❌ Digitale Rechnungen deaktivieren
+                </button>
             </div>
         </div>
     );
@@ -704,8 +801,6 @@ export default function App() {
                 
                 <div className="space-y-4">
                     <p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p>
-                    
-                    {/* HIER IST DIE NEUE LISTE */}
                     {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
                             {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => (
@@ -734,6 +829,34 @@ export default function App() {
                             <p className="text-sm font-bold text-gray-400">Archiv ist leer</p>
                         </div>
                     )}
+                </div>
+            </div>
+         )}
+
+         {/* NEU: WIDERRUF MODAL */}
+         {activeModal === 'revoke-consent' && (
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left border-t-4 border-red-400">
+                <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+                <div className="space-y-6">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-red-100 p-3 rounded-full text-red-500"><AlertTriangle size={32}/></div>
+                        <h3 className="text-xl font-black text-gray-800">Wirklich deaktivieren?</h3>
+                    </div>
+                    
+                    <div className="bg-gray-50 p-4 rounded-2xl text-sm text-gray-600 space-y-2">
+                        <p>Wenn Sie die digitale Rechnungsstellung deaktivieren:</p>
+                        <ul className="list-disc ml-4 space-y-1">
+                            <li>Erhalten Sie Rechnungen zukünftig wieder <strong>per Post</strong>.</li>
+                            <li>Dauert der Versand länger.</li>
+                            <li>Verlieren Sie den digitalen Zugriff hier in der App für neue Dokumente.</li>
+                        </ul>
+                        <p className="text-xs text-gray-400 mt-2">Bereits erhaltene Dokumente bleiben sichtbar.</p>
+                    </div>
+
+                    <button onClick={handleRevokeConsent} disabled={isSending} className="w-full bg-red-500 text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2 hover:bg-red-600 transition-colors">
+                        {isSending ? <RefreshCw className="animate-spin" size={16}/> : 'Ja, widerrufen'}
+                    </button>
+                    <button onClick={() => setActiveModal(null)} className="w-full text-gray-400 font-bold uppercase text-xs">Abbrechen</button>
                 </div>
             </div>
          )}
