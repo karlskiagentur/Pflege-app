@@ -116,9 +116,8 @@ export default function App() {
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null); // NEU: Login Fehler
+  const [loginError, setLoginError] = useState<string | null>(null); 
   
-  // NEU: Einwilligungs-States
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -132,6 +131,12 @@ export default function App() {
   const [besuche, setBesuche] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
+
+  // NEU: Gelesene Dokumente speichern
+  const [seenDocIds, setSeenDocIds] = useState<string[]>(() => {
+      const saved = localStorage.getItem('seen_docs');
+      return saved ? JSON.parse(saved) : [];
+  });
 
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | null>(null);
@@ -286,24 +291,20 @@ export default function App() {
       if (patientId) fetchData(false);
   }, [patientId]); 
 
-  useEffect(() => {
-      const handleFocus = () => { if (patientId) fetchData(false); };
-      window.addEventListener('focus', handleFocus);
-      document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible' && patientId) fetchData(false);
-      });
-      return () => { window.removeEventListener('focus', handleFocus); };
-  }, [patientId]);
+  // NEU: Dokument als gelesen markieren
+  const markAsSeen = (id: string) => {
+      if (!seenDocIds.includes(id)) {
+          const newSeen = [...seenDocIds, id];
+          setSeenDocIds(newSeen);
+          localStorage.setItem('seen_docs', JSON.stringify(newSeen));
+      }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); 
     setLoginError(null);
 
-    // 1. Check Consent
-    if (!consentGiven) {
-        setLoginError("Bitte stimmen Sie dem elektronischen Versand zu.");
-        return;
-    }
+    // Einwilligung ist jetzt OPTIONAL (kein if-Block mehr)
 
     setIsLoggingIn(true);
     try {
@@ -312,7 +313,6 @@ export default function App() {
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
       } else { 
-          // 2. Schönerer Error statt Alert
           setLoginError("Der Name oder Login-Code ist falsch."); 
       }
     } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
@@ -324,11 +324,9 @@ export default function App() {
         const formData = new FormData();
         formData.append('patientId', patientId!);
         formData.append('patientName', getValue(patientData, 'Name'));
-        formData.append('typ', 'Widerruf_Digitale_Rechnung'); // Das ist das Signal für n8n
+        formData.append('typ', 'Widerruf_Digitale_Rechnung'); 
         formData.append('nachricht', 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.');
-        
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        
         setSentStatus('success');
         setTimeout(() => { 
             setActiveModal(null); 
@@ -440,7 +438,7 @@ export default function App() {
       fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
-  // LOGIN SCREEN UPDATE
+  // Login Screen
   if (!patientId) return (
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
         <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm">
@@ -448,7 +446,6 @@ export default function App() {
             <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required />
             
-            {/* NEU: EINWILLIGUNG */}
             <div className="mb-4">
                 <label className="flex items-start gap-3 cursor-pointer group">
                     <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
@@ -456,28 +453,24 @@ export default function App() {
                     </div>
                     <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
                     <span className="text-xs text-gray-500 leading-tight select-none">
-                        Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) über diese App oder E-Mail zu erhalten. Mir ist bekannt, dass diese qualifiziert elektronisch signiert sein können.
+                        (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
                     </span>
                 </label>
             </div>
 
-            {/* NEU: AKKORDEON INFOS */}
             <div className="mb-6">
                 <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
                     {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
-                    🔎 Weitere Informationen zur digitalen Rechnungsstellung
+                    🔎 Weitere Informationen
                 </button>
                 {showConsentInfo && (
                     <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
-                        <p><strong className="text-gray-700">Hinweise:</strong> Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt.</p>
-                        <p>Diese Dokumente können eine qualifizierte elektronische Signatur (gemäß eIDAS) enthalten, die der handschriftlichen Unterschrift rechtlich gleichgestellt ist.</p>
-                        <p>Zur Signatur wird ein zertifizierter Vertrauensdiensteanbieter (z.B. D-Trust GmbH) genutzt.</p>
-                        <p>Die Verarbeitung dient ausschließlich Abrechnungszwecken. Sie können diese Einwilligung jederzeit widerrufen.</p>
+                        <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
+                        <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
                     </div>
                 )}
             </div>
 
-            {/* NEU: FEHLERMELDUNG */}
             {loginError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 animate-pulse">
                     <AlertTriangle size={16}/> {loginError}
@@ -492,6 +485,14 @@ export default function App() {
   );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
+  // NEU: Berechne ungelesene Dokumente
+  const unseenDocs = documents.filter(d => !seenDocIds.includes(d.id));
+  const unseenDocsCount = unseenDocs.length;
+  
+  // NEU: Zähler pro Kategorie
+  const unseenRechnungen = unseenDocs.filter(d => unbox(d.Typ) === 'Rechnung').length;
+  const unseenNachweise = unseenDocs.filter(d => unbox(d.Typ) === 'Leistungsnachweis').length;
+
   const today = new Date();
   today.setHours(0,0,0,0);
   
@@ -651,7 +652,7 @@ export default function App() {
   );
 
   const renderHochladen = () => {
-    // FILTER: Nur Dokumente anzeigen, die zum aktuellen Context (Rechnung vs Leistungsnachweis) passen
+    // FILTER: Nur Dokumente anzeigen, die zum aktuellen Context passen
     const filteredDocs = documents.filter(d => unbox(d.Typ) === uploadContext);
 
     return (
@@ -661,18 +662,27 @@ export default function App() {
                 <h2 className="text-3xl font-black">Dokumente</h2>
                 <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
             </div>
+            
+            {/* NEU: BUTTONS MIT BADGES */}
             <div className="flex flex-col gap-4">
-                <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left relative">
                     <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
                     <div className="flex-1"><h3 className="font-black">Leistungsnachweise</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
                     <ChevronRight className="text-gray-300" />
+                    {unseenNachweise > 0 && (
+                        <div className="absolute top-4 right-4 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse" />
+                    )}
                 </button>
-                <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left">
+                <button onClick={() => { setUploadContext('Rechnung'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left relative">
                     <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><Euro size={32} /></div>
                     <div className="flex-1"><h3 className="font-black">Rechnungen</h3><p className="text-[10px] text-gray-400 uppercase">Archiv & Upload</p></div>
                     <ChevronRight className="text-gray-300" />
+                    {unseenRechnungen > 0 && (
+                        <div className="absolute top-4 right-4 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse" />
+                    )}
                 </button>
             </div>
+
             <div className="flex flex-col items-center gap-3 mt-4 scale-110 origin-top">
                 <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
                     <Play size={14} fill="#b5a48b" /> So funktioniert's
@@ -683,7 +693,6 @@ export default function App() {
                 </div>
             </div>
 
-            {/* NEU: WIDERRUF LINK */}
             <div className="mt-8 text-center border-t border-gray-100 pt-6">
                 <button onClick={() => setActiveModal('revoke-consent')} className="text-red-400 text-[10px] font-bold uppercase hover:text-red-600 transition-colors">
                     ❌ Digitale Rechnungen deaktivieren
@@ -771,10 +780,10 @@ export default function App() {
             <div className="relative">
                 <t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} />
                 
-                {/* HIER IST DER ROTE BADGE */}
-                {t.id === 'hochladen' && documents.length > 0 && (
+                {/* NEU: INTELLIGENTER BADGE (Nur ungelesene) */}
+                {t.id === 'hochladen' && unseenDocsCount > 0 && (
                     <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
-                        {documents.length}
+                        {unseenDocsCount}
                     </div>
                 )}
             </div>
@@ -803,25 +812,30 @@ export default function App() {
                     <p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p>
                     {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
-                            {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => (
+                            {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
+                                const isUnseen = !seenDocIds.includes(doc.id);
+                                return (
                                 <a 
                                     key={doc.id} 
                                     href={doc.Link} 
                                     target="_blank" 
                                     rel="noreferrer"
-                                    className="bg-white border border-gray-100 p-4 rounded-2xl flex items-center gap-4 hover:shadow-md transition-shadow group"
+                                    onClick={() => markAsSeen(doc.id)} // NEU: Beim Klicken als gelesen markieren
+                                    className={`bg-white border p-4 rounded-2xl flex items-center gap-4 hover:shadow-md transition-shadow group relative ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100'}`}
                                 >
-                                    <div className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b] group-hover:bg-[#dccfbc]/20 transition-colors">
+                                    {isUnseen && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full -mt-1 -mr-1 shadow-sm" />}
+                                    <div className={`p-3 rounded-full ${isUnseen ? 'bg-[#b5a48b] text-white' : 'bg-[#dccfbc]/10 text-[#b5a48b]'}`}>
                                         <FileText size={20}/>
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-bold text-gray-700 truncate">{unbox(doc.Dateiname) || "Dokument"}</p>
+                                        <p className={`text-sm truncate ${isUnseen ? 'font-black text-black' : 'font-bold text-gray-700'}`}>{unbox(doc.Dateiname) || "Dokument"}</p>
                                         <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1">
                                             Öffnen <ExternalLink size={10}/>
                                         </p>
                                     </div>
                                 </a>
-                            ))}
+                                );
+                            })}
                         </div>
                     ) : (
                         <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50">
@@ -833,7 +847,6 @@ export default function App() {
             </div>
          )}
 
-         {/* NEU: WIDERRUF MODAL */}
          {activeModal === 'revoke-consent' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left border-t-4 border-red-400">
                 <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
