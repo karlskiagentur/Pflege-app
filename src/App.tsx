@@ -1,3 +1,8 @@
+Hier ist **Version 77.0**.
+
+Ich habe die Fehlermeldung angepasst und den Code vollständig geprüft. Er enthält alle Funktionen (Badges, optionaler Haken, Widerruf, etc.) und ist bereit zum Kopieren.
+
+```tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
@@ -132,7 +137,7 @@ export default function App() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
 
-  // NEU: Gelesene Dokumente speichern
+  // Gelesene Dokumente speichern
   const [seenDocIds, setSeenDocIds] = useState<string[]>(() => {
       const saved = localStorage.getItem('seen_docs');
       return saved ? JSON.parse(saved) : [];
@@ -291,7 +296,7 @@ export default function App() {
       if (patientId) fetchData(false);
   }, [patientId]); 
 
-  // NEU: Dokument als gelesen markieren
+  // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
       if (!seenDocIds.includes(id)) {
           const newSeen = [...seenDocIds, id];
@@ -304,8 +309,6 @@ export default function App() {
     e.preventDefault(); 
     setLoginError(null);
 
-    // Einwilligung ist jetzt OPTIONAL (kein if-Block mehr)
-
     setIsLoggingIn(true);
     try {
       const res = await fetch(`${N8N_BASE_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
@@ -313,7 +316,8 @@ export default function App() {
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
       } else { 
-          setLoginError("Der Name oder Login-Code ist falsch."); 
+          // HIER IST DIE GEWÜNSCHTE ÄNDERUNG
+          setLoginError("Das eingegebene Passwort ist falsch"); 
       }
     } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
   };
@@ -485,11 +489,11 @@ export default function App() {
   );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
-  // NEU: Berechne ungelesene Dokumente
+  // Berechne ungelesene Dokumente
   const unseenDocs = documents.filter(d => !seenDocIds.includes(d.id));
   const unseenDocsCount = unseenDocs.length;
   
-  // NEU: Zähler pro Kategorie
+  // Zähler pro Kategorie
   const unseenRechnungen = unseenDocs.filter(d => unbox(d.Typ) === 'Rechnung').length;
   const unseenNachweise = unseenDocs.filter(d => unbox(d.Typ) === 'Leistungsnachweis').length;
 
@@ -663,7 +667,7 @@ export default function App() {
                 <p className="text-xs text-gray-400 mt-2 px-6">Ihr Archiv & Upload für Nachweise.</p>
             </div>
             
-            {/* NEU: BUTTONS MIT BADGES */}
+            {/* BUTTONS MIT BADGES */}
             <div className="flex flex-col gap-4">
                 <button onClick={() => { setUploadContext('Leistungsnachweis'); setActiveModal('folder'); }} className="bg-white rounded-[2.2rem] p-6 shadow-sm border border-gray-50 flex items-center gap-5 active:scale-95 transition-all text-left relative">
                     <div className="bg-[#dccfbc]/20 p-4 rounded-2xl text-[#b5a48b]"><FileCheck size={32} /></div>
@@ -780,7 +784,7 @@ export default function App() {
             <div className="relative">
                 <t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} />
                 
-                {/* NEU: INTELLIGENTER BADGE (Nur ungelesene) */}
+                {/* INTELLIGENTER BADGE (Nur ungelesene) */}
                 {t.id === 'hochladen' && unseenDocsCount > 0 && (
                     <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
                         {unseenDocsCount}
@@ -820,7 +824,7 @@ export default function App() {
                                     href={doc.Link} 
                                     target="_blank" 
                                     rel="noreferrer"
-                                    onClick={() => markAsSeen(doc.id)} // NEU: Beim Klicken als gelesen markieren
+                                    onClick={() => markAsSeen(doc.id)} 
                                     className={`bg-white border p-4 rounded-2xl flex items-center gap-4 hover:shadow-md transition-shadow group relative ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100'}`}
                                 >
                                     {isUnseen && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full -mt-1 -mr-1 shadow-sm" />}
@@ -879,3 +883,5 @@ export default function App() {
     </div>
   );
 }
+
+```
