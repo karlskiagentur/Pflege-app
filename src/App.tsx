@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-[B[B git add src/App.tsx
-git add src/App.tsx
-=======
-Hier ist **Version 77.0**.
-
-Ich habe die Fehlermeldung angepasst und den Code vollständig geprüft. Er enthält alle Funktionen (Badges, optionaler Haken, Widerruf, etc.) und ist bereit zum Kopieren.
-
-```tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
@@ -320,7 +311,6 @@ export default function App() {
       if (data.status === "success" && data.patientId) {
         localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
       } else { 
-          // HIER IST DIE GEWÜNSCHTE ÄNDERUNG
           setLoginError("Das eingegebene Passwort ist falsch"); 
       }
     } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
@@ -695,10 +685,14 @@ export default function App() {
                 <button onClick={() => setActiveModal('video')} className="flex items-center gap-2 bg-white px-6 py-3 rounded-full shadow-md border text-[#b5a48b] text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all">
                     <Play size={14} fill="#b5a48b" /> So funktioniert's
                 </button>
+                
+                {/* KI-Assistent deaktiviert */}
+                {false && (
                 <div className="bg-[#dccfbc]/10 rounded-[1.5rem] p-5 text-center w-full max-w-xs">
                     <p className="text-[#b5a48b] text-xs">Fragen zu Ihren Dokumenten?</p>
                     <button onClick={()=>setActiveModal('ki-telefon')} className="mt-1 text-[#b5a48b] font-black uppercase text-xs underline">KI-Assistent fragen</button>
                 </div>
+                )}
             </div>
 
             <div className="mt-8 text-center border-t border-gray-100 pt-6">
@@ -799,11 +793,17 @@ export default function App() {
         </button>
       ))}</nav>
       
+      {/* KI Button deaktiviert */}
+      {false && (
       <button onMouseDown={() => isDragging.current = true} onTouchStart={() => isDragging.current = true} onClick={() => { if (!isDragging.current) setActiveModal('ki-telefon'); }} style={{ right: kiPos.x, bottom: kiPos.y, touchAction: 'none' }} className="fixed z-[60] w-20 h-20 bg-[#4ca5a2] rounded-full shadow-2xl flex flex-col items-center justify-center text-white border-2 border-white active:scale-90 transition-transform cursor-move"><Mic size={24} fill="white" /><span className="text-[9px] font-bold mt-0.5 leading-tight text-center">24h<br/>KI Hilfe</span></button>
-      
+      )}
+
       {activeModal && (<div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in"><div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
          {activeModal === 'video' && (<div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white"><X size={20}/></button><div className="text-white text-center"><PlayCircle size={64} className="opacity-20 mx-auto"/><p className="mt-4 font-bold text-xs uppercase tracking-widest">Video wird geladen...</p></div></div>)}
-         {activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
+         
+         {/* KI Modal deaktiviert */}
+         {false && activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
+
          {activeModal === 'new-appointment' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3><p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label><input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Uhrzeit (Optional)</label><input type="time" value={requestTime} onChange={(e)=>setRequestTime(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund (Tätigkeit)</label><input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Einkaufen, Arzt..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" /></div><button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />} {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}</button></div></div>)}
          
          {activeModal === 'folder' && (
@@ -887,6 +887,3 @@ export default function App() {
     </div>
   );
 }
-
-```
->>>>>>> a289283f2ed0696d05313741edca0ebe9930cc2d
