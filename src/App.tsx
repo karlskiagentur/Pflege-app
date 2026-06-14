@@ -443,7 +443,7 @@ export default function App() {
         {/* AUSWAHL-SCREEN */}
         {loginMode === 'select' && (
           <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm animate-in fade-in">
-            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-400x96.png" alt="Logo" className="w-48 mx-auto mb-8" />
+            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/Wunschlos-POflege.png" alt="Logo" className="w-48 mx-auto mb-8" />
             <h2 className="text-center text-lg font-black mb-2 text-[#3A3A3A]">Willkommen</h2>
             <p className="text-center text-xs text-gray-400 mb-8">Wer möchte sich anmelden?</p>
             
@@ -475,7 +475,7 @@ export default function App() {
               <ChevronRight size={12} className="rotate-180" /> Zurück
             </button>
 
-            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-400x96.png" alt="Logo" className="w-48 mx-auto mb-4" />
+            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/Wunschlos-POflege.png" alt="Logo" className="w-48 mx-auto mb-4" />
             
             <p className="text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] mb-6">
               {loginMode === 'patient' ? 'Patienten-Login' : 'Mitarbeiter-Login'}
