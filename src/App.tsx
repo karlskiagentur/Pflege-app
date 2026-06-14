@@ -117,7 +117,7 @@ export default function App() {
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null); 
-  
+  const [loginMode, setLoginMode] = useState<'select' | 'patient' | 'mitarbeiter'>('select');
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -436,38 +436,82 @@ export default function App() {
       fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
-  // Login Screen
+ // Login Screen
   if (!patientId) return (
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
-        <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm">
-            <img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" />
+        
+        {/* AUSWAHL-SCREEN */}
+        {loginMode === 'select' && (
+          <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm animate-in fade-in">
+            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-400x96.png" alt="Logo" className="w-48 mx-auto mb-8" />
+            <h2 className="text-center text-lg font-black mb-2 text-[#3A3A3A]">Willkommen</h2>
+            <p className="text-center text-xs text-gray-400 mb-8">Wer möchte sich anmelden?</p>
+            
+            <button 
+              onClick={() => setLoginMode('patient')}
+              className="w-full bg-[#b5a48b] text-white py-6 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
+            >
+              <User size={20} /> Ich bin Patient
+            </button>
+            
+            <button 
+              onClick={() => setLoginMode('mitarbeiter')}
+              className="w-full bg-white border-2 border-[#b5a48b] text-[#b5a48b] py-6 rounded-2xl font-black uppercase active:scale-95 transition-all flex items-center justify-center gap-3"
+            >
+              <FileCheck size={20} /> Ich bin Mitarbeiter
+            </button>
+          </div>
+        )}
+
+        {/* LOGIN-FORMULAR (Patient ODER Mitarbeiter) */}
+        {loginMode !== 'select' && (
+          <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm animate-in slide-in-from-right">
+            
+            <button 
+              type="button"
+              onClick={() => { setLoginMode('select'); setLoginError(null); setFullName(''); setLoginCode(''); }}
+              className="text-[10px] font-black uppercase text-gray-400 mb-4 flex items-center gap-1 hover:text-[#b5a48b] transition-colors"
+            >
+              <ChevronRight size={12} className="rotate-180" /> Zurück
+            </button>
+
+            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-400x96.png" alt="Logo" className="w-48 mx-auto mb-4" />
+            
+            <p className="text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] mb-6">
+              {loginMode === 'patient' ? 'Patienten-Login' : 'Mitarbeiter-Login'}
+            </p>
+
             <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required />
             
-            <div className="mb-4">
-                <label className="flex items-start gap-3 cursor-pointer group">
-                    <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
-                        {consentGiven && <Check size={14} className="text-white" />}
-                    </div>
-                    <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
-                    <span className="text-xs text-gray-500 leading-tight select-none">
-                        (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
-                    </span>
-                </label>
-            </div>
+            {loginMode === 'patient' && (
+              <>
+                <div className="mb-4">
+                    <label className="flex items-start gap-3 cursor-pointer group">
+                        <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
+                            {consentGiven && <Check size={14} className="text-white" />}
+                        </div>
+                        <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
+                        <span className="text-xs text-gray-500 leading-tight select-none">
+                            (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
+                        </span>
+                    </label>
+                </div>
 
-            <div className="mb-6">
-                <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
-                    {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
-                    🔎 Weitere Informationen
-                </button>
-                {showConsentInfo && (
-                    <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
-                        <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
-                        <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
-                    </div>
-                )}
-            </div>
+                <div className="mb-6">
+                    <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
+                        {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
+                        🔎 Weitere Informationen
+                    </button>
+                    {showConsentInfo && (
+                        <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
+                            <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
+                            <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
+                        </div>
+                    )}
+                </div>
+              </>
+            )}
 
             {loginError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 animate-pulse">
@@ -478,7 +522,8 @@ export default function App() {
             <button type="submit" disabled={isLoggingIn} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50">
                 {isLoggingIn ? <RefreshCw className="animate-spin mx-auto"/> : 'Anmelden'}
             </button>
-        </form>
+          </form>
+        )}
     </div>
   );
 
