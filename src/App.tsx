@@ -5,6 +5,7 @@ import {
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink
 } from 'lucide-react';
+import { subscribeToPush, isPushSubscribed } from './push';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -143,6 +144,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   
   // DATEN
   const [patientData, setPatientData] = useState<any>(null);
@@ -306,9 +308,26 @@ export default function App() {
     }
   };
 
-  useEffect(() => { 
+  useEffect(() => {
       if (patientId) fetchData(false);
-  }, [patientId]); 
+  }, [patientId]);
+
+  // Push-Status beim Laden prüfen
+  useEffect(() => {
+      if (!patientId) return;
+      isPushSubscribed().then(subscribed => {
+          if (subscribed) setPushStatus('subscribed');
+          else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') setPushStatus('denied');
+          else setPushStatus('idle');
+      });
+  }, [patientId]);
+
+  const handleSubscribePush = async () => {
+      if (!patientId) return;
+      setPushStatus('loading');
+      const ok = await subscribeToPush(patientId);
+      setPushStatus(ok ? 'subscribed' : 'denied');
+  };
 
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
@@ -576,6 +595,31 @@ export default function App() {
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
+        <section className="space-y-4">
+            <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Benachrichtigungen</h3>
+            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
+                {pushStatus === 'subscribed' ? (
+                    <div className="flex items-center gap-3 text-[#1e4620]">
+                        <div className="bg-[#e6f4ea] p-2.5 rounded-full"><Check size={20} strokeWidth={3}/></div>
+                        <span className="font-bold text-sm">Benachrichtigungen sind aktiv</span>
+                    </div>
+                ) : pushStatus === 'loading' ? (
+                    <div className="flex items-center justify-center py-2 text-[#b5a48b]">
+                        <RefreshCw className="animate-spin" size={22} />
+                    </div>
+                ) : pushStatus === 'denied' ? (
+                    <div className="flex items-center gap-3 text-gray-500">
+                        <div className="bg-[#dccfbc]/20 p-2.5 rounded-full text-[#b5a48b]"><Bell size={20}/></div>
+                        <span className="text-sm font-bold">Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.</span>
+                    </div>
+                ) : (
+                    <button onClick={handleSubscribePush} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+                        <Bell size={18} /> Benachrichtigungen aktivieren
+                    </button>
+                )}
+            </div>
+        </section>
+
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
             <div>
                 <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
