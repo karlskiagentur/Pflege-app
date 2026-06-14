@@ -662,8 +662,12 @@ export default function App() {
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
                         <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
-                        <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
-                    </div>
+<p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>
+                            Am {showDate}
+                            {formatDauer(getValue(b, 'Dauer')) && (
+                                <span className="text-gray-400 normal-case"> · Dauer: {formatDauer(getValue(b, 'Dauer'))}</span>
+                            )}
+                        </p>                    </div>
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
