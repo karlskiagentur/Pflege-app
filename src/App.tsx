@@ -651,23 +651,29 @@ export default function App() {
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
             const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
             const isHighlighted = highlightedIds.includes(b.id);
+            const showDauer = formatDauer(getValue(b, 'Dauer'));
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
-                <div className="p-6 flex items-center gap-6">
-                    <div className="text-center min-w-[60px]">
+                <div className="p-6 flex items-center gap-3">
+                    {/* LINKS: Uhrzeit */}
+                    <div className="text-center min-w-[56px]">
                         <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                     </div>
-                    <div className="flex-1 border-l border-gray-100 pl-5 text-left">
+                    {/* MITTE: Inhalt */}
+                    <div className="flex-1 border-l border-gray-100 pl-4 text-left">
                         <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
-<p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>
-                            Am {showDate}
-                            {formatDauer(getValue(b, 'Dauer')) && (
-                                <span className="text-gray-400 normal-case"> · Dauer: {formatDauer(getValue(b, 'Dauer'))}</span>
-                            )}
-                        </p>                    </div>
+                        <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
+                    </div>
+                    {/* RECHTS: Dauer (nur wenn vorhanden) */}
+                    {showDauer && (
+                        <div className="text-center min-w-[56px] border-l border-gray-100 pl-3">
+                            <p className="text-xl font-bold text-gray-300 whitespace-nowrap">{showDauer}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">Dauer</p>
+                        </div>
+                    )}
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
