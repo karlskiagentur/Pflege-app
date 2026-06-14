@@ -595,6 +595,14 @@ export default function App() {
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
+        <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
+            <div>
+                <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
+                <h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2>
+            </div>
+            <CalendarIcon size={28}/>
+        </div>
+
         <section className="space-y-4">
             <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Benachrichtigungen</h3>
             <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
@@ -620,14 +628,6 @@ export default function App() {
             </div>
         </section>
 
-        <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
-            <div>
-                <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
-                <h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2>
-            </div>
-            <CalendarIcon size={28}/>
-        </div>
-        
         <section className="space-y-4">
             <div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4">
                 <h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>
