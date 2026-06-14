@@ -79,7 +79,26 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
-
+const formatDauer = (raw: any) => {
+  const val = unbox(raw);
+  if (!val) return "";
+  // Airtable Duration kommt als Sekunden (Zahl). Fallback: "H:MM" String.
+  let totalMin = 0;
+  if (typeof raw === 'number' || /^\d+$/.test(val)) {
+    totalMin = Math.round(Number(val) / 60); // Sekunden -> Minuten
+  } else if (val.includes(':')) {
+    const [h, m] = val.split(':');
+    totalMin = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
+  } else {
+    return "";
+  }
+  if (totalMin <= 0) return "";
+  const stunden = Math.floor(totalMin / 60);
+  const minuten = totalMin % 60;
+  if (stunden > 0 && minuten > 0) return `${stunden}h ${minuten}min`;
+  if (stunden > 0) return `${stunden}h`;
+  return `${minuten}min`;
+};
 const getDisplayTitle = (b: any) => {
   const title = getValue(b, 'Tätigkeit'); 
   const note = getValue(b, 'Notiz_Patient');
