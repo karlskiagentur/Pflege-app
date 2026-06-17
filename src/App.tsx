@@ -159,6 +159,11 @@ export default function App() {
       return saved ? JSON.parse(saved) : [];
   });
 
+  const [seenVisitsState, setSeenVisitsState] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem('seen_visits');
+    return saved ? JSON.parse(saved) : {};
+  });
+
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | null>(null);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
@@ -338,6 +343,37 @@ export default function App() {
           localStorage.setItem('seen_docs', JSON.stringify(newSeen));
       }
   };
+
+  const getVisitSignature = (b: any) => {
+    return [
+      getValue(b, 'Status'),
+      getValue(b, 'Uhrzeit'),
+      getValue(b, 'Pfleger_Name'),
+      getValue(b, 'Pfleger_Ersatz_Name'),
+      getValue(b, 'Tätigkeit')
+    ].join('|');
+  };
+
+  // Termine im Planer als gesehen markieren beim Öffnen des Tabs
+  useEffect(() => {
+    if (activeTab !== 'planer') return;
+    const now = new Date();
+    now.setHours(0,0,0,0);
+    const visible = besuche.filter(b => {
+      const status = getValue(b, 'Status');
+      const zeitVal = getValue(b, 'Uhrzeit');
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
+      if (!zeitVal) return false;
+      return new Date(zeitVal) >= now;
+    });
+    if (visible.length === 0) return;
+    const newSeen = { ...seenVisitsState };
+    visible.forEach(b => {
+      newSeen[b.id] = getVisitSignature(b);
+    });
+    setSeenVisitsState(newSeen);
+    localStorage.setItem('seen_visits', JSON.stringify(newSeen));
+  }, [activeTab, besuche]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); 
@@ -589,10 +625,17 @@ export default function App() {
   const pastBesuche = besuche.filter(b => {
       const status = getValue(b, 'Status');
       const zeitVal = getValue(b, 'Uhrzeit'); 
-      if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return false;
       if (!zeitVal) return false;
       return new Date(zeitVal) < today;
   });
+
+  const unseenVisits = upcomingBesuche.filter(b => {
+      const currentSig = getVisitSignature(b);
+      const seenSig = seenVisitsState[b.id];
+      return seenSig !== currentSig;
+  });
+  const unseenVisitsCount = unseenVisits.length;
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
@@ -917,6 +960,11 @@ export default function App() {
                 {t.id === 'hochladen' && unseenDocsCount > 0 && (
                     <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
                         {unseenDocsCount}
+                    </div>
+                )}
+                {t.id === 'planer' && unseenVisitsCount > 0 && (
+                    <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
+                        {unseenVisitsCount}
                     </div>
                 )}
             </div>
