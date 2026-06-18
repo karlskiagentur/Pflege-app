@@ -133,17 +133,13 @@ const getProposedDetails = (b: any) => {
 
 export default function App() {
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
-  const [mitarbeiterId, setMitarbeiterId] = useState<string | null>(
-    localStorage.getItem('active_mitarbeiter_id')
-  );
-  const [mitarbeiterName, setMitarbeiterName] = useState<string>(
-    localStorage.getItem('active_mitarbeiter_name') || ''
-  );
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null); 
   const [loginMode, setLoginMode] = useState<'select' | 'patient' | 'mitarbeiter'>('select');
+  const [mitarbeiterId, setMitarbeiterId] = useState<string | null>(localStorage.getItem('active_mitarbeiter_id'));
+  const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -400,21 +396,27 @@ export default function App() {
   const handleMitarbeiterLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
-
     setIsLoggingIn(true);
     try {
-      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
+      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: fullName, code: loginCode })
+      });
       const data = await res.json();
       if (data.status === "success" && data.mitarbeiterId) {
-        const name = data.mitarbeiterName || data.name || fullName;
         localStorage.setItem('active_mitarbeiter_id', data.mitarbeiterId);
-        localStorage.setItem('active_mitarbeiter_name', name);
+        localStorage.setItem('active_mitarbeiter_name', data.name || '');
         setMitarbeiterId(data.mitarbeiterId);
-        setMitarbeiterName(name);
+        setMitarbeiterName(data.name || '');
       } else {
-          setLoginError("Das eingegebene Passwort ist falsch");
+        setLoginError("Name oder Code nicht korrekt");
       }
-    } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
+    } catch (e) {
+      setLoginError("Verbindungsfehler beim Login.");
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   const handleRevokeConsent = async () => {
@@ -538,7 +540,26 @@ export default function App() {
   };
 
  // Login Screen
-  if (!patientId && !mitarbeiterId) return (
+  if (mitarbeiterId) return (
+    <div className="min-h-screen bg-[#F9F7F4] flex flex-col">
+      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
+        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
+        <div className="flex items-center gap-3">
+          <p className="text-xs font-bold italic">{mitarbeiterName}</p>
+          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); setMitarbeiterId(null); setMitarbeiterName(''); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+        </div>
+      </header>
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
+          <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><FileCheck size={32} className="text-[#b5a48b]" /></div>
+          <h2 className="text-2xl font-black mb-3 text-[#3A3A3A]">Hallo {mitarbeiterName}!</h2>
+          <p className="text-sm text-gray-400 leading-relaxed">Der Mitarbeiter-Bereich wird gerade aufgebaut. Hier kommen bald Tagesplan, Termine und mehr.</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!patientId) return (
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
 
         {/* AUSWAHL-SCREEN */}
@@ -625,40 +646,6 @@ export default function App() {
             </button>
           </form>
         )}
-    </div>
-  );
-
-  // MITARBEITER-BEREICH (eigene Ansicht, keine Patienten-Tabs/Nav/Push)
-  if (mitarbeiterId) return (
-    <div className="min-h-screen bg-[#F9F7F4]">
-      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
-        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
-        <div className="flex flex-col items-end">
-          <div className="flex items-center gap-3 mb-1.5">
-            <button
-              onClick={() => {
-                localStorage.removeItem('active_mitarbeiter_id');
-                localStorage.removeItem('active_mitarbeiter_name');
-                setMitarbeiterId(null);
-                setMitarbeiterName('');
-              }}
-              className="bg-white/20 p-3 rounded-full"
-            >
-              <LogOut size={20}/>
-            </button>
-          </div>
-          <p className="text-xs font-bold italic">{mitarbeiterName}</p>
-        </div>
-      </header>
-
-      <main className="max-w-md mx-auto px-6 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 100px)' }}>
-        <div className="bg-white p-10 rounded-[3rem] shadow-xl w-full text-center animate-in fade-in">
-          <h2 className="text-2xl font-black text-[#3A3A3A] mb-4">Hallo {mitarbeiterName}!</h2>
-          <p className="text-sm text-gray-500 leading-relaxed">
-            Mitarbeiter-Bereich wird gerade aufgebaut. Hier kommen bald Tagesplan, Termine und mehr.
-          </p>
-        </div>
-      </main>
     </div>
   );
 
