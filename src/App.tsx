@@ -588,6 +588,25 @@ export default function App() {
 
     const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
 
+    const getStatusBadge = (t: any) => {
+      const status = getValue(t, 'Status');
+      if (status === 'Bestätigt')
+        return { text: 'BESTÄTIGT', icon: 'check', bg: '#e6f4ea', color: '#1e4620' };
+      if (status === 'Änderungswunsch')
+        return { text: 'ÄNDERUNGSWUNSCH DES PATIENTEN', icon: 'alert', bg: '#fce8e6', color: '#993C1D', strong: true };
+      if (status === 'Anfrage')
+        return { text: 'NEUE ANFRAGE', icon: 'clock', bg: '#fff7ed', color: '#854F0B' };
+      if (status === 'Geplant')
+        return { text: 'WARTET AUF BESTÄTIGUNG', icon: 'clock', bg: '#fff7ed', color: '#854F0B' };
+      return { text: status || 'OFFEN', icon: 'clock', bg: '#f3f4f6', color: '#6b7280' };
+    };
+
+    const renderBadgeIcon = (icon: string) => {
+      if (icon === 'check') return <Check size={14} strokeWidth={3} />;
+      if (icon === 'alert') return <AlertTriangle size={14} strokeWidth={3} />;
+      return <AlertCircle size={14} strokeWidth={3} />;
+    };
+
     return (
     <div className="min-h-screen bg-[#F9F7F4] flex flex-col">
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
@@ -620,8 +639,9 @@ export default function App() {
               termineHeute.map((t) => {
                 const showDauer = formatDauer(getValue(t, 'Dauer'));
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
+                const badge = getStatusBadge(t);
                 return (
-                  <div key={t.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 mb-3 overflow-hidden">
+                  <div key={t.id} className={`bg-white rounded-[2rem] shadow-sm mb-3 overflow-hidden ${badge.strong ? 'border-2 border-[#D85A30]' : 'border border-gray-100'}`}>
                     <div className="p-6 flex items-center gap-3">
                       {/* LINKS: Uhrzeit */}
                       <div className="text-center min-w-[56px]">
@@ -636,7 +656,10 @@ export default function App() {
                           <p className="text-sm text-gray-500">{getValue(t, 'Patient_Name')}</p>
                         </div>
                         {ersatz && (
-                          <p className="text-[10px] mt-1 uppercase font-black tracking-wider text-[#c2410c]">Vertretung</p>
+                          <div className="flex items-center gap-1 mt-1 text-[#c2410c]">
+                            <RefreshCw size={10} strokeWidth={3} />
+                            <span className="text-[10px] font-black uppercase">Vertretung</span>
+                          </div>
                         )}
                       </div>
                       {/* RECHTS: Dauer */}
@@ -646,6 +669,11 @@ export default function App() {
                           <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
                         </div>
                       )}
+                    </div>
+                    {/* STATUS-BALKEN */}
+                    <div style={{ backgroundColor: badge.bg, color: badge.color }} className="py-3 text-center font-black uppercase text-[10px] tracking-wider flex items-center justify-center gap-2">
+                      {renderBadgeIcon(badge.icon)}
+                      {badge.text}
                     </div>
                   </div>
                 );
@@ -661,6 +689,7 @@ export default function App() {
                 </div>
                 {termineZukunft.map((t) => {
                   const datumOben = new Date(getValue(t, 'Uhrzeit')).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
+                  const badge = getStatusBadge(t);
                   return (
                     <div key={t.id} className="bg-[#F9F7F4] border border-gray-100 rounded-[1.5rem] p-4 mb-2 opacity-75">
                       <div className="flex items-center gap-3">
@@ -674,6 +703,8 @@ export default function App() {
                           <p className="text-sm font-bold text-gray-600">{getValue(t, 'Tätigkeit')}</p>
                           <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
                         </div>
+                        {/* RECHTS: Status-Label */}
+                        <p style={{ color: badge.color }} className="text-[9px] font-black uppercase tracking-wider text-right max-w-[80px] leading-tight">{badge.text}</p>
                       </div>
                     </div>
                   );
