@@ -142,6 +142,7 @@ export default function App() {
   const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
+  const [mitarbeiterTab, setMitarbeiterTab] = useState<'start'|'tagesplan'|'urlaub'|'lohn'>('start');
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -608,7 +609,7 @@ export default function App() {
     };
 
     return (
-    <div className="min-h-screen bg-[#F9F7F4] flex flex-col">
+    <div className="min-h-screen bg-white pb-32">
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex items-center gap-3">
@@ -618,7 +619,84 @@ export default function App() {
         </div>
       </header>
 
-      <div className="max-w-md mx-auto px-6 pt-6 pb-12 w-full">
+      <main className="max-w-md mx-auto px-6 pt-6">
+        {/* TAB: START / NOTFALL */}
+        {mitarbeiterTab === 'start' && (
+          <div className="animate-in fade-in">
+            <div className="text-center mb-8">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Phone size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A]">Notfall &amp; Infos</h2>
+              <p className="text-xs text-gray-400 mt-1">Wichtige Nummern für den Einsatz.</p>
+            </div>
+
+            {/* NOTRUF-KACHELN */}
+            <div className="flex gap-3 mb-3">
+              <a href="tel:112" className="flex-1 bg-[#FCEBEB] rounded-[1.5rem] p-4 text-center">
+                <p className="text-[11px] font-black tracking-wide text-[#791F1F]">RETTUNGSDIENST</p>
+                <p className="text-3xl font-black text-[#A32D2D]">112</p>
+              </a>
+              <a href="tel:110" className="flex-1 bg-[#E6F1FB] rounded-[1.5rem] p-4 text-center">
+                <p className="text-[11px] font-black tracking-wide text-[#0C447C]">POLIZEI</p>
+                <p className="text-3xl font-black text-[#185FA5]">110</p>
+              </a>
+            </div>
+
+            {/* BEREITSCHAFTSDIENST */}
+            <a href="tel:116117" className="flex items-center justify-between bg-[#F1EFE8] rounded-2xl p-4 mb-8">
+              <div>
+                <p className="text-[11px] text-gray-500">Ärztlicher Bereitschaftsdienst</p>
+                <p className="text-xl font-black text-gray-800">116 117</p>
+              </div>
+              <Phone size={24} className="text-gray-400" />
+            </a>
+
+            {/* 5 W-FRAGEN */}
+            <div className="flex items-center gap-2 mb-3 text-[#993C1D]">
+              <Phone size={16} />
+              <h3 className="text-sm font-black">Die 5 W-Fragen beim Notruf</h3>
+            </div>
+            <div className="bg-white rounded-[2rem] border border-gray-100 overflow-hidden">
+              {[
+                ['WO?', 'Genaue Adresse des Patienten'],
+                ['WAS?', 'Was ist passiert?'],
+                ['WIE VIELE?', 'Anzahl betroffener Personen'],
+                ['WELCHE?', 'Welche Verletzungen oder Beschwerden?'],
+                ['WARTEN!', 'Auf Rückfragen der Leitstelle warten'],
+              ].map(([w, a], i, arr) => (
+                <div key={w} className={`flex gap-3 p-4 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                  <p className="text-[13px] font-black text-[#993C1D] min-w-[80px]">{w}</p>
+                  <p className="text-[13px] text-gray-500">{a}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: URLAUB */}
+        {mitarbeiterTab === 'urlaub' && (
+          <div className="flex items-center justify-center py-20 animate-in fade-in">
+            <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><Plane size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A] mb-3">Urlaubsplanung</h2>
+              <p className="text-gray-400 italic">Wird gerade aufgebaut.</p>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: LOHN */}
+        {mitarbeiterTab === 'lohn' && (
+          <div className="flex items-center justify-center py-20 animate-in fade-in">
+            <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><Euro size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A] mb-3">Lohnabrechnung</h2>
+              <p className="text-gray-400 italic">Wird gerade aufgebaut.</p>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: TAGESPLAN */}
+        {mitarbeiterTab === 'tagesplan' && (
+        <>
         {mitarbeiterLoading ? (
           <div className="flex justify-center py-20"><RefreshCw size={32} className="animate-spin text-[#b5a48b]" /></div>
         ) : (
@@ -713,7 +791,23 @@ export default function App() {
             )}
           </>
         )}
-      </div>
+        </>
+        )}
+      </main>
+
+      {/* MITARBEITER-NAV */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'start', icon: Phone, label: 'Notfall' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
+        <button
+            key={tab.id}
+            onClick={() => setMitarbeiterTab(tab.id as 'start'|'tagesplan'|'urlaub'|'lohn')}
+            className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
+        >
+            <div className="relative">
+                <tab.icon size={22} strokeWidth={mitarbeiterTab === tab.id ? 3 : 2} />
+            </div>
+            <span className="text-[9px] font-black uppercase">{tab.label}</span>
+        </button>
+      ))}</nav>
     </div>
     );
   }
