@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed } from './push';
 
@@ -140,6 +140,8 @@ export default function App() {
   const [loginMode, setLoginMode] = useState<'select' | 'patient' | 'mitarbeiter'>('select');
   const [mitarbeiterId, setMitarbeiterId] = useState<string | null>(localStorage.getItem('active_mitarbeiter_id'));
   const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
+  const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
+  const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -419,6 +421,35 @@ export default function App() {
     }
   };
 
+  const fetchMitarbeiterTermine = async () => {
+    if (!mitarbeiterName) return;
+    setMitarbeiterLoading(true);
+    try {
+      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_termine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mitarbeiterName: mitarbeiterName })
+      });
+      const data = await res.json();
+      const liste = Array.isArray(data) ? data : [];
+      // Nach Uhrzeit sortieren
+      liste.sort((a, b) => {
+        const dA = new Date(getValue(a, 'Uhrzeit')).getTime() || 0;
+        const dB = new Date(getValue(b, 'Uhrzeit')).getTime() || 0;
+        return dA - dB;
+      });
+      setMitarbeiterTermine(liste);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMitarbeiterLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine();
+  }, [mitarbeiterId, mitarbeiterName]);
+
   const handleRevokeConsent = async () => {
     setIsSending(true);
     try {
@@ -546,15 +577,61 @@ export default function App() {
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
+          <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
           <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); setMitarbeiterId(null); setMitarbeiterName(''); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
         </div>
       </header>
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
-          <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><FileCheck size={32} className="text-[#b5a48b]" /></div>
-          <h2 className="text-2xl font-black mb-3 text-[#3A3A3A]">Hallo {mitarbeiterName}!</h2>
-          <p className="text-sm text-gray-400 leading-relaxed">Der Mitarbeiter-Bereich wird gerade aufgebaut. Hier kommen bald Tagesplan, Termine und mehr.</p>
+
+      <div className="max-w-md mx-auto px-6 pt-6 pb-12 w-full">
+        {/* ÜBERSCHRIFT */}
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
+          <h2 className="text-3xl font-black text-[#3A3A3A]">Mein Tagesplan</h2>
+          <p className="text-xs text-gray-400 mt-1">Hallo {mitarbeiterName}, hier sind deine Einsätze.</p>
         </div>
+
+        {mitarbeiterLoading ? (
+          <div className="flex justify-center py-20"><RefreshCw size={32} className="animate-spin text-[#b5a48b]" /></div>
+        ) : mitarbeiterTermine.length === 0 ? (
+          <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-10 text-center">
+            <p className="text-gray-300 italic">Keine Einsätze geplant.</p>
+          </div>
+        ) : (
+          mitarbeiterTermine.map((t) => {
+            const showDauer = formatDauer(getValue(t, 'Dauer'));
+            const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
+            return (
+              <div key={t.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 mb-4 overflow-hidden">
+                <div className="p-6 flex items-center gap-3">
+                  {/* LINKS: Uhrzeit */}
+                  <div className="text-center min-w-[56px]">
+                    <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
+                  </div>
+                  {/* MITTE: Inhalt */}
+                  <div className="flex-1 border-l border-gray-100 pl-4 text-left">
+                    <p className="font-black text-[#3A3A3A] text-lg mb-2">{getValue(t, 'Tätigkeit')}</p>
+                    <div className="flex items-center gap-2">
+                      <User size={12} className="text-gray-400"/>
+                      <p className="text-sm text-gray-500">{getValue(t, 'Patient_Name')}</p>
+                    </div>
+                    {ersatz && (
+                      <p className="text-[10px] mt-1 uppercase font-black tracking-wider text-[#c2410c]">Vertretung</p>
+                    )}
+                    <p className="text-[10px] mt-3 font-bold uppercase tracking-wider text-left text-[#b5a48b]">Am {formatDate(getValue(t, 'Uhrzeit'))}</p>
+                  </div>
+                  {/* RECHTS: Dauer */}
+                  {showDauer && (
+                    <div className="text-center min-w-[56px]">
+                      <p className="text-xl text-gray-300">{showDauer}</p>
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
