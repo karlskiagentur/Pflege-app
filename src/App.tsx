@@ -571,7 +571,24 @@ export default function App() {
   };
 
  // Login Screen
-  if (mitarbeiterId) return (
+  if (mitarbeiterId) {
+    const heute = new Date();
+    heute.setHours(0,0,0,0);
+    const morgen = new Date(heute);
+    morgen.setDate(morgen.getDate() + 1);
+
+    const termineHeute = mitarbeiterTermine.filter(t => {
+      const d = new Date(getValue(t, 'Uhrzeit'));
+      return d >= heute && d < morgen;
+    });
+    const termineZukunft = mitarbeiterTermine.filter(t => {
+      const d = new Date(getValue(t, 'Uhrzeit'));
+      return d >= morgen;
+    });
+
+    const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
+
+    return (
     <div className="min-h-screen bg-[#F9F7F4] flex flex-col">
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
@@ -583,58 +600,92 @@ export default function App() {
       </header>
 
       <div className="max-w-md mx-auto px-6 pt-6 pb-12 w-full">
-        {/* ÜBERSCHRIFT */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-white rounded-full shadow-sm flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
-          <h2 className="text-3xl font-black text-[#3A3A3A]">Mein Tagesplan</h2>
-          <p className="text-xs text-gray-400 mt-1">Hallo {mitarbeiterName}, hier sind deine Einsätze.</p>
-        </div>
-
         {mitarbeiterLoading ? (
           <div className="flex justify-center py-20"><RefreshCw size={32} className="animate-spin text-[#b5a48b]" /></div>
-        ) : mitarbeiterTermine.length === 0 ? (
-          <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-10 text-center">
-            <p className="text-gray-300 italic">Keine Einsätze geplant.</p>
-          </div>
         ) : (
-          mitarbeiterTermine.map((t) => {
-            const showDauer = formatDauer(getValue(t, 'Dauer'));
-            const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
-            return (
-              <div key={t.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 mb-4 overflow-hidden">
-                <div className="p-6 flex items-center gap-3">
-                  {/* LINKS: Uhrzeit */}
-                  <div className="text-center min-w-[56px]">
-                    <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
-                  </div>
-                  {/* MITTE: Inhalt */}
-                  <div className="flex-1 border-l border-gray-100 pl-4 text-left">
-                    <p className="font-black text-[#3A3A3A] text-lg mb-2">{getValue(t, 'Tätigkeit')}</p>
-                    <div className="flex items-center gap-2">
-                      <User size={12} className="text-gray-400"/>
-                      <p className="text-sm text-gray-500">{getValue(t, 'Patient_Name')}</p>
-                    </div>
-                    {ersatz && (
-                      <p className="text-[10px] mt-1 uppercase font-black tracking-wider text-[#c2410c]">Vertretung</p>
-                    )}
-                    <p className="text-[10px] mt-3 font-bold uppercase tracking-wider text-left text-[#b5a48b]">Am {formatDate(getValue(t, 'Uhrzeit'))}</p>
-                  </div>
-                  {/* RECHTS: Dauer */}
-                  {showDauer && (
-                    <div className="text-center min-w-[56px]">
-                      <p className="text-xl text-gray-300">{showDauer}</p>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                    </div>
-                  )}
-                </div>
+          <>
+            {/* DATUMS-HEADER */}
+            <div className="text-center mb-6">
+              <p className="text-[11px] font-black uppercase tracking-wide text-[#0F6E56]">HEUTE · {heuteText}</p>
+              <h2 className="text-2xl font-black text-[#3A3A3A] mt-1">{termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}</h2>
+            </div>
+
+            {/* HEUTE-TERMINE */}
+            {termineHeute.length === 0 ? (
+              <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-10 text-center">
+                <CalendarDays size={32} className="text-[#dccfbc] mx-auto mb-3" />
+                <p className="text-gray-400 italic">Heute keine Einsätze geplant.</p>
               </div>
-            );
-          })
+            ) : (
+              termineHeute.map((t) => {
+                const showDauer = formatDauer(getValue(t, 'Dauer'));
+                const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
+                return (
+                  <div key={t.id} className="bg-white rounded-[2rem] shadow-sm border border-gray-100 mb-3 overflow-hidden">
+                    <div className="p-6 flex items-center gap-3">
+                      {/* LINKS: Uhrzeit */}
+                      <div className="text-center min-w-[56px]">
+                        <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
+                      </div>
+                      {/* MITTE: Inhalt */}
+                      <div className="flex-1 border-l border-gray-100 pl-4 text-left">
+                        <p className="font-black text-[#3A3A3A] text-lg mb-2">{getValue(t, 'Tätigkeit')}</p>
+                        <div className="flex items-center gap-2">
+                          <User size={12} className="text-gray-400"/>
+                          <p className="text-sm text-gray-500">{getValue(t, 'Patient_Name')}</p>
+                        </div>
+                        {ersatz && (
+                          <p className="text-[10px] mt-1 uppercase font-black tracking-wider text-[#c2410c]">Vertretung</p>
+                        )}
+                      </div>
+                      {/* RECHTS: Dauer */}
+                      {showDauer && (
+                        <div className="text-center min-w-[56px]">
+                          <p className="text-xl text-gray-300">{showDauer}</p>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {/* DEMNÄCHST */}
+            {termineZukunft.length > 0 && (
+              <>
+                <div className="border-t border-gray-200 mt-6 pt-4 flex items-center justify-center gap-1.5">
+                  <ChevronDown size={14} className="text-gray-400" />
+                  <p className="text-[12px] font-black uppercase tracking-wide text-gray-400">Demnächst ({termineZukunft.length})</p>
+                </div>
+                {termineZukunft.map((t) => {
+                  const datumOben = new Date(getValue(t, 'Uhrzeit')).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
+                  return (
+                    <div key={t.id} className="bg-[#F9F7F4] border border-gray-100 rounded-[1.5rem] p-4 mb-2 opacity-75">
+                      <div className="flex items-center gap-3">
+                        {/* LINKS: Datum + Uhrzeit */}
+                        <div className="text-center min-w-[52px]">
+                          <p className="text-[13px] text-gray-500">{datumOben}</p>
+                          <p className="text-[13px] text-gray-500">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                        </div>
+                        {/* MITTE: Inhalt */}
+                        <div className="flex-1 border-l border-gray-200 pl-3 text-left">
+                          <p className="text-sm font-bold text-gray-600">{getValue(t, 'Tätigkeit')}</p>
+                          <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </>
         )}
       </div>
     </div>
-  );
+    );
+  }
 
   if (!patientId) return (
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
