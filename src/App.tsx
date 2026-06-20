@@ -3,7 +3,8 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
+  Flag, UserX, CalendarX, MoreHorizontal
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed } from './push';
 
@@ -143,6 +144,11 @@ export default function App() {
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
   const [mitarbeiterTab, setMitarbeiterTab] = useState<'start'|'tagesplan'|'urlaub'|'lohn'>('start');
+  const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
+  const [meldungTyp, setMeldungTyp] = useState<string>('');
+  const [meldungNotiz, setMeldungNotiz] = useState('');
+  const [meldungSending, setMeldungSending] = useState(false);
+  const [meldungSent, setMeldungSent] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -608,6 +614,38 @@ export default function App() {
       return <AlertCircle size={14} strokeWidth={3} />;
     };
 
+    const handleSendMeldung = async () => {
+      if (!meldungTermin || !meldungTyp) return;
+      setMeldungSending(true);
+      try {
+        const patientId = (meldungTermin.fields && meldungTermin.fields.Patient
+          && meldungTermin.fields.Patient[0]) || '';
+        const besuchId = meldungTermin.id;
+        await fetch('/api/meldung-senden', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mitarbeiterName: mitarbeiterName,
+            typ: meldungTyp,
+            patientId: patientId,
+            besuchId: besuchId,
+            notiz: meldungNotiz,
+          }),
+        });
+        setMeldungSent(true);
+        setTimeout(() => {
+          setMeldungTermin(null);
+          setMeldungTyp('');
+          setMeldungNotiz('');
+          setMeldungSent(false);
+        }, 1500);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setMeldungSending(false);
+      }
+    };
+
     return (
     <div className="min-h-screen bg-white pb-32">
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
@@ -753,6 +791,11 @@ export default function App() {
                       {renderBadgeIcon(badge.icon)}
                       {badge.text}
                     </div>
+                    {/* PROBLEM MELDEN */}
+                    <button onClick={() => { setMeldungTermin(t); setMeldungTyp(''); setMeldungNotiz(''); }}
+                      className="w-full border-t border-gray-100 py-3 text-[12px] font-black text-[#993C1D] flex items-center justify-center gap-2 active:bg-gray-50 transition-colors">
+                      <Flag size={14}/> Problem melden
+                    </button>
                   </div>
                 );
               })
@@ -808,6 +851,65 @@ export default function App() {
             <span className="text-[9px] font-black uppercase">{tab.label}</span>
         </button>
       ))}</nav>
+
+      {/* MELDE-FENSTER */}
+      {meldungTermin && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setMeldungTermin(null)}></div>
+          <div className="relative bg-white w-full max-w-md rounded-t-[3rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10">
+            {meldungSent ? (
+              <div className="py-10 text-center">
+                <div className="w-16 h-16 bg-[#e6f4ea] rounded-full flex items-center justify-center mx-auto mb-4"><Check size={32} className="text-[#1e4620]" strokeWidth={3} /></div>
+                <p className="font-black text-xl text-[#3A3A3A]">Meldung gesendet!</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between mb-6">
+                  <div className="text-left">
+                    <h3 className="text-xl font-black text-[#3A3A3A]">Meldung zu diesem Einsatz</h3>
+                    <p className="text-xs text-gray-400 mt-1">{getValue(meldungTermin, 'Tätigkeit')} · {getValue(meldungTermin, 'Patient_Name')}</p>
+                  </div>
+                  <button onClick={() => setMeldungTermin(null)} className="p-2 -mr-2 -mt-2 text-gray-400"><X size={22}/></button>
+                </div>
+
+                <div className="space-y-2 mb-4">
+                  <button onClick={() => setMeldungTyp('Kunde nicht angetroffen')} className={`w-full bg-[#FAECE7] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Kunde nicht angetroffen' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
+                    <UserX size={20} className="text-[#993C1D]" />
+                    <span className="text-[#712B13] font-bold">Kunde nicht angetroffen</span>
+                  </button>
+                  <button onClick={() => setMeldungTyp('Planungsfehler')} className={`w-full bg-[#FAEEDA] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Planungsfehler' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
+                    <CalendarX size={20} className="text-[#854F0B]" />
+                    <span className="text-[#633806] font-bold">Planungsfehler</span>
+                  </button>
+                  <button onClick={() => setMeldungTyp('Einsatzprobleme')} className={`w-full bg-[#FAEEDA] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Einsatzprobleme' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
+                    <AlertTriangle size={20} className="text-[#854F0B]" />
+                    <span className="text-[#633806] font-bold">Einsatzprobleme</span>
+                  </button>
+                  <button onClick={() => setMeldungTyp('Sonstiges')} className={`w-full bg-[#F1EFE8] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Sonstiges' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
+                    <MoreHorizontal size={20} className="text-[#5F5E5A]" />
+                    <span className="text-[#444441] font-bold">Sonstiges</span>
+                  </button>
+                </div>
+
+                <textarea
+                  placeholder="Notiz (optional)…"
+                  value={meldungNotiz}
+                  onChange={(e) => setMeldungNotiz(e.target.value)}
+                  className="bg-[#F9F7F4] rounded-2xl p-4 w-full outline-none mb-4 min-h-[80px] resize-none"
+                />
+
+                <button
+                  onClick={handleSendMeldung}
+                  disabled={!meldungTyp || meldungSending}
+                  className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50"
+                >
+                  {meldungSending ? <RefreshCw className="animate-spin mx-auto" /> : 'Senden'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
     );
   }
