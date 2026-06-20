@@ -143,7 +143,7 @@ export default function App() {
   const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
-  const [mitarbeiterTab, setMitarbeiterTab] = useState<'start'|'tagesplan'|'urlaub'|'lohn'>('start');
+  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
   const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
   const [meldungTyp, setMeldungTyp] = useState<string>('');
   const [meldungNotiz, setMeldungNotiz] = useState('');
@@ -677,7 +677,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto px-6 pt-6">
         {/* TAB: START / NOTFALL */}
-        {mitarbeiterTab === 'start' && (
+        {mitarbeiterTab === 'uebersicht' && (
           <div className="animate-in fade-in">
             {/* PUSH-KARTE */}
             <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mb-6">
@@ -703,51 +703,88 @@ export default function App() {
               )}
             </div>
 
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Phone size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A]">Notfall &amp; Infos</h2>
-              <p className="text-xs text-gray-400 mt-1">Wichtige Nummern für den Einsatz.</p>
+            {/* ÜBERSCHRIFT */}
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A]">Übersicht</h2>
+              <p className="text-xs text-gray-400 mt-1">Hallo {mitarbeiterName}, dein Tag im Blick.</p>
             </div>
 
-            {/* NOTRUF-KACHELN */}
-            <div className="flex gap-3 mb-3">
-              <a href="tel:112" className="flex-1 bg-[#FCEBEB] rounded-[1.5rem] p-4 text-center">
-                <p className="text-[11px] font-black tracking-wide text-[#791F1F]">RETTUNGSDIENST</p>
-                <p className="text-3xl font-black text-[#A32D2D]">112</p>
-              </a>
-              <a href="tel:110" className="flex-1 bg-[#E6F1FB] rounded-[1.5rem] p-4 text-center">
-                <p className="text-[11px] font-black tracking-wide text-[#0C447C]">POLIZEI</p>
-                <p className="text-3xl font-black text-[#185FA5]">110</p>
-              </a>
-            </div>
-
-            {/* BEREITSCHAFTSDIENST */}
-            <a href="tel:116117" className="flex items-center justify-between bg-[#F1EFE8] rounded-2xl p-4 mb-8">
-              <div>
-                <p className="text-[11px] text-gray-500">Ärztlicher Bereitschaftsdienst</p>
-                <p className="text-xl font-black text-gray-800">116 117</p>
+            {/* TAGESPLAN-VORSCHAU */}
+            <p className="text-[11px] font-black tracking-wide text-[#0F6E56] mb-2">
+              HEUTE · {termineHeute.length === 0 ? 'Heute keine Einsätze' : termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}
+            </p>
+            {termineHeute.length === 0 ? (
+              <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Heute keine Einsätze geplant.</div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                {termineHeute.map((t, i) => {
+                  const badge = getStatusBadge(t);
+                  return (
+                    <div key={t.id} className={`flex items-center gap-3 p-4 ${i < termineHeute.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                      <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                      <div className="flex-1 text-left">
+                        <p className="text-sm font-black text-[#3A3A3A]">{getValue(t, 'Tätigkeit')}</p>
+                        <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
+                      </div>
+                      <span style={{ backgroundColor: badge.bg }} className="w-2 h-2 rounded-full shrink-0"></span>
+                    </div>
+                  );
+                })}
               </div>
-              <Phone size={24} className="text-gray-400" />
-            </a>
+            )}
+            <button
+              onClick={() => setMitarbeiterTab('tagesplan')}
+              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3"
+            >
+              <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
+            </button>
 
-            {/* 5 W-FRAGEN */}
-            <div className="flex items-center gap-2 mb-3 text-[#993C1D]">
-              <Phone size={16} />
-              <h3 className="text-sm font-black">Die 5 W-Fragen beim Notruf</h3>
-            </div>
-            <div className="bg-white rounded-[2rem] border border-gray-100 overflow-hidden">
-              {[
-                ['WO?', 'Genaue Adresse des Patienten'],
-                ['WAS?', 'Was ist passiert?'],
-                ['WIE VIELE?', 'Anzahl betroffener Personen'],
-                ['WELCHE?', 'Welche Verletzungen oder Beschwerden?'],
-                ['WARTEN!', 'Auf Rückfragen der Leitstelle warten'],
-              ].map(([w, a], i, arr) => (
-                <div key={w} className={`flex gap-3 p-4 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
-                  <p className="text-[13px] font-black text-[#993C1D] min-w-[80px]">{w}</p>
-                  <p className="text-[13px] text-gray-500">{a}</p>
+            {/* NOTRUFE */}
+            <div className="mt-8">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center">Notrufe</p>
+              <div className="mt-3 flex gap-3 mb-3">
+                <a href="tel:112" className="flex-1 bg-[#FCEBEB] rounded-[1.5rem] p-4 text-center">
+                  <p className="text-[11px] font-black tracking-wide text-[#791F1F]">RETTUNGSDIENST</p>
+                  <p className="text-3xl font-black text-[#A32D2D]">112</p>
+                </a>
+                <a href="tel:110" className="flex-1 bg-[#E6F1FB] rounded-[1.5rem] p-4 text-center">
+                  <p className="text-[11px] font-black tracking-wide text-[#0C447C]">POLIZEI</p>
+                  <p className="text-3xl font-black text-[#185FA5]">110</p>
+                </a>
+              </div>
+              <a href="tel:116117" className="flex items-center justify-between bg-[#F1EFE8] rounded-2xl p-4">
+                <div>
+                  <p className="text-[11px] text-gray-500">Ärztlicher Bereitschaftsdienst</p>
+                  <p className="text-xl font-black text-gray-800">116 117</p>
                 </div>
-              ))}
+                <Phone size={24} className="text-gray-400" />
+              </a>
+            </div>
+
+            {/* GEDÄCHTNISSTÜTZE / 5 W-FRAGEN */}
+            <div className="mt-10">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center">Gedächtnisstütze</p>
+              <div className="mt-3">
+                <div className="flex items-center gap-2 mb-3 text-[#993C1D]">
+                  <Phone size={16} />
+                  <h3 className="text-sm font-black">Die 5 W-Fragen beim Notruf</h3>
+                </div>
+                <div className="bg-white rounded-[2rem] border border-gray-100 overflow-hidden">
+                  {[
+                    ['WO?', 'Genaue Adresse des Patienten'],
+                    ['WAS?', 'Was ist passiert?'],
+                    ['WIE VIELE?', 'Anzahl betroffener Personen'],
+                    ['WELCHE?', 'Welche Verletzungen oder Beschwerden?'],
+                    ['WARTEN!', 'Auf Rückfragen der Leitstelle warten'],
+                  ].map(([w, a], i, arr) => (
+                    <div key={w} className={`flex gap-3 p-4 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                      <p className="text-[13px] font-black text-[#993C1D] min-w-[80px]">{w}</p>
+                      <p className="text-[13px] text-gray-500">{a}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -881,10 +918,10 @@ export default function App() {
       </main>
 
       {/* MITARBEITER-NAV */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'start', icon: Phone, label: 'Notfall' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
         <button
             key={tab.id}
-            onClick={() => setMitarbeiterTab(tab.id as 'start'|'tagesplan'|'urlaub'|'lohn')}
+            onClick={() => setMitarbeiterTab(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn')}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
