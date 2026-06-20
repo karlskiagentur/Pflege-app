@@ -73,20 +73,39 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
       return false;
     }
 
-    const registration = await registerServiceWorker();
-    if (!registration) return false;
-
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      console.error('Benachrichtigungen wurden nicht erlaubt:', permission);
+    // 1. Permission prüfen
+    if (Notification.permission === 'denied') {
+      console.error('Benachrichtigungen sind blockiert.');
       return false;
     }
+    // 2. Bei 'default' Erlaubnis einholen
+    if (Notification.permission === 'default') {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        console.error('Benachrichtigungen wurden nicht erlaubt:', permission);
+        return false;
+      }
+    }
 
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-    });
+    // 3. Service Worker holen (ggf. registrieren)
+    let registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      const newReg = await registerServiceWorker();
+      if (!newReg) return false;
+      registration = newReg;
+    }
+    await navigator.serviceWorker.ready;
 
+    // 4. Bestehende Subscription wiederverwenden oder neu erstellen
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+
+    // 5. Abo IMMER an Airtable schicken (auch wenn schon eines existierte)
     const response = await fetch('/api/abo-pfleger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
