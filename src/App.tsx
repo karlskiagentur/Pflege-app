@@ -717,11 +717,11 @@ export default function App() {
             {termineHeute.length === 0 ? (
               <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Heute keine Einsätze geplant.</div>
             ) : (
-              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <div className="bg-[#FAF5EE] rounded-2xl border border-[#E8DCC8] border-l-4 border-l-[#b5a48b] overflow-hidden">
                 {termineHeute.map((t, i) => {
                   const badge = getStatusBadge(t);
                   return (
-                    <div key={t.id} className={`flex items-center gap-3 p-4 ${i < termineHeute.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                    <div key={t.id} className={`flex items-center gap-3 p-4 ${i < termineHeute.length - 1 ? 'border-b border-[#E8DCC8]' : ''}`}>
                       <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
                       <div className="flex-1 text-left">
                         <p className="text-sm font-black text-[#3A3A3A]">{getValue(t, 'Tätigkeit')}</p>
@@ -735,7 +735,7 @@ export default function App() {
             )}
             <button
               onClick={() => setMitarbeiterTab('tagesplan')}
-              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3"
+              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 border-t border-[#E8DCC8]"
             >
               <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
             </button>
@@ -836,7 +836,7 @@ export default function App() {
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
                 return (
-                  <div key={t.id} className={`bg-white rounded-[2rem] shadow-sm mb-3 overflow-hidden ${badge.strong ? 'border-2 border-[#D85A30]' : 'border border-gray-100'}`}>
+                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${badge.strong ? 'bg-white border-2 border-[#D85A30]' : 'bg-[#FAF5EE] border border-[#E8DCC8] border-l-4 border-l-[#b5a48b]'}`}>
                     <div className="p-6 flex items-center gap-3">
                       {/* LINKS: Uhrzeit */}
                       <div className="text-center min-w-[56px]">
