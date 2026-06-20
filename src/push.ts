@@ -66,6 +66,45 @@ export async function subscribeToPush(patientId: string): Promise<boolean> {
   }
 }
 
+export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boolean> {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.error('Push wird von diesem Browser nicht unterstützt.');
+      return false;
+    }
+
+    const registration = await registerServiceWorker();
+    if (!registration) return false;
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.error('Benachrichtigungen wurden nicht erlaubt:', permission);
+      return false;
+    }
+
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+
+    const response = await fetch('/api/abo-pfleger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mitarbeiterId: mitarbeiterId, subscription: subscription.toJSON() })
+    });
+
+    if (!response.ok) {
+      console.error('Subscription konnte nicht gespeichert werden:', response.status);
+      return false;
+    }
+
+    return true;
+  } catch (e) {
+    console.error('Push-Abonnement (Mitarbeiter) fehlgeschlagen:', e);
+    return false;
+  }
+}
+
 export async function isPushSubscribed(): Promise<boolean> {
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {

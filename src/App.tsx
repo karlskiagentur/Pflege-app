@@ -6,7 +6,7 @@ import {
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
   Flag, UserX, CalendarX, MoreHorizontal
 } from 'lucide-react';
-import { subscribeToPush, isPushSubscribed } from './push';
+import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -149,6 +149,7 @@ export default function App() {
   const [meldungNotiz, setMeldungNotiz] = useState('');
   const [meldungSending, setMeldungSending] = useState(false);
   const [meldungSent, setMeldungSent] = useState(false);
+  const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -344,6 +345,23 @@ export default function App() {
       setPushStatus('loading');
       const ok = await subscribeToPush(patientId);
       setPushStatus(ok ? 'subscribed' : 'denied');
+  };
+
+  // Push-Status für Mitarbeiter prüfen
+  useEffect(() => {
+      if (!mitarbeiterId) return;
+      isPushSubscribed().then(subscribed => {
+          if (subscribed) setMitarbeiterPushStatus('subscribed');
+          else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') setMitarbeiterPushStatus('denied');
+          else setMitarbeiterPushStatus('idle');
+      });
+  }, [mitarbeiterId]);
+
+  const handleMitarbeiterPush = async () => {
+      if (!mitarbeiterId) return;
+      setMitarbeiterPushStatus('loading');
+      const ok = await subscribeMitarbeiter(mitarbeiterId);
+      setMitarbeiterPushStatus(ok ? 'subscribed' : 'denied');
   };
 
   // Dokument als gelesen markieren
@@ -661,6 +679,30 @@ export default function App() {
         {/* TAB: START / NOTFALL */}
         {mitarbeiterTab === 'start' && (
           <div className="animate-in fade-in">
+            {/* PUSH-KARTE */}
+            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mb-6">
+              {mitarbeiterPushStatus === 'subscribed' ? (
+                <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
+                  <Check size={18} strokeWidth={3} /> Benachrichtigungen sind aktiv
+                </div>
+              ) : mitarbeiterPushStatus === 'loading' ? (
+                <div className="flex justify-center py-2">
+                  <RefreshCw size={20} className="animate-spin text-[#b5a48b]" />
+                </div>
+              ) : mitarbeiterPushStatus === 'denied' ? (
+                <p className="text-center text-xs text-gray-500">
+                  Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.
+                </p>
+              ) : (
+                <button
+                  onClick={handleMitarbeiterPush}
+                  className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Bell size={18} /> Benachrichtigungen aktivieren
+                </button>
+              )}
+            </div>
+
             <div className="text-center mb-8">
               <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Phone size={32} className="text-[#b5a48b]" /></div>
               <h2 className="text-3xl font-black text-[#3A3A3A]">Notfall &amp; Infos</h2>
