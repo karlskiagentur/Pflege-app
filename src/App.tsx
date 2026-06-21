@@ -364,6 +364,13 @@ export default function App() {
       setMitarbeiterPushStatus(ok ? 'subscribed' : 'denied');
   };
 
+  // Stiller Hintergrund-Sync: hält das Abo in Airtable aktuell, ohne UI-Änderung
+  useEffect(() => {
+      if (!mitarbeiterId) return;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      subscribeMitarbeiter(mitarbeiterId).catch((e) => console.log('Stiller Push-Sync fehlgeschlagen:', e));
+  }, [mitarbeiterId]);
+
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
       if (!seenDocIds.includes(id)) {
