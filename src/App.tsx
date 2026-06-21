@@ -741,21 +741,23 @@ export default function App() {
             {termineHeute.length === 0 ? (
               <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Heute keine Einsätze geplant.</div>
             ) : (
-              <div className="bg-[#FAF5EE] rounded-2xl border border-[#E8DCC8] border-l-4 border-l-[#b5a48b] overflow-hidden">
-                {termineHeute.map((t, i) => {
-                  const badge = getStatusBadge(t);
+              <div className="space-y-3">
+                {termineHeute.map((t) => {
                   const status = getValue(t, 'Status');
-                  const dotColor = status === 'Bestätigt' ? '#5B9E5B'
-                    : status === 'Abgesagt' ? '#B5483C'
-                    : badge.bg;
+                  const isAbgesagt = status === 'Abgesagt';
+                  const tile =
+                    status === 'Bestätigt' ? { cls: 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B] shadow-md', label: 'BESTÄTIGT', labelCls: 'text-[#3D7A3D]' }
+                    : isAbgesagt ? { cls: 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C] shadow-none', label: 'ABGESAGT', labelCls: 'text-[#B5483C]' }
+                    : status === 'Änderungswunsch' ? { cls: 'bg-white border-2 border-[#D85A30]', label: 'ÄNDERUNG', labelCls: 'text-[#993C1D]' }
+                    : { cls: 'bg-[#FAF5EE] border border-[#E8DCC8] shadow-sm', label: (status || 'GEPLANT').toUpperCase(), labelCls: 'text-gray-400' };
                   return (
-                    <div key={t.id} className={`flex items-center gap-3 p-4 ${i < termineHeute.length - 1 ? 'border-b border-[#E8DCC8]' : ''}`}>
+                    <div key={t.id} className={`rounded-2xl p-4 flex items-center gap-3 ${tile.cls}`}>
                       <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
                       <div className="flex-1 text-left">
-                        <p className="text-sm font-black text-[#3A3A3A]">{getValue(t, 'Tätigkeit')}</p>
-                        <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
+                        <p className={`text-sm font-black ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
+                        <p className={`text-xs ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
                       </div>
-                      <span style={{ backgroundColor: dotColor }} className="w-2 h-2 rounded-full shrink-0"></span>
+                      <span className={`text-[10px] font-black uppercase shrink-0 ${tile.labelCls}`}>{tile.label}</span>
                     </div>
                   );
                 })}
@@ -763,7 +765,7 @@ export default function App() {
             )}
             <button
               onClick={() => setMitarbeiterTab('tagesplan')}
-              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 border-t border-[#E8DCC8]"
+              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 mt-3"
             >
               <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
             </button>
