@@ -691,42 +691,6 @@ export default function App() {
         {/* TAB: START / NOTFALL */}
         {mitarbeiterTab === 'uebersicht' && (
           <div className="animate-in fade-in">
-            {/* PUSH-KARTE */}
-            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mb-2">
-              {mitarbeiterPushStatus === 'subscribed' ? (
-                <div className="flex flex-col items-center gap-2">
-                  <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
-                    <Check size={18} strokeWidth={3} /> Benachrichtigungen aktiv
-                  </div>
-                  <button
-                    onClick={handleMitarbeiterPush}
-                    className="text-xs text-[#b5a48b] underline px-4 py-2"
-                  >
-                    Erneut verbinden
-                  </button>
-                </div>
-              ) : mitarbeiterPushStatus === 'loading' ? (
-                <div className="flex justify-center py-2">
-                  <RefreshCw size={20} className="animate-spin text-[#b5a48b]" />
-                </div>
-              ) : mitarbeiterPushStatus === 'denied' ? (
-                <p className="text-center text-xs text-gray-500">
-                  Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.
-                </p>
-              ) : (
-                <button
-                  onClick={handleMitarbeiterPush}
-                  className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-                >
-                  <Bell size={18} /> Benachrichtigungen aktivieren
-                </button>
-              )}
-            </div>
-            {mitarbeiterPushMsg && (
-              <p className="text-center text-xs text-[#1e4620] font-bold mb-4">{mitarbeiterPushMsg}</p>
-            )}
-            {!mitarbeiterPushMsg && <div className="mb-4" />}
-
             {/* ÜBERSCHRIFT */}
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
@@ -746,7 +710,7 @@ export default function App() {
                   const status = getValue(t, 'Status');
                   const isAbgesagt = status === 'Abgesagt';
                   const tile =
-                    status === 'Bestätigt' ? { cls: 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B] shadow-md', label: 'BESTÄTIGT', labelCls: 'text-[#3D7A3D]' }
+                    status === 'Bestätigt' ? { cls: 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B] shadow-lg -translate-y-0.5', label: 'BESTÄTIGT', labelCls: 'text-[#3D7A3D]' }
                     : isAbgesagt ? { cls: 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C] shadow-none', label: 'ABGESAGT', labelCls: 'text-[#B5483C]' }
                     : status === 'Änderungswunsch' ? { cls: 'bg-white border-2 border-[#D85A30]', label: 'ÄNDERUNG', labelCls: 'text-[#993C1D]' }
                     : { cls: 'bg-[#FAF5EE] border border-[#E8DCC8] shadow-sm', label: (status || 'GEPLANT').toUpperCase(), labelCls: 'text-gray-400' };
@@ -815,6 +779,41 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            </div>
+
+            {/* EINSTELLUNGEN / PUSH-KARTE */}
+            <div className="mt-8">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center mb-3">Einstellungen</p>
+              <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
+                {mitarbeiterPushStatus === 'subscribed' ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
+                      <Check size={18} strokeWidth={3} /> Benachrichtigungen aktiv
+                    </div>
+                    <button onClick={handleMitarbeiterPush} className="text-xs text-[#b5a48b] underline px-4 py-2">
+                      Erneut verbinden
+                    </button>
+                  </div>
+                ) : mitarbeiterPushStatus === 'loading' ? (
+                  <div className="flex justify-center py-2">
+                    <RefreshCw size={20} className="animate-spin text-[#b5a48b]" />
+                  </div>
+                ) : mitarbeiterPushStatus === 'denied' ? (
+                  <p className="text-center text-xs text-gray-500">
+                    Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.
+                  </p>
+                ) : (
+                  <button
+                    onClick={handleMitarbeiterPush}
+                    className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Bell size={18} /> Benachrichtigungen aktivieren
+                  </button>
+                )}
+              </div>
+              {mitarbeiterPushMsg && (
+                <p className="text-center text-xs text-[#1e4620] font-bold mt-2">{mitarbeiterPushMsg}</p>
+              )}
             </div>
           </div>
         )}
