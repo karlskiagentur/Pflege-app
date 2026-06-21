@@ -4,7 +4,7 @@ import {
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal
+  Flag, UserX, CalendarX, MoreHorizontal, Download
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 
@@ -155,6 +155,8 @@ export default function App() {
   const [urlaubSending, setUrlaubSending] = useState(false);
   const [urlaubListe, setUrlaubListe] = useState<any[]>([]);
   const [urlaubLoading, setUrlaubLoading] = useState(false);
+  const [lohnListe, setLohnListe] = useState<any[]>([]);
+  const [lohnLoading, setLohnLoading] = useState(false);
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
   const [consentGiven, setConsentGiven] = useState(false);
@@ -420,6 +422,25 @@ export default function App() {
 
   useEffect(() => {
     if (mitarbeiterId && mitarbeiterTab === 'urlaub') fetchUrlaubListe();
+  }, [mitarbeiterId, mitarbeiterTab]);
+
+  const fetchLohnListe = async () => {
+    if (!mitarbeiterId) return;
+    setLohnLoading(true);
+    try {
+      const res = await fetch('/api/lohn-liste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mitarbeiterId }),
+      });
+      const data = await res.json();
+      setLohnListe(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); }
+    finally { setLohnLoading(false); }
+  };
+
+  useEffect(() => {
+    if (mitarbeiterId && mitarbeiterTab === 'lohn') fetchLohnListe();
   }, [mitarbeiterId, mitarbeiterTab]);
 
   // Dokument als gelesen markieren
@@ -925,12 +946,30 @@ export default function App() {
 
         {/* TAB: LOHN */}
         {mitarbeiterTab === 'lohn' && (
-          <div className="flex items-center justify-center py-20 animate-in fade-in">
-            <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><Euro size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A] mb-3">Lohnabrechnung</h2>
-              <p className="text-gray-400 italic">Wird gerade aufgebaut.</p>
+          <div className="animate-in fade-in">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Euro size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A]">Lohnabrechnung</h2>
+              <p className="text-xs text-gray-400 mt-1">Deine monatlichen Abrechnungen.</p>
             </div>
+
+            {lohnLoading ? (
+              <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
+            ) : lohnListe.length === 0 ? (
+              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Abrechnungen.</div>
+            ) : (
+              lohnListe.map((l) => (
+                <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-gray-700">{formatDate(l.zeitraum)}</p>
+                    <p className="text-xs text-gray-400">{l.dateiname}</p>
+                  </div>
+                  <a href={l.url} target="_blank" rel="noreferrer" className="text-[#b5a48b] hover:opacity-70 p-2">
+                    <Download size={22} />
+                  </a>
+                </div>
+              ))
+            )}
           </div>
         )}
 
