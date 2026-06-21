@@ -150,6 +150,7 @@ export default function App() {
   const [meldungSending, setMeldungSending] = useState(false);
   const [meldungSent, setMeldungSent] = useState(false);
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
+  const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
@@ -362,6 +363,10 @@ export default function App() {
       setMitarbeiterPushStatus('loading');
       const ok = await subscribeMitarbeiter(mitarbeiterId);
       setMitarbeiterPushStatus(ok ? 'subscribed' : 'denied');
+      if (ok) {
+        setMitarbeiterPushMsg('Verbindung aktualisiert ✓');
+        setTimeout(() => setMitarbeiterPushMsg(''), 3000);
+      }
   };
 
   // Stiller Hintergrund-Sync: hält das Abo in Airtable aktuell, ohne UI-Änderung
@@ -687,10 +692,18 @@ export default function App() {
         {mitarbeiterTab === 'uebersicht' && (
           <div className="animate-in fade-in">
             {/* PUSH-KARTE */}
-            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mb-6">
+            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mb-2">
               {mitarbeiterPushStatus === 'subscribed' ? (
-                <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
-                  <Check size={18} strokeWidth={3} /> Benachrichtigungen sind aktiv
+                <div className="flex flex-col items-center gap-2">
+                  <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
+                    <Check size={18} strokeWidth={3} /> Benachrichtigungen aktiv
+                  </div>
+                  <button
+                    onClick={handleMitarbeiterPush}
+                    className="text-xs text-[#b5a48b] underline px-4 py-2"
+                  >
+                    Erneut verbinden
+                  </button>
                 </div>
               ) : mitarbeiterPushStatus === 'loading' ? (
                 <div className="flex justify-center py-2">
@@ -709,6 +722,10 @@ export default function App() {
                 </button>
               )}
             </div>
+            {mitarbeiterPushMsg && (
+              <p className="text-center text-xs text-[#1e4620] font-bold mb-4">{mitarbeiterPushMsg}</p>
+            )}
+            {!mitarbeiterPushMsg && <div className="mb-4" />}
 
             {/* ÜBERSCHRIFT */}
             <div className="text-center mb-6">

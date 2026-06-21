@@ -74,6 +74,7 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
     }
 
     // 1. Permission prüfen
+    console.log('Permission:', Notification.permission);
     if (Notification.permission === 'denied') {
       console.error('Benachrichtigungen sind blockiert.');
       return false;
@@ -81,6 +82,7 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
     // 2. Bei 'default' Erlaubnis einholen
     if (Notification.permission === 'default') {
       const permission = await Notification.requestPermission();
+      console.log('Permission nach Abfrage:', permission);
       if (permission !== 'granted') {
         console.error('Benachrichtigungen wurden nicht erlaubt:', permission);
         return false;
@@ -90,20 +92,26 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
     // 3. Service Worker holen (ggf. registrieren)
     let registration = await navigator.serviceWorker.getRegistration();
     if (!registration) {
+      console.log('Kein SW gefunden, registriere neu …');
       const newReg = await registerServiceWorker();
       if (!newReg) return false;
       registration = newReg;
     }
     await navigator.serviceWorker.ready;
+    console.log('ServiceWorker bereit:', registration.scope);
 
     // 4. Bestehende Subscription wiederverwenden oder neu erstellen
     let subscription = await registration.pushManager.getSubscription();
-    if (!subscription) {
+    if (subscription) {
+      console.log('Bestehendes Abo gefunden, wiederverwenden.');
+    } else {
+      console.log('Kein Abo, rufe pushManager.subscribe() auf …');
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
       });
     }
+    console.log('Subscription:', subscription.toJSON());
 
     // 5. Abo IMMER an Airtable schicken (auch wenn schon eines existierte)
     const response = await fetch('/api/abo-pfleger', {
@@ -111,6 +119,8 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mitarbeiterId: mitarbeiterId, subscription: subscription.toJSON() })
     });
+    const responseText = await response.text();
+    console.log('Airtable-Antwort:', response.status, responseText);
 
     if (!response.ok) {
       console.error('Subscription konnte nicht gespeichert werden:', response.status);
