@@ -149,6 +149,12 @@ export default function App() {
   const [meldungNotiz, setMeldungNotiz] = useState('');
   const [meldungSending, setMeldungSending] = useState(false);
   const [meldungSent, setMeldungSent] = useState(false);
+  const [urlaubVon, setUrlaubVon] = useState('');
+  const [urlaubBis, setUrlaubBis] = useState('');
+  const [urlaubNotiz, setUrlaubNotiz] = useState('');
+  const [urlaubSending, setUrlaubSending] = useState(false);
+  const [urlaubListe, setUrlaubListe] = useState<any[]>([]);
+  const [urlaubLoading, setUrlaubLoading] = useState(false);
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
   const [consentGiven, setConsentGiven] = useState(false);
@@ -375,6 +381,46 @@ export default function App() {
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
       subscribeMitarbeiter(mitarbeiterId).catch((e) => console.log('Stiller Push-Sync fehlgeschlagen:', e));
   }, [mitarbeiterId]);
+
+  const fetchUrlaubListe = async () => {
+    if (!mitarbeiterId) return;
+    setUrlaubLoading(true);
+    try {
+      const res = await fetch('/api/urlaub-liste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mitarbeiterId }),
+      });
+      const data = await res.json();
+      setUrlaubListe(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); }
+    finally { setUrlaubLoading(false); }
+  };
+
+  const handleUrlaubAntrag = async () => {
+    if (!urlaubVon || !urlaubBis) return;
+    setUrlaubSending(true);
+    try {
+      await fetch('/api/urlaub-antrag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mitarbeiterId,
+          mitarbeiterName,
+          von: urlaubVon,
+          bis: urlaubBis,
+          notiz: urlaubNotiz,
+        }),
+      });
+      setUrlaubVon(''); setUrlaubBis(''); setUrlaubNotiz('');
+      await fetchUrlaubListe();
+    } catch (e) { console.error(e); }
+    finally { setUrlaubSending(false); }
+  };
+
+  useEffect(() => {
+    if (mitarbeiterId && mitarbeiterTab === 'urlaub') fetchUrlaubListe();
+  }, [mitarbeiterId, mitarbeiterTab]);
 
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
@@ -820,12 +866,60 @@ export default function App() {
 
         {/* TAB: URLAUB */}
         {mitarbeiterTab === 'urlaub' && (
-          <div className="flex items-center justify-center py-20 animate-in fade-in">
-            <div className="bg-white rounded-[3rem] shadow-xl p-10 max-w-sm w-full text-center">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-6"><Plane size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A] mb-3">Urlaubsplanung</h2>
-              <p className="text-gray-400 italic">Wird gerade aufgebaut.</p>
+          <div className="animate-in fade-in">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Plane size={32} className="text-[#b5a48b]" /></div>
+              <h2 className="text-3xl font-black text-[#3A3A3A]">Urlaubsplanung</h2>
+              <p className="text-xs text-gray-400 mt-1">Beantrage deinen Urlaub und sieh den Stand.</p>
             </div>
+
+            {/* ANTRAGSFORMULAR */}
+            <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mb-8 space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase text-[#b5a48b]">VON WANN</label>
+                <input type="date" value={urlaubVon} onChange={(e) => setUrlaubVon(e.target.value)}
+                  style={{ colorScheme: 'light' }}
+                  className="w-full bg-[#F9F7F4] rounded-xl p-3 mt-1 outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase text-[#b5a48b]">BIS WANN</label>
+                <input type="date" value={urlaubBis} onChange={(e) => setUrlaubBis(e.target.value)}
+                  style={{ colorScheme: 'light' }}
+                  className="w-full bg-[#F9F7F4] rounded-xl p-3 mt-1 outline-none" />
+              </div>
+              <textarea placeholder="Notiz (optional)" value={urlaubNotiz}
+                onChange={(e) => setUrlaubNotiz(e.target.value)}
+                className="w-full bg-[#F9F7F4] rounded-xl p-3 outline-none min-h-[70px] resize-none" />
+              <button onClick={handleUrlaubAntrag}
+                disabled={!urlaubVon || !urlaubBis || urlaubSending}
+                className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {urlaubSending ? <RefreshCw className="animate-spin" size={18}/> : <><Send size={16}/> Urlaub beantragen</>}
+              </button>
+            </div>
+
+            {/* MEINE ANTRÄGE */}
+            <p className="text-[11px] font-black uppercase tracking-wide text-gray-400 mb-3">Meine Anträge</p>
+            {urlaubLoading ? (
+              <div className="flex justify-center py-6"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
+            ) : urlaubListe.length === 0 ? (
+              <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Noch keine Anträge.</div>
+            ) : (
+              urlaubListe.map((u) => {
+                const tage = Math.max(1, Math.round((new Date(u.bis).getTime() - new Date(u.von).getTime()) / 86400000) + 1);
+                const badge = u.status === 'Genehmigt' ? { cls: 'text-[#0F6E56] bg-[#E1F5EE]' }
+                  : u.status === 'Abgelehnt' ? { cls: 'text-[#993C1D] bg-[#FAECE7]' }
+                  : { cls: 'text-[#854F0B] bg-[#FAEEDA]' };
+                return (
+                  <div key={u.id} className={`bg-white rounded-2xl border border-gray-100 p-4 mb-2 flex items-center justify-between ${u.status === 'Abgelehnt' ? 'opacity-70' : ''}`}>
+                    <div>
+                      <p className="text-sm font-bold text-gray-700">{formatDate(u.von)} – {formatDate(u.bis)}</p>
+                      <p className="text-xs text-gray-400">{tage} {tage === 1 ? 'Tag' : 'Tage'}</p>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full ${badge.cls}`}>{u.status}</span>
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
 
