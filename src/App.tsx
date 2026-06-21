@@ -720,6 +720,10 @@ export default function App() {
               <div className="bg-[#FAF5EE] rounded-2xl border border-[#E8DCC8] border-l-4 border-l-[#b5a48b] overflow-hidden">
                 {termineHeute.map((t, i) => {
                   const badge = getStatusBadge(t);
+                  const status = getValue(t, 'Status');
+                  const dotColor = status === 'Bestätigt' ? '#5B9E5B'
+                    : status === 'Abgesagt' ? '#B5483C'
+                    : badge.bg;
                   return (
                     <div key={t.id} className={`flex items-center gap-3 p-4 ${i < termineHeute.length - 1 ? 'border-b border-[#E8DCC8]' : ''}`}>
                       <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
@@ -727,7 +731,7 @@ export default function App() {
                         <p className="text-sm font-black text-[#3A3A3A]">{getValue(t, 'Tätigkeit')}</p>
                         <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
                       </div>
-                      <span style={{ backgroundColor: badge.bg }} className="w-2 h-2 rounded-full shrink-0"></span>
+                      <span style={{ backgroundColor: dotColor }} className="w-2 h-2 rounded-full shrink-0"></span>
                     </div>
                   );
                 })}
@@ -835,8 +839,17 @@ export default function App() {
                 const showDauer = formatDauer(getValue(t, 'Dauer'));
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
+                const status = getValue(t, 'Status');
+                const isAbgesagt = status === 'Abgesagt';
+                const cardClasses = badge.strong
+                  ? 'bg-white border-2 border-[#D85A30]'
+                  : status === 'Bestätigt'
+                    ? 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B]'
+                    : isAbgesagt
+                      ? 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C]'
+                      : 'bg-[#FAF5EE] border border-[#E8DCC8] border-l-4 border-l-[#b5a48b]';
                 return (
-                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${badge.strong ? 'bg-white border-2 border-[#D85A30]' : 'bg-[#FAF5EE] border border-[#E8DCC8] border-l-4 border-l-[#b5a48b]'}`}>
+                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses}`}>
                     <div className="p-6 flex items-center gap-3">
                       {/* LINKS: Uhrzeit */}
                       <div className="text-center min-w-[56px]">
@@ -845,10 +858,10 @@ export default function App() {
                       </div>
                       {/* MITTE: Inhalt */}
                       <div className="flex-1 border-l border-gray-100 pl-4 text-left">
-                        <p className="font-black text-[#3A3A3A] text-lg mb-2">{getValue(t, 'Tätigkeit')}</p>
+                        <p className={`font-black text-lg mb-2 ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
                         <div className="flex items-center gap-2">
                           <User size={12} className="text-gray-400"/>
-                          <p className="text-sm text-gray-500">{getValue(t, 'Patient_Name')}</p>
+                          <p className={`text-sm ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
                         </div>
                         {ersatz && (
                           <div className="flex items-center gap-1 mt-1 text-[#c2410c]">
