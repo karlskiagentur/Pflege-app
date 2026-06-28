@@ -3,10 +3,8 @@ import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText, 
   X, Upload, Mic, LogOut, Calendar as CalendarIcon, 
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
-  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal, Download
+  CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink
 } from 'lucide-react';
-import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -81,26 +79,7 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
-const formatDauer = (raw: any) => {
-  const val = unbox(raw);
-  if (!val) return "";
-  // Airtable Duration kommt als Sekunden (Zahl). Fallback: "H:MM" String.
-  let totalMin = 0;
-  if (typeof raw === 'number' || /^\d+$/.test(val)) {
-    totalMin = Math.round(Number(val) / 60); // Sekunden -> Minuten
-  } else if (val.includes(':')) {
-    const [h, m] = val.split(':');
-    totalMin = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
-  } else {
-    return "";
-  }
-  if (totalMin <= 0) return "";
-  const stunden = Math.floor(totalMin / 60);
-  const minuten = totalMin % 60;
-  if (stunden > 0 && minuten > 0) return `${stunden}h ${minuten}min`;
-  if (stunden > 0) return `${stunden}h`;
-  return `${minuten}min`;
-};
+
 const getDisplayTitle = (b: any) => {
   const title = getValue(b, 'Tätigkeit'); 
   const note = getValue(b, 'Notiz_Patient');
@@ -134,38 +113,18 @@ const getProposedDetails = (b: any) => {
 
 export default function App() {
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
+  const [token, setToken] = useState<string | null>(localStorage.getItem('active_token'));
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null); 
-  const [loginMode, setLoginMode] = useState<'select' | 'patient' | 'mitarbeiter'>('select');
-  const [mitarbeiterId, setMitarbeiterId] = useState<string | null>(localStorage.getItem('active_mitarbeiter_id'));
-  const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
-  const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
-  const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
-  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
-  const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
-  const [meldungTyp, setMeldungTyp] = useState<string>('');
-  const [meldungNotiz, setMeldungNotiz] = useState('');
-  const [meldungSending, setMeldungSending] = useState(false);
-  const [meldungSent, setMeldungSent] = useState(false);
-  const [urlaubVon, setUrlaubVon] = useState('');
-  const [urlaubBis, setUrlaubBis] = useState('');
-  const [urlaubNotiz, setUrlaubNotiz] = useState('');
-  const [urlaubSending, setUrlaubSending] = useState(false);
-  const [urlaubListe, setUrlaubListe] = useState<any[]>([]);
-  const [urlaubLoading, setUrlaubLoading] = useState(false);
-  const [lohnListe, setLohnListe] = useState<any[]>([]);
-  const [lohnLoading, setLohnLoading] = useState(false);
-  const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
-  const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
+  
   const [consentGiven, setConsentGiven] = useState(false);
   const [showConsentInfo, setShowConsentInfo] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [pushStatus, setPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   
   // DATEN
   const [patientData, setPatientData] = useState<any>(null);
@@ -178,11 +137,6 @@ export default function App() {
   const [seenDocIds, setSeenDocIds] = useState<string[]>(() => {
       const saved = localStorage.getItem('seen_docs');
       return saved ? JSON.parse(saved) : [];
-  });
-
-  const [seenVisitsState, setSeenVisitsState] = useState<Record<string, string>>(() => {
-    const saved = localStorage.getItem('seen_visits');
-    return saved ? JSON.parse(saved) : {};
   });
 
   const [showAllTasks, setShowAllTasks] = useState(false);
@@ -227,8 +181,8 @@ export default function App() {
 
   // --- FETCH LOGIC ---
   const fetchData = async (force = false, background = false) => {
-    const id = patientId || localStorage.getItem('active_patient_id');
-    if (!id || id === "null") return;
+    const authToken = token || localStorage.getItem('active_token');
+    if (!authToken || authToken === "null") return;
 
     if (isFetchingRef.current) return; 
 
@@ -246,7 +200,7 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?patientId=${id}`, { 
+        const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?token=${authToken}`, { 
             signal: controller.signal 
         });
         
@@ -256,6 +210,14 @@ export default function App() {
         
         if (Array.isArray(json) && json.length > 0) {
             json = json[0];
+        }
+
+        // Token ungültig oder abgelaufen -> sauber ausloggen
+        if (json && json.status === "unauthorized") {
+            localStorage.clear();
+            setPatientId(null);
+            setToken(null);
+            return;
         }
 
         clearTimeout(timeoutId);
@@ -288,9 +250,8 @@ export default function App() {
                     Uhrzeit: getValue(b, 'Uhrzeit'),
                     Status: getValue(b, 'Status'),
                     Notiz_Patient: getValue(b, 'Notiz_Patient'),
-                    Pfleger_Name: getValue(b, 'Pfleger_Name'),
-                    Pfleger_Ersatz_Name: getValue(b, 'Pfleger_Ersatz_Name')
-                };
+                    Pfleger_Name: getValue(b, 'Pfleger_Name')
+                }; 
             });
             const sortedBesuche = mappedBesuche.sort((a:any, b:any) => {
                 const dA = new Date(unbox(a.Uhrzeit)).getTime() || 0;
@@ -335,113 +296,9 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
+  useEffect(() => { 
       if (patientId) fetchData(false);
-  }, [patientId]);
-
-  // Push-Status beim Laden prüfen
-  useEffect(() => {
-      if (!patientId) return;
-      isPushSubscribed().then(subscribed => {
-          if (subscribed) setPushStatus('subscribed');
-          else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') setPushStatus('denied');
-          else setPushStatus('idle');
-      });
-  }, [patientId]);
-
-  const handleSubscribePush = async () => {
-      if (!patientId) return;
-      setPushStatus('loading');
-      const ok = await subscribeToPush(patientId);
-      setPushStatus(ok ? 'subscribed' : 'denied');
-  };
-
-  // Push-Status für Mitarbeiter prüfen
-  useEffect(() => {
-      if (!mitarbeiterId) return;
-      isPushSubscribed().then(subscribed => {
-          if (subscribed) setMitarbeiterPushStatus('subscribed');
-          else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') setMitarbeiterPushStatus('denied');
-          else setMitarbeiterPushStatus('idle');
-      });
-  }, [mitarbeiterId]);
-
-  const handleMitarbeiterPush = async () => {
-      if (!mitarbeiterId) return;
-      setMitarbeiterPushStatus('loading');
-      const ok = await subscribeMitarbeiter(mitarbeiterId);
-      setMitarbeiterPushStatus(ok ? 'subscribed' : 'denied');
-      if (ok) {
-        setMitarbeiterPushMsg('Verbindung aktualisiert ✓');
-        setTimeout(() => setMitarbeiterPushMsg(''), 3000);
-      }
-  };
-
-  // Stiller Hintergrund-Sync: hält das Abo in Airtable aktuell, ohne UI-Änderung
-  useEffect(() => {
-      if (!mitarbeiterId) return;
-      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-      subscribeMitarbeiter(mitarbeiterId).catch((e) => console.log('Stiller Push-Sync fehlgeschlagen:', e));
-  }, [mitarbeiterId]);
-
-  const fetchUrlaubListe = async () => {
-    if (!mitarbeiterId) return;
-    setUrlaubLoading(true);
-    try {
-      const res = await fetch('/api/urlaub-liste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId }),
-      });
-      const data = await res.json();
-      setUrlaubListe(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); }
-    finally { setUrlaubLoading(false); }
-  };
-
-  const handleUrlaubAntrag = async () => {
-    if (!urlaubVon || !urlaubBis) return;
-    setUrlaubSending(true);
-    try {
-      await fetch('/api/urlaub-antrag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mitarbeiterId,
-          mitarbeiterName,
-          von: urlaubVon,
-          bis: urlaubBis,
-          notiz: urlaubNotiz,
-        }),
-      });
-      setUrlaubVon(''); setUrlaubBis(''); setUrlaubNotiz('');
-      await fetchUrlaubListe();
-    } catch (e) { console.error(e); }
-    finally { setUrlaubSending(false); }
-  };
-
-  useEffect(() => {
-    if (mitarbeiterId && mitarbeiterTab === 'urlaub') fetchUrlaubListe();
-  }, [mitarbeiterId, mitarbeiterTab]);
-
-  const fetchLohnListe = async () => {
-    if (!mitarbeiterId) return;
-    setLohnLoading(true);
-    try {
-      const res = await fetch('/api/lohn-liste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId }),
-      });
-      const data = await res.json();
-      setLohnListe(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); }
-    finally { setLohnLoading(false); }
-  };
-
-  useEffect(() => {
-    if (mitarbeiterId && mitarbeiterTab === 'lohn') fetchLohnListe();
-  }, [mitarbeiterId, mitarbeiterTab]);
+  }, [patientId]); 
 
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
@@ -452,37 +309,6 @@ export default function App() {
       }
   };
 
-  const getVisitSignature = (b: any) => {
-    return [
-      getValue(b, 'Status'),
-      getValue(b, 'Uhrzeit'),
-      getValue(b, 'Pfleger_Name'),
-      getValue(b, 'Pfleger_Ersatz_Name'),
-      getValue(b, 'Tätigkeit')
-    ].join('|');
-  };
-
-  // Termine im Planer als gesehen markieren beim Öffnen des Tabs
-  useEffect(() => {
-    if (activeTab !== 'planer') return;
-    const now = new Date();
-    now.setHours(0,0,0,0);
-    const visible = besuche.filter(b => {
-      const status = getValue(b, 'Status');
-      const zeitVal = getValue(b, 'Uhrzeit');
-      if (status === 'Anfrage' || status === 'Änderungswunsch') return true;
-      if (!zeitVal) return false;
-      return new Date(zeitVal) >= now;
-    });
-    if (visible.length === 0) return;
-    const newSeen = { ...seenVisitsState };
-    visible.forEach(b => {
-      newSeen[b.id] = getVisitSignature(b);
-    });
-    setSeenVisitsState(newSeen);
-    localStorage.setItem('seen_visits', JSON.stringify(newSeen));
-  }, [activeTab, besuche]);
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); 
     setLoginError(null);
@@ -491,74 +317,22 @@ export default function App() {
     try {
       const res = await fetch(`${N8N_BASE_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
       const data = await res.json();
-      if (data.status === "success" && data.patientId) {
-        localStorage.setItem('active_patient_id', data.patientId); setPatientId(data.patientId);
+      if (data.status === "success" && data.patientId && data.token) {
+        localStorage.setItem('active_patient_id', data.patientId);
+        localStorage.setItem('active_token', data.token);
+        setPatientId(data.patientId);
+        setToken(data.token);
       } else { 
           setLoginError("Das eingegebene Passwort ist falsch"); 
       }
     } catch (e) { setLoginError("Verbindungsfehler beim Login."); } finally { setIsLoggingIn(false); }
   };
 
-  const handleMitarbeiterLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError(null);
-    setIsLoggingIn(true);
-    try {
-      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: fullName, code: loginCode })
-      });
-      const data = await res.json();
-      if (data.status === "success" && data.mitarbeiterId) {
-        localStorage.setItem('active_mitarbeiter_id', data.mitarbeiterId);
-        localStorage.setItem('active_mitarbeiter_name', data.name || '');
-        setMitarbeiterId(data.mitarbeiterId);
-        setMitarbeiterName(data.name || '');
-      } else {
-        setLoginError("Name oder Code nicht korrekt");
-      }
-    } catch (e) {
-      setLoginError("Verbindungsfehler beim Login.");
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const fetchMitarbeiterTermine = async () => {
-    if (!mitarbeiterName) return;
-    setMitarbeiterLoading(true);
-    try {
-      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_termine`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterName: mitarbeiterName })
-      });
-      const data = await res.json();
-      const liste = Array.isArray(data) ? data : [];
-      // Nach Uhrzeit sortieren
-      liste.sort((a, b) => {
-        const dA = new Date(getValue(a, 'Uhrzeit')).getTime() || 0;
-        const dB = new Date(getValue(b, 'Uhrzeit')).getTime() || 0;
-        return dA - dB;
-      });
-      setMitarbeiterTermine(liste);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setMitarbeiterLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine();
-  }, [mitarbeiterId, mitarbeiterName]);
-
   const handleRevokeConsent = async () => {
     setIsSending(true);
     try {
         const formData = new FormData();
-        formData.append('patientId', patientId!);
+        formData.append('token', token!);
         formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Widerruf_Digitale_Rechnung'); 
         formData.append('nachricht', 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.');
@@ -578,7 +352,7 @@ export default function App() {
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
-      await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus }) });
+      await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus, token: token }) });
     } catch (e) { console.error(e); }
   };
 
@@ -586,7 +360,7 @@ export default function App() {
     setConfirmedTermine([...confirmedTermine, recordId]); 
     try {
         const formData = new FormData();
-        formData.append('patientId', patientId!);
+        formData.append('token', token!);
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
         await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
@@ -601,7 +375,7 @@ export default function App() {
     setEditingTermin(null);
     try {
         const formData = new FormData();
-        formData.append('patientId', patientId!);
+        formData.append('token', token!);
         formData.append('typ', 'Terminverschiebung');
         formData.append('recordId', recordId);
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
@@ -635,7 +409,7 @@ export default function App() {
       setIsSending(true);
       try {
         const formData = new FormData();
-        formData.append('patientId', patientId!);
+        formData.append('token', token!);
         formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Terminanfrage');
         formData.append('betreff', saveReason || "Terminanfrage");
@@ -655,7 +429,7 @@ export default function App() {
     setIsSending(true);
     try {
       const formData = new FormData();
-      formData.append('patientId', patientId!);
+      formData.append('token', token!);
       formData.append('patientName', getValue(patientData, 'Name'));
       if (activeModal === 'upload' && selectedFiles.length > 0) {
           formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]); 
@@ -674,571 +448,38 @@ export default function App() {
       fetchData(true).then(() => setShowUpdateBanner(false));
   };
 
- // Login Screen
-  if (mitarbeiterId) {
-    const heute = new Date();
-    heute.setHours(0,0,0,0);
-    const morgen = new Date(heute);
-    morgen.setDate(morgen.getDate() + 1);
-
-    const termineHeute = mitarbeiterTermine.filter(t => {
-      const d = new Date(getValue(t, 'Uhrzeit'));
-      return d >= heute && d < morgen;
-    });
-    const termineZukunft = mitarbeiterTermine.filter(t => {
-      const d = new Date(getValue(t, 'Uhrzeit'));
-      return d >= morgen;
-    });
-
-    const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
-
-    const getStatusBadge = (t: any) => {
-      const status = getValue(t, 'Status');
-      if (status === 'Bestätigt')
-        return { text: 'BESTÄTIGT', icon: 'check', bg: '#e6f4ea', color: '#1e4620' };
-      if (status === 'Änderungswunsch')
-        return { text: 'ÄNDERUNGSWUNSCH DES PATIENTEN', icon: 'alert', bg: '#fce8e6', color: '#993C1D', strong: true };
-      if (status === 'Anfrage')
-        return { text: 'NEUE ANFRAGE', icon: 'clock', bg: '#fff7ed', color: '#854F0B' };
-      if (status === 'Geplant')
-        return { text: 'WARTET AUF BESTÄTIGUNG', icon: 'clock', bg: '#fff7ed', color: '#854F0B' };
-      return { text: status || 'OFFEN', icon: 'clock', bg: '#f3f4f6', color: '#6b7280' };
-    };
-
-    const renderBadgeIcon = (icon: string) => {
-      if (icon === 'check') return <Check size={14} strokeWidth={3} />;
-      if (icon === 'alert') return <AlertTriangle size={14} strokeWidth={3} />;
-      return <AlertCircle size={14} strokeWidth={3} />;
-    };
-
-    const handleSendMeldung = async () => {
-      if (!meldungTermin || !meldungTyp) return;
-      setMeldungSending(true);
-      try {
-        const patientId = (meldungTermin.fields && meldungTermin.fields.Patient
-          && meldungTermin.fields.Patient[0]) || '';
-        const besuchId = meldungTermin.id;
-        await fetch('/api/meldung-senden', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mitarbeiterName: mitarbeiterName,
-            typ: meldungTyp,
-            patientId: patientId,
-            besuchId: besuchId,
-            notiz: meldungNotiz,
-          }),
-        });
-        setMeldungSent(true);
-        setTimeout(() => {
-          setMeldungTermin(null);
-          setMeldungTyp('');
-          setMeldungNotiz('');
-          setMeldungSent(false);
-        }, 1500);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setMeldungSending(false);
-      }
-    };
-
-    return (
-    <div className="min-h-screen bg-white pb-32">
-      <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
-        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
-        <div className="flex items-center gap-3">
-          <p className="text-xs font-bold italic">{mitarbeiterName}</p>
-          <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); setMitarbeiterId(null); setMitarbeiterName(''); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
-        </div>
-      </header>
-
-      <main className="max-w-md mx-auto px-6 pt-6">
-        {/* TAB: START / NOTFALL */}
-        {mitarbeiterTab === 'uebersicht' && (
-          <div className="animate-in fade-in">
-            {/* ÜBERSCHRIFT */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A]">Übersicht</h2>
-              <p className="text-xs text-gray-400 mt-1">Hallo {mitarbeiterName}, dein Tag im Blick.</p>
-            </div>
-
-            {/* TAGESPLAN-VORSCHAU */}
-            <p className="text-[11px] font-black tracking-wide text-[#0F6E56] mb-2">
-              HEUTE · {termineHeute.length === 0 ? 'Heute keine Einsätze' : termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}
-            </p>
-            {termineHeute.length === 0 ? (
-              <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Heute keine Einsätze geplant.</div>
-            ) : (
-              <div className="space-y-3">
-                {termineHeute.map((t) => {
-                  const status = getValue(t, 'Status');
-                  const isAbgesagt = status === 'Abgesagt';
-                  const tile =
-                    status === 'Bestätigt' ? { cls: 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B] shadow-lg -translate-y-0.5', label: 'BESTÄTIGT', labelCls: 'text-[#3D7A3D]' }
-                    : isAbgesagt ? { cls: 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C] shadow-none', label: 'ABGESAGT', labelCls: 'text-[#B5483C]' }
-                    : status === 'Änderungswunsch' ? { cls: 'bg-white border-2 border-[#D85A30]', label: 'ÄNDERUNG', labelCls: 'text-[#993C1D]' }
-                    : { cls: 'bg-[#FAF5EE] border border-[#E8DCC8] shadow-sm', label: (status || 'GEPLANT').toUpperCase(), labelCls: 'text-gray-400' };
-                  return (
-                    <div key={t.id} className={`rounded-2xl p-4 flex items-center gap-3 ${tile.cls}`}>
-                      <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
-                      <div className="flex-1 text-left">
-                        <p className={`text-sm font-black ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
-                        <p className={`text-xs ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
-                      </div>
-                      <span className={`text-[10px] font-black uppercase shrink-0 ${tile.labelCls}`}>{tile.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <button
-              onClick={() => setMitarbeiterTab('tagesplan')}
-              className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 mt-3"
-            >
-              <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
-            </button>
-
-            {/* NOTRUFE */}
-            <div className="mt-8">
-              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center">Notrufe</p>
-              <div className="mt-3 flex gap-3 mb-3">
-                <a href="tel:112" className="flex-1 bg-[#FCEBEB] rounded-[1.5rem] p-4 text-center">
-                  <p className="text-[11px] font-black tracking-wide text-[#791F1F]">RETTUNGSDIENST</p>
-                  <p className="text-3xl font-black text-[#A32D2D]">112</p>
-                </a>
-                <a href="tel:110" className="flex-1 bg-[#E6F1FB] rounded-[1.5rem] p-4 text-center">
-                  <p className="text-[11px] font-black tracking-wide text-[#0C447C]">POLIZEI</p>
-                  <p className="text-3xl font-black text-[#185FA5]">110</p>
-                </a>
-              </div>
-              <a href="tel:116117" className="flex items-center justify-between bg-[#F1EFE8] rounded-2xl p-4">
-                <div>
-                  <p className="text-[11px] text-gray-500">Ärztlicher Bereitschaftsdienst</p>
-                  <p className="text-xl font-black text-gray-800">116 117</p>
-                </div>
-                <Phone size={24} className="text-gray-400" />
-              </a>
-            </div>
-
-            {/* GEDÄCHTNISSTÜTZE / 5 W-FRAGEN */}
-            <div className="mt-10">
-              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center">Gedächtnisstütze</p>
-              <div className="mt-3">
-                <div className="flex items-center gap-2 mb-3 text-[#993C1D]">
-                  <Phone size={16} />
-                  <h3 className="text-sm font-black">Die 5 W-Fragen beim Notruf</h3>
-                </div>
-                <div className="bg-white rounded-[2rem] border border-gray-100 overflow-hidden">
-                  {[
-                    ['WO?', 'Genaue Adresse des Patienten'],
-                    ['WAS?', 'Was ist passiert?'],
-                    ['WIE VIELE?', 'Anzahl betroffener Personen'],
-                    ['WELCHE?', 'Welche Verletzungen oder Beschwerden?'],
-                    ['WARTEN!', 'Auf Rückfragen der Leitstelle warten'],
-                  ].map(([w, a], i, arr) => (
-                    <div key={w} className={`flex gap-3 p-4 ${i < arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
-                      <p className="text-[13px] font-black text-[#993C1D] min-w-[80px]">{w}</p>
-                      <p className="text-[13px] text-gray-500">{a}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* EINSTELLUNGEN / PUSH-KARTE */}
-            <div className="mt-8">
-              <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center mb-3">Einstellungen</p>
-              <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
-                {mitarbeiterPushStatus === 'subscribed' ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
-                      <Check size={18} strokeWidth={3} /> Benachrichtigungen aktiv
-                    </div>
-                    <button onClick={handleMitarbeiterPush} className="text-xs text-[#b5a48b] underline px-4 py-2">
-                      Erneut verbinden
-                    </button>
-                  </div>
-                ) : mitarbeiterPushStatus === 'loading' ? (
-                  <div className="flex justify-center py-2">
-                    <RefreshCw size={20} className="animate-spin text-[#b5a48b]" />
-                  </div>
-                ) : mitarbeiterPushStatus === 'denied' ? (
-                  <p className="text-center text-xs text-gray-500">
-                    Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.
-                  </p>
-                ) : (
-                  <button
-                    onClick={handleMitarbeiterPush}
-                    className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Bell size={18} /> Benachrichtigungen aktivieren
-                  </button>
-                )}
-              </div>
-              {mitarbeiterPushMsg && (
-                <p className="text-center text-xs text-[#1e4620] font-bold mt-2">{mitarbeiterPushMsg}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB: URLAUB */}
-        {mitarbeiterTab === 'urlaub' && (
-          <div className="animate-in fade-in">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Plane size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A]">Urlaubsplanung</h2>
-              <p className="text-xs text-gray-400 mt-1">Beantrage deinen Urlaub und sieh den Stand.</p>
-            </div>
-
-            {/* ANTRAGSFORMULAR */}
-            <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mb-8 space-y-4">
-              <div>
-                <label className="text-[10px] font-black uppercase text-[#b5a48b]">VON WANN</label>
-                <input type="date" value={urlaubVon} onChange={(e) => setUrlaubVon(e.target.value)}
-                  style={{ colorScheme: 'light' }}
-                  className="w-full bg-[#F9F7F4] rounded-xl p-3 mt-1 outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase text-[#b5a48b]">BIS WANN</label>
-                <input type="date" value={urlaubBis} onChange={(e) => setUrlaubBis(e.target.value)}
-                  style={{ colorScheme: 'light' }}
-                  className="w-full bg-[#F9F7F4] rounded-xl p-3 mt-1 outline-none" />
-              </div>
-              <textarea placeholder="Notiz (optional)" value={urlaubNotiz}
-                onChange={(e) => setUrlaubNotiz(e.target.value)}
-                className="w-full bg-[#F9F7F4] rounded-xl p-3 outline-none min-h-[70px] resize-none" />
-              <button onClick={handleUrlaubAntrag}
-                disabled={!urlaubVon || !urlaubBis || urlaubSending}
-                className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-                {urlaubSending ? <RefreshCw className="animate-spin" size={18}/> : <><Send size={16}/> Urlaub beantragen</>}
-              </button>
-            </div>
-
-            {/* MEINE ANTRÄGE */}
-            <p className="text-[11px] font-black uppercase tracking-wide text-gray-400 mb-3">Meine Anträge</p>
-            {urlaubLoading ? (
-              <div className="flex justify-center py-6"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
-            ) : urlaubListe.length === 0 ? (
-              <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Noch keine Anträge.</div>
-            ) : (
-              urlaubListe.map((u) => {
-                const tage = Math.max(1, Math.round((new Date(u.bis).getTime() - new Date(u.von).getTime()) / 86400000) + 1);
-                const badge = u.status === 'Genehmigt' ? { cls: 'text-[#0F6E56] bg-[#E1F5EE]' }
-                  : u.status === 'Abgelehnt' ? { cls: 'text-[#993C1D] bg-[#FAECE7]' }
-                  : { cls: 'text-[#854F0B] bg-[#FAEEDA]' };
-                return (
-                  <div key={u.id} className={`bg-white rounded-2xl border border-gray-100 p-4 mb-2 flex items-center justify-between ${u.status === 'Abgelehnt' ? 'opacity-70' : ''}`}>
-                    <div>
-                      <p className="text-sm font-bold text-gray-700">{formatDate(u.von)} – {formatDate(u.bis)}</p>
-                      <p className="text-xs text-gray-400">{tage} {tage === 1 ? 'Tag' : 'Tage'}</p>
-                    </div>
-                    <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full ${badge.cls}`}>{u.status}</span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
-
-        {/* TAB: LOHN */}
-        {mitarbeiterTab === 'lohn' && (
-          <div className="animate-in fade-in">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Euro size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A]">Lohnabrechnung</h2>
-              <p className="text-xs text-gray-400 mt-1">Deine monatlichen Abrechnungen.</p>
-            </div>
-
-            {lohnLoading ? (
-              <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
-            ) : lohnListe.length === 0 ? (
-              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Abrechnungen.</div>
-            ) : (
-              lohnListe.map((l) => (
-                <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700">{formatDate(l.zeitraum)}</p>
-                    <p className="text-xs text-gray-400">{l.dateiname}</p>
-                  </div>
-                  <a href={l.url} target="_blank" rel="noreferrer" className="text-[#b5a48b] hover:opacity-70 p-2">
-                    <Download size={22} />
-                  </a>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* TAB: TAGESPLAN */}
-        {mitarbeiterTab === 'tagesplan' && (
-        <>
-        {mitarbeiterLoading ? (
-          <div className="flex justify-center py-20"><RefreshCw size={32} className="animate-spin text-[#b5a48b]" /></div>
-        ) : (
-          <>
-            {/* DATUMS-HEADER */}
-            <div className="text-center mb-6">
-              <p className="text-[11px] font-black uppercase tracking-wide text-[#0F6E56]">HEUTE · {heuteText}</p>
-              <h2 className="text-2xl font-black text-[#3A3A3A] mt-1">{termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}</h2>
-            </div>
-
-            {/* HEUTE-TERMINE */}
-            {termineHeute.length === 0 ? (
-              <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-10 text-center">
-                <CalendarDays size={32} className="text-[#dccfbc] mx-auto mb-3" />
-                <p className="text-gray-400 italic">Heute keine Einsätze geplant.</p>
-              </div>
-            ) : (
-              termineHeute.map((t) => {
-                const showDauer = formatDauer(getValue(t, 'Dauer'));
-                const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
-                const badge = getStatusBadge(t);
-                const status = getValue(t, 'Status');
-                const isAbgesagt = status === 'Abgesagt';
-                const cardClasses = badge.strong
-                  ? 'bg-white border-2 border-[#D85A30]'
-                  : status === 'Bestätigt'
-                    ? 'bg-[#EEF6EE] border border-[#CBE3CB] border-l-4 border-l-[#5B9E5B]'
-                    : isAbgesagt
-                      ? 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C]'
-                      : 'bg-[#FAF5EE] border border-[#E8DCC8] border-l-4 border-l-[#b5a48b]';
-                return (
-                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses}`}>
-                    <div className="p-6 flex items-center gap-3">
-                      {/* LINKS: Uhrzeit */}
-                      <div className="text-center min-w-[56px]">
-                        <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
-                      </div>
-                      {/* MITTE: Inhalt */}
-                      <div className="flex-1 border-l border-gray-100 pl-4 text-left">
-                        <p className={`font-black text-lg mb-2 ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
-                        <div className="flex items-center gap-2">
-                          <User size={12} className="text-gray-400"/>
-                          <p className={`text-sm ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
-                        </div>
-                        {ersatz && (
-                          <div className="flex items-center gap-1 mt-1 text-[#c2410c]">
-                            <RefreshCw size={10} strokeWidth={3} />
-                            <span className="text-[10px] font-black uppercase">Vertretung</span>
-                          </div>
-                        )}
-                      </div>
-                      {/* RECHTS: Dauer */}
-                      {showDauer && (
-                        <div className="text-center min-w-[56px]">
-                          <p className="text-xl text-gray-300">{showDauer}</p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                        </div>
-                      )}
-                    </div>
-                    {/* STATUS-BALKEN */}
-                    <div style={{ backgroundColor: badge.bg, color: badge.color }} className="py-3 text-center font-black uppercase text-[10px] tracking-wider flex items-center justify-center gap-2">
-                      {renderBadgeIcon(badge.icon)}
-                      {badge.text}
-                    </div>
-                    {/* PROBLEM MELDEN */}
-                    <button onClick={() => { setMeldungTermin(t); setMeldungTyp(''); setMeldungNotiz(''); }}
-                      className="w-full border-t border-gray-100 py-3 text-[12px] font-black text-[#993C1D] flex items-center justify-center gap-2 active:bg-gray-50 transition-colors">
-                      <Flag size={14}/> Problem melden
-                    </button>
-                  </div>
-                );
-              })
-            )}
-
-            {/* DEMNÄCHST */}
-            {termineZukunft.length > 0 && (
-              <>
-                <div className="border-t border-gray-200 mt-6 pt-4 flex items-center justify-center gap-1.5">
-                  <ChevronDown size={14} className="text-gray-400" />
-                  <p className="text-[12px] font-black uppercase tracking-wide text-gray-400">Demnächst ({termineZukunft.length})</p>
-                </div>
-                {termineZukunft.map((t) => {
-                  const datumOben = new Date(getValue(t, 'Uhrzeit')).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
-                  const badge = getStatusBadge(t);
-                  return (
-                    <div key={t.id} className="bg-[#F9F7F4] border border-gray-100 rounded-[1.5rem] p-4 mb-2 opacity-75">
-                      <div className="flex items-center gap-3">
-                        {/* LINKS: Datum + Uhrzeit */}
-                        <div className="text-center min-w-[52px]">
-                          <p className="text-[13px] text-gray-500">{datumOben}</p>
-                          <p className="text-[13px] text-gray-500">{formatTime(getValue(t, 'Uhrzeit'))}</p>
-                        </div>
-                        {/* MITTE: Inhalt */}
-                        <div className="flex-1 border-l border-gray-200 pl-3 text-left">
-                          <p className="text-sm font-bold text-gray-600">{getValue(t, 'Tätigkeit')}</p>
-                          <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
-                        </div>
-                        {/* RECHTS: Status-Label */}
-                        <p style={{ color: badge.color }} className="text-[9px] font-black uppercase tracking-wider text-right max-w-[80px] leading-tight">{badge.text}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </>
-        )}
-        </>
-        )}
-      </main>
-
-      {/* MITARBEITER-NAV */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
-        <button
-            key={tab.id}
-            onClick={() => setMitarbeiterTab(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn')}
-            className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
-        >
-            <div className="relative">
-                <tab.icon size={22} strokeWidth={mitarbeiterTab === tab.id ? 3 : 2} />
-            </div>
-            <span className="text-[9px] font-black uppercase">{tab.label}</span>
-        </button>
-      ))}</nav>
-
-      {/* MELDE-FENSTER */}
-      {meldungTermin && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setMeldungTermin(null)}></div>
-          <div className="relative bg-white w-full max-w-md rounded-t-[3rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10">
-            {meldungSent ? (
-              <div className="py-10 text-center">
-                <div className="w-16 h-16 bg-[#e6f4ea] rounded-full flex items-center justify-center mx-auto mb-4"><Check size={32} className="text-[#1e4620]" strokeWidth={3} /></div>
-                <p className="font-black text-xl text-[#3A3A3A]">Meldung gesendet!</p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-start justify-between mb-6">
-                  <div className="text-left">
-                    <h3 className="text-xl font-black text-[#3A3A3A]">Meldung zu diesem Einsatz</h3>
-                    <p className="text-xs text-gray-400 mt-1">{getValue(meldungTermin, 'Tätigkeit')} · {getValue(meldungTermin, 'Patient_Name')}</p>
-                  </div>
-                  <button onClick={() => setMeldungTermin(null)} className="p-2 -mr-2 -mt-2 text-gray-400"><X size={22}/></button>
-                </div>
-
-                <div className="space-y-2 mb-4">
-                  <button onClick={() => setMeldungTyp('Kunde nicht angetroffen')} className={`w-full bg-[#FAECE7] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Kunde nicht angetroffen' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
-                    <UserX size={20} className="text-[#993C1D]" />
-                    <span className="text-[#712B13] font-bold">Kunde nicht angetroffen</span>
-                  </button>
-                  <button onClick={() => setMeldungTyp('Planungsfehler')} className={`w-full bg-[#FAEEDA] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Planungsfehler' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
-                    <CalendarX size={20} className="text-[#854F0B]" />
-                    <span className="text-[#633806] font-bold">Planungsfehler</span>
-                  </button>
-                  <button onClick={() => setMeldungTyp('Einsatzprobleme')} className={`w-full bg-[#FAEEDA] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Einsatzprobleme' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
-                    <AlertTriangle size={20} className="text-[#854F0B]" />
-                    <span className="text-[#633806] font-bold">Einsatzprobleme</span>
-                  </button>
-                  <button onClick={() => setMeldungTyp('Sonstiges')} className={`w-full bg-[#F1EFE8] rounded-2xl p-4 flex items-center gap-3 transition-all ${meldungTyp === 'Sonstiges' ? 'ring-2 ring-offset-1 ring-[#b5a48b]' : ''}`}>
-                    <MoreHorizontal size={20} className="text-[#5F5E5A]" />
-                    <span className="text-[#444441] font-bold">Sonstiges</span>
-                  </button>
-                </div>
-
-                <textarea
-                  placeholder="Notiz (optional)…"
-                  value={meldungNotiz}
-                  onChange={(e) => setMeldungNotiz(e.target.value)}
-                  className="bg-[#F9F7F4] rounded-2xl p-4 w-full outline-none mb-4 min-h-[80px] resize-none"
-                />
-
-                <button
-                  onClick={handleSendMeldung}
-                  disabled={!meldungTyp || meldungSending}
-                  className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50"
-                >
-                  {meldungSending ? <RefreshCw className="animate-spin mx-auto" /> : 'Senden'}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-    );
-  }
-
-  if (!patientId) return (
+  // Login Screen
+  if (!patientId || !token) return (
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
-
-        {/* AUSWAHL-SCREEN */}
-        {loginMode === 'select' && (
-          <div className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm animate-in fade-in">
-            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/Wunschlos-POflege.png" alt="Logo" className="w-48 mx-auto mb-8" />
-            <h2 className="text-center text-lg font-black mb-2 text-[#3A3A3A]">Willkommen</h2>
-            <p className="text-center text-xs text-gray-400 mb-8">Wer möchte sich anmelden?</p>
-            
-            <button 
-              onClick={() => setLoginMode('patient')}
-              className="w-full bg-[#b5a48b] text-white py-6 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
-            >
-              <User size={20} /> Ich bin Patient
-            </button>
-            
-            <button 
-              onClick={() => setLoginMode('mitarbeiter')}
-              className="w-full bg-white border-2 border-[#b5a48b] text-[#b5a48b] py-6 rounded-2xl font-black uppercase active:scale-95 transition-all flex items-center justify-center gap-3"
-            >
-              <FileCheck size={20} /> Ich bin Mitarbeiter
-            </button>
-          </div>
-        )}
-
-        {/* LOGIN-FORMULAR (Patient ODER Mitarbeiter) */}
-        {loginMode !== 'select' && (
-          <form onSubmit={loginMode === 'mitarbeiter' ? handleMitarbeiterLogin : handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm animate-in slide-in-from-right">
-            
-            <button 
-              type="button"
-              onClick={() => { setLoginMode('select'); setLoginError(null); setFullName(''); setLoginCode(''); }}
-              className="text-[10px] font-black uppercase text-gray-400 mb-4 flex items-center gap-1 hover:text-[#b5a48b] transition-colors"
-            >
-              <ChevronRight size={12} className="rotate-180" /> Zurück
-            </button>
-
-            <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/Wunschlos-POflege.png" alt="Logo" className="w-48 mx-auto mb-4" />
-            
-            <p className="text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] mb-6">
-              {loginMode === 'patient' ? 'Patienten-Login' : 'Mitarbeiter-Login'}
-            </p>
-
+        <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm">
+            <img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" />
             <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required />
             
-            {loginMode === 'patient' && (
-              <>
-                <div className="mb-4">
-                    <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
-                            {consentGiven && <Check size={14} className="text-white" />}
-                        </div>
-                        <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
-                        <span className="text-xs text-gray-500 leading-tight select-none">
-                            (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
-                        </span>
-                    </label>
-                </div>
+            <div className="mb-4">
+                <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
+                        {consentGiven && <Check size={14} className="text-white" />}
+                    </div>
+                    <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
+                    <span className="text-xs text-gray-500 leading-tight select-none">
+                        (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
+                    </span>
+                </label>
+            </div>
 
-                <div className="mb-6">
-                    <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
-                        {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
-                        🔎 Weitere Informationen
-                    </button>
-                    {showConsentInfo && (
-                        <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
-                            <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
-                            <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
-                        </div>
-                    )}
-                </div>
-              </>
-            )}
+            <div className="mb-6">
+                <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
+                    {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>} 
+                    🔎 Weitere Informationen
+                </button>
+                {showConsentInfo && (
+                    <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
+                        <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
+                        <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
+                    </div>
+                )}
+            </div>
 
             {loginError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 animate-pulse">
@@ -1249,8 +490,7 @@ export default function App() {
             <button type="submit" disabled={isLoggingIn} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-bold uppercase shadow-lg active:scale-95 transition-all disabled:opacity-50">
                 {isLoggingIn ? <RefreshCw className="animate-spin mx-auto"/> : 'Anmelden'}
             </button>
-          </form>
-        )}
+        </form>
     </div>
   );
 
@@ -1277,17 +517,10 @@ export default function App() {
   const pastBesuche = besuche.filter(b => {
       const status = getValue(b, 'Status');
       const zeitVal = getValue(b, 'Uhrzeit'); 
-      if (status === 'Anfrage' || status === 'Änderungswunsch') return false;
+      if (status === 'Anfrage' || status === 'Änderungswunsch') return false; 
       if (!zeitVal) return false;
       return new Date(zeitVal) < today;
   });
-
-  const unseenVisits = upcomingBesuche.filter(b => {
-      const currentSig = getVisitSignature(b);
-      const seenSig = seenVisitsState[b.id];
-      return seenSig !== currentSig;
-  });
-  const unseenVisitsCount = unseenVisits.length;
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
@@ -1298,32 +531,7 @@ export default function App() {
             </div>
             <CalendarIcon size={28}/>
         </div>
-
-        <section className="space-y-4">
-            <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Benachrichtigungen</h3>
-            <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
-                {pushStatus === 'subscribed' ? (
-                    <div className="flex items-center gap-3 text-[#1e4620]">
-                        <div className="bg-[#e6f4ea] p-2.5 rounded-full"><Check size={20} strokeWidth={3}/></div>
-                        <span className="font-bold text-sm">Benachrichtigungen sind aktiv</span>
-                    </div>
-                ) : pushStatus === 'loading' ? (
-                    <div className="flex items-center justify-center py-2 text-[#b5a48b]">
-                        <RefreshCw className="animate-spin" size={22} />
-                    </div>
-                ) : pushStatus === 'denied' ? (
-                    <div className="flex items-center gap-3 text-gray-500">
-                        <div className="bg-[#dccfbc]/20 p-2.5 rounded-full text-[#b5a48b]"><Bell size={20}/></div>
-                        <span className="text-sm font-bold">Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen erlauben.</span>
-                    </div>
-                ) : (
-                    <button onClick={handleSubscribePush} className="w-full bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
-                        <Bell size={18} /> Benachrichtigungen aktivieren
-                    </button>
-                )}
-            </div>
-        </section>
-
+        
         <section className="space-y-4">
             <div className="flex justify-between items-center border-l-4 border-[#dccfbc] pl-4">
                 <h3 className="font-black text-lg uppercase tracking-widest text-[10px] text-gray-400">Aufgaben ({openTasksCount} offen)</h3>
@@ -1391,41 +599,19 @@ export default function App() {
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
             const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
             const isHighlighted = highlightedIds.includes(b.id);
-            const showDauer = formatDauer(getValue(b, 'Dauer'));
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
-                <div className="p-6 flex items-center gap-3">
-                    {/* LINKS: Uhrzeit */}
-                    <div className="text-center min-w-[56px]">
+                <div className="p-6 flex items-center gap-6">
+                    <div className="text-center min-w-[60px]">
                         <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                     </div>
-                    {/* MITTE: Inhalt */}
-                    <div className="flex-1 border-l border-gray-100 pl-4 text-left">
+                    <div className="flex-1 border-l border-gray-100 pl-5 text-left">
                         <p className="font-black text-[#3A3A3A] text-lg mb-2">{getDisplayTitle(b)}</p>
-                        {getValue(b, 'Pfleger_Ersatz_Name') ? (
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <User size={12} className="text-gray-400"/>
-                              <p className="text-sm text-gray-400 line-through">{getValue(b, 'Pfleger_Name')}</p>
-                              <ChevronRight size={12} className="text-gray-400"/>
-                              <p className="text-sm font-bold text-[#3A3A3A]">{getValue(b, 'Pfleger_Ersatz_Name')}</p>
-                            </div>
-                            <p className="text-[10px] mt-1 uppercase font-black tracking-wider text-[#c2410c]">Pfleger geändert</p>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
-                        )}
+                        <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                         <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                     </div>
-                    {/* RECHTS: Dauer (nur wenn vorhanden) */}
-                    {showDauer && (
-                        <div className="text-center min-w-[56px] border-l border-gray-100 pl-3">
-                            <p className="text-xl font-bold text-gray-300 whitespace-nowrap">{showDauer}</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase">Dauer</p>
-                        </div>
-                    )}
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
@@ -1586,7 +772,7 @@ export default function App() {
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-             <button onClick={() => { localStorage.clear(); setPatientId(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); setToken(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{getValue(patientData, 'Name')}</p>
         </div>
@@ -1612,11 +798,6 @@ export default function App() {
                 {t.id === 'hochladen' && unseenDocsCount > 0 && (
                     <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
                         {unseenDocsCount}
-                    </div>
-                )}
-                {t.id === 'planer' && unseenVisitsCount > 0 && (
-                    <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
-                        {unseenVisitsCount}
                     </div>
                 )}
             </div>
@@ -1718,3 +899,4 @@ export default function App() {
     </div>
   );
 }
+// Vercel Force Update Fix
