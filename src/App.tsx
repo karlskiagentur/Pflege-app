@@ -430,6 +430,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('token', token!);
+      formData.append('patientId', patientId!);
       formData.append('patientName', getValue(patientData, 'Name'));
       if (activeModal === 'upload' && selectedFiles.length > 0) {
           formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]); 
@@ -453,8 +454,8 @@ export default function App() {
     <div className="min-h-screen bg-[#F9F7F4] flex items-center justify-center p-6">
         <form onSubmit={handleLogin} className="bg-white p-8 rounded-[3rem] shadow-xl w-full max-w-sm">
             <img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-6" />
-            <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Vollständiger Name" required />
-            <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Login-Code" required />
+            <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Patienten-ID" required />
+            <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
             
             <div className="mb-4">
                 <label className="flex items-start gap-3 cursor-pointer group">
