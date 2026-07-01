@@ -61,8 +61,16 @@ const formatDateLong = (raw: any) => {
     if (!isNaN(d.getTime())) {
         return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' });
     }
-    return val; 
+    return val;
   } catch { return val; }
+};
+
+const formatMonat = (raw: any) => {
+  const val = unbox(raw);
+  if (!val) return "";
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) return d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  return val; // schon "Juli 2026" o.ä. -> unverändert
 };
 
 const formatTime = (raw: any) => {
@@ -910,12 +918,12 @@ export default function App() {
             {lohnLoading ? (
               <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
             ) : lohnListe.length === 0 ? (
-              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Abrechnungen.</div>
+              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnungen vorhanden.</div>
             ) : (
               lohnListe.map((l) => (
                 <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-bold text-gray-700">{formatDate(l.zeitraum)}</p>
+                    <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
                     <p className="text-xs text-gray-400">{l.dateiname}</p>
                   </div>
                   <a href={l.url} target="_blank" rel="noreferrer" className="text-[#b5a48b] hover:opacity-70 p-2">
