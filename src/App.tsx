@@ -456,6 +456,8 @@ export default function App() {
         formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Terminanfrage');
         formData.append('betreff', saveReason || "Terminanfrage");
+        formData.append('wunschDatum', saveDate);              // roh, YYYY-MM-DD
+        if (saveTime) formData.append('wunschZeit', saveTime); // roh, HH:MM (falls gesetzt)
         let note = `Wunschtermin: ${formatDate(saveDate)}`;
         if (saveTime) note += ` um ${saveTime} Uhr`;
         formData.append('nachricht', note);
