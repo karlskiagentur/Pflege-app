@@ -289,7 +289,9 @@ export default function App() {
                 id: d.id,
                 Typ: getValue(d, 'Typ'),
                 Dateiname: getValue(d, 'Dateiname'),
-                Link: getFileUrl(d, 'Datei') 
+                Link: getFileUrl(d, 'Datei'),
+                Richtung: getValue(d, 'Richtung'),
+                Vom_Patienten_Gesehen: getValue(d, 'Vom_Patienten_Gesehen')
             })));
 
             const bData = json.data.besuche || [];
@@ -357,6 +359,13 @@ export default function App() {
           const newSeen = [...seenDocIds, id];
           setSeenDocIds(newSeen);
           localStorage.setItem('seen_docs', JSON.stringify(newSeen));
+          // Optimistisch: Badge reagiert sofort (Quelle der Wahrheit ist jetzt der Server)
+          setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, Vom_Patienten_Gesehen: 'true' } : doc));
+          // Server geräteübergreifend informieren
+          fetch(`${N8N_BASE_URL}/mark_document_seen`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documentId: id })
+          }).catch(e => console.error(e));
       }
   };
 
@@ -1226,8 +1235,11 @@ export default function App() {
   );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
-  // Berechne ungelesene Dokumente
-  const unseenDocs = documents.filter(d => !seenDocIds.includes(d.id));
+  // Berechne ungelesene Dokumente (serverbasiert, geräteübergreifend)
+  const unseenDocs = documents.filter(d =>
+    unbox(getValue(d, 'Richtung')) === 'Vom Pflegedienst' &&
+    !unbox(getValue(d, 'Vom_Patienten_Gesehen'))
+  );
   const unseenDocsCount = unseenDocs.length;
   
   // Zähler pro Kategorie
