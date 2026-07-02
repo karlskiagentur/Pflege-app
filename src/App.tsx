@@ -85,12 +85,17 @@ async function signAndUploadDocument(doc: any, signatureDataUrl: string, patient
   formData.append('originalDocumentId', doc.id);
   formData.append('data', blob, `Bestaetigung_${dateiname}`);
 
+  const uploadUrl = `${N8N_BASE_URL}/upload_document`;
+  console.log('Upload an', uploadUrl);
   for (const pair of formData.entries()) {
-    console.log(pair[0] + ':', pair[1]);
+    console.log(' -', pair[0], pair[1]);
   }
 
-  const res = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
-  if (!res.ok) throw new Error('Upload fehlgeschlagen: Status ' + res.status);
+  const res = await fetch(uploadUrl, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+  }
 }
 
 // --- HELFER ---
@@ -482,15 +487,21 @@ export default function App() {
         formData.append('patientName', getValue(patientData, 'Name'));
         formData.append('typ', 'Widerruf_Digitale_Rechnung'); 
         formData.append('nachricht', 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.');
-        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+        }
         setSentStatus('success');
-        setTimeout(() => { 
-            setActiveModal(null); 
-            setSentStatus('idle'); 
+        setTimeout(() => {
+            setActiveModal(null);
+            setSentStatus('idle');
             alert("Einstellung gespeichert. Sie erhalten Rechnungen zukünftig per Post.");
         }, 1500);
-    } catch (e) {
+    } catch (err: any) {
+        console.error('Fehler beim Widerruf:', err);
         setSentStatus('error');
+        alert('Fehler: ' + err.message);
     }
     setIsSending(false);
   };
@@ -501,6 +512,10 @@ export default function App() {
         const fileName = `Lohnabrechnung_${lohn.zeitraum}.pdf`;
         const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}`;
         const response = await fetch(proxyUrl);
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${response.status}: ${text}`);
+        }
         const blob = await response.blob();
         const file = new File([blob], fileName, { type: 'application/pdf' });
 
@@ -517,8 +532,11 @@ export default function App() {
             URL.revokeObjectURL(blobUrl);
         }
         setActiveModal(null);
-    } catch (e) {
-        console.error(e);
+    } catch (err: any) {
+        if (err.name !== 'AbortError') {
+            console.error('Fehler beim Lohn-Download:', err);
+            alert('Fehler beim Herunterladen: ' + err.message);
+        }
     }
     setLohnDownloading(false);
   };
@@ -541,20 +559,36 @@ export default function App() {
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
-      await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus, token: token }) });
-    } catch (e) { console.error(e); }
+      const res = await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus, token: token }) });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
+    } catch (err: any) {
+      console.error('Fehler beim Aktualisieren der Aufgabe:', err);
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, done: currentStatus } : t));
+      alert('Fehler beim Speichern der Aufgabe: ' + err.message);
+    }
   };
 
   const handleTerminConfirm = async (recordId: string) => {
-    setConfirmedTermine([...confirmedTermine, recordId]); 
+    setConfirmedTermine([...confirmedTermine, recordId]);
     try {
         const formData = new FormData();
         formData.append('token', token!);
         formData.append('typ', 'Termin_bestatigen');
         formData.append('recordId', recordId);
-        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setTimeout(() => fetchData(true), 1500); 
-    } catch(e) { console.error(e); }
+        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+        }
+        setTimeout(() => fetchData(true), 1500);
+    } catch (err: any) {
+        console.error('Fehler beim Bestätigen des Termins:', err);
+        setConfirmedTermine(prev => prev.filter(id => id !== recordId));
+        alert('Fehler beim Bestätigen des Termins: ' + err.message);
+    }
   };
 
   const handleTerminReschedule = async (recordId: string, oldDateRaw: string) => {
@@ -570,10 +604,18 @@ export default function App() {
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
         formData.append('nachricht', nachricht);
-        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
-        setNewTerminDate(""); setNewTerminTime(""); 
+        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+        }
+        setNewTerminDate(""); setNewTerminTime("");
         setTimeout(() => fetchData(true), 1500);
-    } catch(e) { console.error(e); }
+    } catch (err: any) {
+        console.error('Fehler bei Terminverschiebung:', err);
+        setPendingChanges(prev => prev.filter(id => id !== recordId));
+        alert('Fehler beim Senden der Terminänderung: ' + err.message);
+    }
     setIsSending(false);
   };
 
@@ -607,11 +649,17 @@ export default function App() {
         let note = `Wunschtermin: ${formatDate(saveDate)}`;
         if (saveTime) note += ` um ${saveTime} Uhr`;
         formData.append('nachricht', note);
-        await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+        }
         setTimeout(() => fetchData(true), 2000);
-      } catch (e) { 
+      } catch (err: any) {
+          console.error('Fehler bei Terminanfrage:', err);
           setSentStatus('error');
           setBesuche(prev => prev.filter(b => b.id !== tempId));
+          alert('Fehler beim Senden der Terminanfrage: ' + err.message);
       }
       setIsSending(false);
   };
@@ -623,16 +671,28 @@ export default function App() {
       formData.append('token', token!);
       formData.append('patientId', patientId!);
       formData.append('patientName', getValue(patientData, 'Name'));
+      let res: Response;
       if (activeModal === 'upload' && selectedFiles.length > 0) {
-          formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]); 
-          await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
+          formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]);
+          const uploadUrl = `${N8N_BASE_URL}/upload_document`;
+          console.log('Upload an', uploadUrl);
+          for (const pair of formData.entries()) { console.log(' -', pair[0], pair[1]); }
+          res = await fetch(uploadUrl, { method: 'POST', body: formData });
       } else {
           formData.append('typ', type); formData.append('nachricht', payload);
-          await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+          res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+      }
+      if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Server antwortete mit ${res.status}: ${text}`);
       }
       setSentStatus('success');
       setTimeout(() => { if (activeModal === 'upload') setActiveModal('folder'); else setActiveModal(null); setSentStatus('idle'); setUrlaubStart(""); setUrlaubEnde(""); setSelectedFiles([]); fetchData(true); }, 1500);
-    } catch (e) { console.error(e); setSentStatus('error'); }
+    } catch (err: any) {
+      console.error('Fehler beim Absenden:', err);
+      setSentStatus('error');
+      alert('Fehler beim Absenden: ' + err.message);
+    }
     setIsSending(false);
   };
 
@@ -677,6 +737,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mitarbeiterName: mitarbeiterName })
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
       const data = await res.json();
       const liste = Array.isArray(data) ? data : [];
       liste.sort((a: any, b: any) => {
@@ -685,8 +749,9 @@ export default function App() {
         return dA - dB;
       });
       setMitarbeiterTermine(liste);
-    } catch (e) {
-      console.error(e);
+    } catch (err: any) {
+      console.error('Fehler beim Laden der Termine:', err);
+      alert('Fehler beim Laden der Termine: ' + err.message);
     } finally {
       setMitarbeiterLoading(false);
     }
@@ -731,9 +796,16 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mitarbeiterId }),
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
       const data = await res.json();
       setUrlaubListe(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); }
+    } catch (err: any) {
+      console.error('Fehler beim Laden der Urlaubsliste:', err);
+      alert('Fehler beim Laden der Urlaubsanträge: ' + err.message);
+    }
     finally { setUrlaubLoading(false); }
   };
 
@@ -741,14 +813,21 @@ export default function App() {
     if (!urlaubVon || !urlaubBis) return;
     setUrlaubSending(true);
     try {
-      await fetch('/api/urlaub-antrag', {
+      const res = await fetch('/api/urlaub-antrag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mitarbeiterId, mitarbeiterName, von: urlaubVon, bis: urlaubBis, notiz: urlaubNotiz }),
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
       setUrlaubVon(''); setUrlaubBis(''); setUrlaubNotiz('');
       await fetchUrlaubListe();
-    } catch (e) { console.error(e); }
+    } catch (err: any) {
+      console.error('Fehler beim Urlaubsantrag:', err);
+      alert('Fehler beim Senden des Urlaubsantrags: ' + err.message);
+    }
     finally { setUrlaubSending(false); }
   };
 
@@ -761,9 +840,16 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mitarbeiterId }),
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
       const data = await res.json();
       setLohnListe(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); }
+    } catch (err: any) {
+      console.error('Fehler beim Laden der Lohnliste:', err);
+      alert('Fehler beim Laden der Lohnabrechnungen: ' + err.message);
+    }
     finally { setLohnLoading(false); }
   };
 
@@ -810,7 +896,7 @@ export default function App() {
         const patientId = (meldungTermin.fields && meldungTermin.fields.Patient
           && meldungTermin.fields.Patient[0]) || '';
         const besuchId = meldungTermin.id;
-        await fetch('/api/meldung-senden', {
+        const res = await fetch('/api/meldung-senden', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -821,6 +907,10 @@ export default function App() {
             notiz: meldungNotiz,
           }),
         });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+        }
         setMeldungSent(true);
         setTimeout(() => {
           setMeldungTermin(null);
@@ -828,8 +918,9 @@ export default function App() {
           setMeldungNotiz('');
           setMeldungSent(false);
         }, 1500);
-      } catch (e) {
-        console.error(e);
+      } catch (err: any) {
+        console.error('Fehler beim Senden der Meldung:', err);
+        alert('Fehler beim Senden der Meldung: ' + err.message);
       } finally {
         setMeldungSending(false);
       }
