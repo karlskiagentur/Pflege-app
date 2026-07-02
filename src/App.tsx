@@ -673,7 +673,7 @@ export default function App() {
       formData.append('patientName', getValue(patientData, 'Name'));
       let res: Response;
       if (activeModal === 'upload' && selectedFiles.length > 0) {
-          formData.append('typ', type.replace('-Upload', '')); formData.append('file', selectedFiles[0]);
+          formData.append('typ', type.replace('-Upload', '')); formData.append('data', selectedFiles[0]);
           const uploadUrl = `${N8N_BASE_URL}/upload_document`;
           console.log('Upload an', uploadUrl);
           for (const pair of formData.entries()) { console.log(' -', pair[0], pair[1]); }
