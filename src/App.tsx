@@ -4,13 +4,87 @@ import {
   X, Upload, Mic, LogOut, Calendar as CalendarIcon,
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye
+  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
+import { PDFDocument } from 'pdf-lib';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
-const AGGREGATOR_ENDPOINT = 'get_full_app_data'; 
+const AGGREGATOR_ENDPOINT = 'get_full_app_data';
+
+function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+  const hasDrawn = useRef(false);
+
+  const getPos = (e: any) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+  };
+  const start = (e: any) => { drawing.current = true; draw(e); };
+  const end = () => { drawing.current = false; canvasRef.current!.getContext('2d')!.beginPath(); };
+  const draw = (e: any) => {
+    if (!drawing.current) return;
+    e.preventDefault();
+    hasDrawn.current = true;
+    const ctx = canvasRef.current!.getContext('2d')!;
+    const { x, y } = getPos(e);
+    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#1a1a1a';
+    ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y);
+  };
+  const clear = () => {
+    canvasRef.current!.getContext('2d')!.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+    hasDrawn.current = false;
+  };
+  const save = () => { if (hasDrawn.current) onSave(canvasRef.current!.toDataURL('image/png')); };
+
+  return (
+    <div>
+      <canvas ref={canvasRef} width={340} height={160}
+        className="border-2 border-dashed border-[#e0dccf] rounded-2xl bg-white touch-none w-full"
+        onMouseDown={start} onMouseMove={draw} onMouseUp={end} onMouseLeave={end}
+        onTouchStart={start} onTouchMove={draw} onTouchEnd={end} />
+      <div className="flex gap-3 mt-4">
+        <button onClick={clear} className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-4 rounded-2xl font-black uppercase">Löschen</button>
+        <button onClick={save} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase">Bestätigen</button>
+      </div>
+    </div>
+  );
+}
+
+async function signAndUploadDocument(doc: any, signatureDataUrl: string, patientId: string, patientName: string, token: string) {
+  // Original-PDF laden
+  const existingPdfBytes = await (await fetch(doc.Link)).arrayBuffer();
+  const pdfDoc = await PDFDocument.load(existingPdfBytes);
+
+  const confirmPage = pdfDoc.addPage(); // immer neue, leere Seite - nie auf bestehenden Inhalt stempeln
+  const { height } = confirmPage.getSize();
+
+  const pngImage = await pdfDoc.embedPng(signatureDataUrl);
+  const sigWidth = 200, sigHeight = sigWidth * (pngImage.height / pngImage.width);
+  confirmPage.drawImage(pngImage, { x: 60, y: height - 200, width: sigWidth, height: sigHeight });
+
+  const jetzt = new Date().toLocaleString('de-DE');
+  confirmPage.drawText(`Bestätigt und unterschrieben von: ${patientName}`, { x: 60, y: height - 220, size: 12 });
+  confirmPage.drawText(`Datum: ${jetzt}`, { x: 60, y: height - 240, size: 10 });
+
+  const signedPdfBytes = await pdfDoc.save();
+  const blob = new Blob([signedPdfBytes as BlobPart], { type: 'application/pdf' });
+
+  // Über bestehenden Upload-Weg hochladen
+  const formData = new FormData();
+  formData.append('token', token);
+  formData.append('patientId', patientId);
+  formData.append('patientName', patientName);
+  formData.append('typ', unbox(doc.Typ));
+  formData.append('originalDocumentId', doc.id);
+  formData.append('data', blob, `Bestaetigt_${unbox(doc.Dateiname) || 'Dokument.pdf'}`);
+
+  const res = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
+  if (!res.ok) throw new Error('Upload fehlgeschlagen');
+}
 
 // --- HELFER ---
 const unbox = (val: any): string => {
@@ -191,8 +265,11 @@ export default function App() {
   });
 
   const [showAllTasks, setShowAllTasks] = useState(false);
-  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | 'lohn-choice' | null>(null);
+  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | 'lohn-choice' | 'sign' | null>(null);
   const [selectedLohn, setSelectedLohn] = useState<any>(null);
+  const [signDoc, setSignDoc] = useState<any>(null);
+  const [isSigning, setIsSigning] = useState(false);
+  const [signStatus, setSignStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [lohnDownloading, setLohnDownloading] = useState(false);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -293,7 +370,8 @@ export default function App() {
                 Dateiname: getValue(d, 'Dateiname'),
                 Link: getFileUrl(d, 'Datei'),
                 Richtung: getValue(d, 'Richtung'),
-                Vom_Patienten_Gesehen: getValue(d, 'Vom_Patienten_Gesehen')
+                Vom_Patienten_Gesehen: getValue(d, 'Vom_Patienten_Gesehen'),
+                Vom_Patienten_Bestaetigt_Am: getValue(d, 'Vom_Patienten_Bestätigt_Am')
             })));
 
             const bData = json.data.besuche || [];
@@ -437,6 +515,25 @@ export default function App() {
         console.error(e);
     }
     setLohnDownloading(false);
+  };
+
+  const handleSignSave = async (signatureDataUrl: string) => {
+    if (!signDoc || !patientId || !token) return;
+    setIsSigning(true);
+    try {
+        await signAndUploadDocument(signDoc, signatureDataUrl, patientId, getValue(patientData, 'Name'), token);
+        setSignStatus('success');
+        setTimeout(() => {
+            setActiveModal(null);
+            setSignDoc(null);
+            setSignStatus('idle');
+            fetchData(true);
+        }, 1500);
+    } catch (e) {
+        console.error(e);
+        setSignStatus('error');
+    }
+    setIsSigning(false);
   };
 
   const toggleTask = async (id: string, currentStatus: boolean) => {
@@ -1638,13 +1735,9 @@ export default function App() {
                             {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
                                 const isUnseen = !seenDocIds.includes(doc.id);
                                 return (
-                                <a 
-                                    key={doc.id} 
-                                    href={doc.Link} 
-                                    target="_blank" 
-                                    rel="noreferrer"
-                                    onClick={() => markAsSeen(doc.id)} 
-                                    className={`bg-white border p-4 rounded-2xl flex items-center gap-4 hover:shadow-md transition-shadow group relative ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100'}`}
+                                <div
+                                    key={doc.id}
+                                    className={`bg-white border p-4 rounded-2xl flex items-center gap-4 relative ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100'}`}
                                 >
                                     {isUnseen && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full -mt-1 -mr-1 shadow-sm" />}
                                     <div className={`p-3 rounded-full ${isUnseen ? 'bg-[#b5a48b] text-white' : 'bg-[#dccfbc]/10 text-[#b5a48b]'}`}>
@@ -1652,11 +1745,22 @@ export default function App() {
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <p className={`text-sm truncate ${isUnseen ? 'font-black text-black' : 'font-bold text-gray-700'}`}>{unbox(doc.Dateiname) || "Dokument"}</p>
-                                        <p className="text-[10px] text-gray-400 uppercase flex items-center gap-1">
-                                            Öffnen <ExternalLink size={10}/>
-                                        </p>
+                                        <div className="flex items-center gap-4 mt-1">
+                                            <a href={doc.Link} target="_blank" rel="noreferrer" onClick={() => markAsSeen(doc.id)} className="text-[10px] text-gray-400 uppercase flex items-center gap-1 hover:text-[#b5a48b]">
+                                                Öffnen <ExternalLink size={10}/>
+                                            </a>
+                                            {doc.Vom_Patienten_Bestaetigt_Am ? (
+                                                <span className="text-[10px] text-[#5B9E5B] font-black uppercase flex items-center gap-1">
+                                                    <Check size={10}/> Bestätigt am {formatDate(doc.Vom_Patienten_Bestaetigt_Am)}
+                                                </span>
+                                            ) : (
+                                                <button onClick={() => { markAsSeen(doc.id); setSignDoc(doc); setActiveModal('sign'); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
+                                                    <PenLine size={10}/> Bestätigen & Unterschreiben
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-                                </a>
+                                </div>
                                 );
                             })}
                         </div>
@@ -1667,6 +1771,35 @@ export default function App() {
                         </div>
                     )}
                 </div>
+            </div>
+         )}
+
+         {activeModal === 'sign' && signDoc && (
+            <div className="bg-white w-full max-w-md h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto">
+                <button onClick={() => { setActiveModal(null); setSignDoc(null); setSignStatus('idle'); }} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
+                <h3 className="text-xl font-black mb-1 pr-10">Bestätigen & Unterschreiben</h3>
+                <p className="text-xs text-gray-400 mb-4">{unbox(signDoc.Dateiname) || "Dokument"}</p>
+
+                <div className="bg-[#F9F7F4] rounded-2xl overflow-hidden mb-6 border border-gray-100">
+                    <iframe src={signDoc.Link} className="w-full h-[40vh] border-none" title="Dokument-Vorschau" />
+                    <button onClick={() => window.open(signDoc.Link, '_blank')} className="w-full text-[10px] text-[#b5a48b] font-black uppercase py-2 flex items-center justify-center gap-1 border-t border-gray-100">
+                        <ExternalLink size={10}/> In neuem Tab öffnen
+                    </button>
+                </div>
+
+                {signStatus === 'success' ? (
+                    <div className="py-6 text-center">
+                        <div className="w-16 h-16 bg-[#e6f4ea] rounded-full flex items-center justify-center mx-auto mb-4"><Check size={32} className="text-[#1e4620]" strokeWidth={3} /></div>
+                        <p className="font-black text-[#3A3A3A]">Bestätigt & hochgeladen!</p>
+                    </div>
+                ) : (
+                    <>
+                        <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Hier unterschreiben</p>
+                        <SignaturePad onSave={handleSignSave} />
+                        {isSigning && <div className="flex justify-center mt-4"><RefreshCw className="animate-spin text-[#b5a48b]" /></div>}
+                        {signStatus === 'error' && <p className="text-xs text-red-500 text-center mt-4">Fehler beim Speichern. Bitte erneut versuchen.</p>}
+                    </>
+                )}
             </div>
          )}
 
