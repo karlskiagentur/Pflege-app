@@ -7,7 +7,7 @@ import {
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -55,23 +55,26 @@ function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
 }
 
 async function signAndUploadDocument(doc: any, signatureDataUrl: string, patientId: string, patientName: string, token: string) {
-  // Original-PDF laden
-  const existingPdfBytes = await (await fetch(doc.Link)).arrayBuffer();
-  const pdfDoc = await PDFDocument.load(existingPdfBytes);
+  // Eigenes kleines Bestätigungs-PDF erzeugen - kein Laden des Original-PDFs (vermeidet Cross-Origin-Fehler)
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595, 400]);
+  const { height } = page.getSize();
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  const confirmPage = pdfDoc.addPage(); // immer neue, leere Seite - nie auf bestehenden Inhalt stempeln
-  const { height } = confirmPage.getSize();
+  const dateiname = unbox(doc.Dateiname) || 'Dokument.pdf';
+  page.drawText('Bestätigung', { x: 50, y: height - 60, size: 20, font: fontBold });
+  page.drawText(`Dokument: ${dateiname}`, { x: 50, y: height - 100, size: 12, font });
+  page.drawText(`Patient: ${patientName}`, { x: 50, y: height - 120, size: 12, font });
+  page.drawText(`Bestätigt am: ${new Date().toLocaleString('de-DE')}`, { x: 50, y: height - 140, size: 12, font });
 
   const pngImage = await pdfDoc.embedPng(signatureDataUrl);
   const sigWidth = 200, sigHeight = sigWidth * (pngImage.height / pngImage.width);
-  confirmPage.drawImage(pngImage, { x: 60, y: height - 200, width: sigWidth, height: sigHeight });
+  page.drawImage(pngImage, { x: 50, y: height - 200 - sigHeight, width: sigWidth, height: sigHeight });
+  page.drawText('Unterschrift', { x: 50, y: height - 210 - sigHeight, size: 10, font });
 
-  const jetzt = new Date().toLocaleString('de-DE');
-  confirmPage.drawText(`Bestätigt und unterschrieben von: ${patientName}`, { x: 60, y: height - 220, size: 12 });
-  confirmPage.drawText(`Datum: ${jetzt}`, { x: 60, y: height - 240, size: 10 });
-
-  const signedPdfBytes = await pdfDoc.save();
-  const blob = new Blob([signedPdfBytes as BlobPart], { type: 'application/pdf' });
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
 
   // Über bestehenden Upload-Weg hochladen
   const formData = new FormData();
@@ -80,10 +83,10 @@ async function signAndUploadDocument(doc: any, signatureDataUrl: string, patient
   formData.append('patientName', patientName);
   formData.append('typ', unbox(doc.Typ));
   formData.append('originalDocumentId', doc.id);
-  formData.append('data', blob, `Bestaetigt_${unbox(doc.Dateiname) || 'Dokument.pdf'}`);
+  formData.append('data', blob, `Bestaetigung_${dateiname}`);
 
   const res = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
-  if (!res.ok) throw new Error('Upload fehlgeschlagen');
+  if (!res.ok) throw new Error('Upload fehlgeschlagen: Status ' + res.status);
 }
 
 // --- HELFER ---
@@ -269,7 +272,6 @@ export default function App() {
   const [selectedLohn, setSelectedLohn] = useState<any>(null);
   const [signDoc, setSignDoc] = useState<any>(null);
   const [isSigning, setIsSigning] = useState(false);
-  const [signStatus, setSignStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [lohnDownloading, setLohnDownloading] = useState(false);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -522,16 +524,12 @@ export default function App() {
     setIsSigning(true);
     try {
         await signAndUploadDocument(signDoc, signatureDataUrl, patientId, getValue(patientData, 'Name'), token);
-        setSignStatus('success');
-        setTimeout(() => {
-            setActiveModal(null);
-            setSignDoc(null);
-            setSignStatus('idle');
-            fetchData(true);
-        }, 1500);
-    } catch (e) {
-        console.error(e);
-        setSignStatus('error');
+        setActiveModal(null);
+        setSignDoc(null);
+        fetchData(true);
+    } catch (err: any) {
+        console.error('Bestätigung fehlgeschlagen:', err);
+        alert('Fehler beim Bestätigen: ' + err.message);
     }
     setIsSigning(false);
   };
@@ -1776,7 +1774,7 @@ export default function App() {
 
          {activeModal === 'sign' && signDoc && (
             <div className="bg-white w-full max-w-md h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto">
-                <button onClick={() => { setActiveModal(null); setSignDoc(null); setSignStatus('idle'); }} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
+                <button onClick={() => { setActiveModal(null); setSignDoc(null); }} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
                 <h3 className="text-xl font-black mb-1 pr-10">Bestätigen & Unterschreiben</h3>
                 <p className="text-xs text-gray-400 mb-4">{unbox(signDoc.Dateiname) || "Dokument"}</p>
 
@@ -1787,19 +1785,9 @@ export default function App() {
                     </button>
                 </div>
 
-                {signStatus === 'success' ? (
-                    <div className="py-6 text-center">
-                        <div className="w-16 h-16 bg-[#e6f4ea] rounded-full flex items-center justify-center mx-auto mb-4"><Check size={32} className="text-[#1e4620]" strokeWidth={3} /></div>
-                        <p className="font-black text-[#3A3A3A]">Bestätigt & hochgeladen!</p>
-                    </div>
-                ) : (
-                    <>
-                        <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Hier unterschreiben</p>
-                        <SignaturePad onSave={handleSignSave} />
-                        {isSigning && <div className="flex justify-center mt-4"><RefreshCw className="animate-spin text-[#b5a48b]" /></div>}
-                        {signStatus === 'error' && <p className="text-xs text-red-500 text-center mt-4">Fehler beim Speichern. Bitte erneut versuchen.</p>}
-                    </>
-                )}
+                <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Hier unterschreiben</p>
+                <SignaturePad onSave={handleSignSave} />
+                {isSigning && <div className="flex justify-center mt-4"><RefreshCw className="animate-spin text-[#b5a48b]" /></div>}
             </div>
          )}
 
