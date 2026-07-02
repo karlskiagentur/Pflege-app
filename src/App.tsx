@@ -85,6 +85,10 @@ async function signAndUploadDocument(doc: any, signatureDataUrl: string, patient
   formData.append('originalDocumentId', doc.id);
   formData.append('data', blob, `Bestaetigung_${dateiname}`);
 
+  for (const pair of formData.entries()) {
+    console.log(pair[0] + ':', pair[1]);
+  }
+
   const res = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
   if (!res.ok) throw new Error('Upload fehlgeschlagen: Status ' + res.status);
 }
