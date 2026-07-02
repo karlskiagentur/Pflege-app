@@ -1165,6 +1165,25 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* LOHN: VORSCHAU/DOWNLOAD-AUSWAHL */}
+      {activeModal === 'lohn-choice' && selectedLohn && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
+          <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
+            <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+            <h3 className="text-xl font-black mb-6 pr-10 flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {formatMonat(selectedLohn.zeitraum)}</h3>
+            <div className="space-y-4">
+              <button onClick={() => { window.open(selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
+                <Eye size={18}/> Vorschau
+              </button>
+              <button onClick={() => handleLohnDownload(selectedLohn)} disabled={lohnDownloading} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-all">
+                {lohnDownloading ? <RefreshCw className="animate-spin" size={18}/> : <Download size={18}/>} Herunterladen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     );
   }
