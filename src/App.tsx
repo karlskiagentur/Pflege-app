@@ -4,7 +4,7 @@ import {
   X, Upload, Mic, LogOut, Calendar as CalendarIcon,
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal, Download
+  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 
@@ -191,7 +191,9 @@ export default function App() {
   });
 
   const [showAllTasks, setShowAllTasks] = useState(false);
-  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | null>(null);
+  const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | 'lohn-choice' | null>(null);
+  const [selectedLohn, setSelectedLohn] = useState<any>(null);
+  const [lohnDownloading, setLohnDownloading] = useState(false);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -409,6 +411,34 @@ export default function App() {
     setIsSending(false);
   };
 
+  const handleLohnDownload = async (lohn: any) => {
+    setLohnDownloading(true);
+    try {
+        const fileName = `Lohnabrechnung_${lohn.zeitraum}.pdf`;
+        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}`;
+        const response = await fetch(proxyUrl);
+        const blob = await response.blob();
+        const file = new File([blob], fileName, { type: 'application/pdf' });
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Lohnabrechnung' });
+        } else {
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        }
+        setActiveModal(null);
+    } catch (e) {
+        console.error(e);
+    }
+    setLohnDownloading(false);
+  };
+
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
@@ -623,10 +653,6 @@ export default function App() {
     finally { setUrlaubSending(false); }
   };
 
-  useEffect(() => {
-    if (mitarbeiterId && mitarbeiterTab === 'urlaub') fetchUrlaubListe();
-  }, [mitarbeiterId, mitarbeiterTab]);
-
   const fetchLohnListe = async () => {
     if (!mitarbeiterId) return;
     setLohnLoading(true);
@@ -641,10 +667,6 @@ export default function App() {
     } catch (e) { console.error(e); }
     finally { setLohnLoading(false); }
   };
-
-  useEffect(() => {
-    if (mitarbeiterId && mitarbeiterTab === 'lohn') fetchLohnListe();
-  }, [mitarbeiterId, mitarbeiterTab]);
 
   if (mitarbeiterId) {
     const heute = new Date();
@@ -766,7 +788,7 @@ export default function App() {
               </div>
             )}
             <button
-              onClick={() => setMitarbeiterTab('tagesplan')}
+              onClick={() => { setMitarbeiterTab('tagesplan'); fetchMitarbeiterTermine(); }}
               className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 mt-3"
             >
               <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
@@ -930,15 +952,22 @@ export default function App() {
               <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnungen vorhanden.</div>
             ) : (
               lohnListe.map((l) => (
-                <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
-                    <p className="text-xs text-gray-400">{l.dateiname}</p>
+                l.url ? (
+                  <button key={l.id} onClick={() => { setSelectedLohn(l); setActiveModal('lohn-choice'); }} className="w-full bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between text-left active:scale-95 transition-all">
+                    <div>
+                      <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
+                      <p className="text-xs text-gray-400">{l.dateiname}</p>
+                    </div>
+                    <div className="text-[#b5a48b] p-2"><Download size={22} /></div>
+                  </button>
+                ) : (
+                  <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between opacity-50">
+                    <div>
+                      <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
+                      <p className="text-xs text-gray-400">Noch keine Datei hinterlegt</p>
+                    </div>
                   </div>
-                  <a href={l.url} target="_blank" rel="noreferrer" className="text-[#b5a48b] hover:opacity-70 p-2">
-                    <Download size={22} />
-                  </a>
-                </div>
+                )
               ))
             )}
           </div>
@@ -1063,7 +1092,12 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
         <button
             key={tab.id}
-            onClick={() => setMitarbeiterTab(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn')}
+            onClick={() => {
+                setMitarbeiterTab(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn');
+                fetchMitarbeiterTermine();
+                if (tab.id === 'urlaub') fetchUrlaubListe();
+                else if (tab.id === 'lohn') fetchLohnListe();
+            }}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
@@ -1340,8 +1374,9 @@ export default function App() {
             const proposed = getProposedDetails(b);
             const showTime = getValue(b, 'Uhrzeit') ? formatTime(getValue(b, 'Uhrzeit')) : (proposed ? proposed.time : "--:--");
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
-            const isProposed = !getValue(b, 'Uhrzeit') && proposed; 
+            const isProposed = !getValue(b, 'Uhrzeit') && proposed;
             const isHighlighted = highlightedIds.includes(b.id);
+            const showDauer = formatDauer(getValue(b, 'Dauer'));
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
@@ -1355,6 +1390,12 @@ export default function App() {
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                         <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                     </div>
+                    {showDauer && (
+                        <div className="text-center min-w-[56px]">
+                            <p className="text-xl text-gray-300">{showDauer}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
+                        </div>
+                    )}
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
@@ -1531,7 +1572,7 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
         <button 
             key={t.id} 
-            onClick={() => setActiveTab(t.id)} 
+            onClick={() => { setActiveTab(t.id); fetchData(true); }}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
@@ -1633,6 +1674,21 @@ export default function App() {
                         {isSending ? <RefreshCw className="animate-spin" size={16}/> : 'Ja, widerrufen'}
                     </button>
                     <button onClick={() => setActiveModal(null)} className="w-full text-gray-400 font-bold uppercase text-xs">Abbrechen</button>
+                </div>
+            </div>
+         )}
+
+         {activeModal === 'lohn-choice' && selectedLohn && (
+            <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
+                <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
+                <div className="space-y-6">
+                    <h3 className="text-xl font-black flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {formatMonat(selectedLohn.zeitraum)}</h3>
+                    <button onClick={() => { window.open(selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#3A3A3A] py-5 rounded-2xl font-black uppercase shadow-sm flex justify-center items-center gap-2 active:scale-95 transition-all">
+                        <Eye size={18}/> Vorschau
+                    </button>
+                    <button onClick={() => handleLohnDownload(selectedLohn)} disabled={lohnDownloading} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2 disabled:opacity-50 active:scale-95 transition-all">
+                        {lohnDownloading ? <RefreshCw className="animate-spin" size={18}/> : <Download size={18}/>} Herunterladen
+                    </button>
                 </div>
             </div>
          )}
