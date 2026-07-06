@@ -1424,12 +1424,6 @@ export default function App() {
             <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Patienten-ID' : 'Mitarbeiter-ID'} required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
 
-            {loginMode === 'patient' && (
-                <p className="text-[10px] text-gray-400 leading-tight mb-6">
-                    Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform). Sie können diese Einwilligung jederzeit widerrufen.
-                </p>
-            )}
-
             {loginError && (
                 <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 animate-pulse">
                     <AlertTriangle size={16}/> {loginError}
