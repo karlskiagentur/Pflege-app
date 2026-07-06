@@ -256,8 +256,6 @@ export default function App() {
   const [lohnLoading, setLohnLoading] = useState(false);
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
-  const [consentGiven, setConsentGiven] = useState(false);
-  const [showConsentInfo, setShowConsentInfo] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
@@ -1427,32 +1425,9 @@ export default function App() {
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
 
             {loginMode === 'patient' && (
-              <>
-                <div className="mb-4">
-                    <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center shrink-0 ${consentGiven ? 'bg-[#b5a48b] border-[#b5a48b]' : 'border-gray-300'}`}>
-                            {consentGiven && <Check size={14} className="text-white" />}
-                        </div>
-                        <input type="checkbox" className="hidden" checked={consentGiven} onChange={(e) => setConsentGiven(e.target.checked)} />
-                        <span className="text-xs text-gray-500 leading-tight select-none">
-                            (Optional) Ich bin damit einverstanden, Rechnungen und Dokumente in elektronischer Form (PDF) zu erhalten.
-                        </span>
-                    </label>
-                </div>
-
-                <div className="mb-6">
-                    <button type="button" onClick={() => setShowConsentInfo(!showConsentInfo)} className="text-[10px] font-bold text-[#b5a48b] flex items-center gap-1 uppercase tracking-wide">
-                        {showConsentInfo ? <ChevronUp size={12}/> : <ChevronRight size={12}/>}
-                        🔎 Weitere Informationen
-                    </button>
-                    {showConsentInfo && (
-                        <div className="mt-2 bg-gray-50 p-3 rounded-xl text-[10px] text-gray-500 space-y-2 animate-in slide-in-from-top-2">
-                            <p>Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform).</p>
-                            <p>Sie können diese Einwilligung jederzeit widerrufen.</p>
-                        </div>
-                    )}
-                </div>
-              </>
+                <p className="text-[10px] text-gray-400 leading-tight mb-6">
+                    Ihre Rechnungen werden Ihnen auf Wunsch elektronisch bereitgestellt (eIDAS konform). Sie können diese Einwilligung jederzeit widerrufen.
+                </p>
             )}
 
             {loginError && (
