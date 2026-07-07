@@ -444,18 +444,22 @@ export default function App() {
 
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
+      const doc = documents.find(d => d.id === id);
+      // Bereits serverseitig gesehen -> nichts tun (kein doppelter Call)
+      if (doc && unbox(doc.Vom_Patienten_Gesehen)) return;
+      // localStorage weiter pflegen (Alt-Kompatibilität)
       if (!seenDocIds.includes(id)) {
           const newSeen = [...seenDocIds, id];
           setSeenDocIds(newSeen);
           localStorage.setItem('seen_docs', JSON.stringify(newSeen));
-          // Optimistisch: Badge reagiert sofort (Quelle der Wahrheit ist jetzt der Server)
-          setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, Vom_Patienten_Gesehen: 'true' } : doc));
-          // Server geräteübergreifend informieren
-          fetch(`${N8N_BASE_URL}/mark_document_seen`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documentId: id })
-          }).catch(e => console.error(e));
       }
+      // Optimistisch: Punkt/Badge reagiert sofort (Quelle der Wahrheit ist der Server)
+      setDocuments(prev => prev.map(d => d.id === id ? { ...d, Vom_Patienten_Gesehen: 'true' } : d));
+      // Server geräteübergreifend informieren, danach neu laden -> Badges verschwinden sofort
+      fetch(`${N8N_BASE_URL}/mark_document_seen`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId: id })
+      }).then(() => fetchData(true)).catch(e => console.error(e));
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -1447,12 +1451,14 @@ export default function App() {
   );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
-  // Berechne ungelesene Dokumente (serverbasiert, geräteübergreifend)
+  // Berechne ungelesene Dokumente (serverbasiert, geräteübergreifend) - einheitliche Definition
   const unseenDocs = documents.filter(d =>
+    (unbox(getValue(d, 'Typ')) === 'Rechnung' || unbox(getValue(d, 'Typ')) === 'Leistungsnachweis') &&
     unbox(getValue(d, 'Richtung')) === 'Vom Pflegedienst' &&
     !unbox(getValue(d, 'Vom_Patienten_Gesehen'))
   );
   const unseenDocsCount = unseenDocs.length;
+  const unseenDocIds = unseenDocs.map(d => d.id);
   
   // Zähler pro Kategorie
   const unseenRechnungen = unseenDocs.filter(d => unbox(d.Typ) === 'Rechnung').length;
@@ -1756,11 +1762,9 @@ export default function App() {
             <div className="relative">
                 <t.icon size={22} strokeWidth={activeTab === t.id ? 3 : 2} />
                 
-                {/* INTELLIGENTER BADGE (Nur ungelesene) */}
+                {/* ROTER PUNKT (Nur ungelesene) */}
                 {t.id === 'hochladen' && unseenDocsCount > 0 && (
-                    <div className="absolute -top-2 -right-3 bg-red-600 text-white text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-in zoom-in">
-                        {unseenDocsCount}
-                    </div>
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-in zoom-in" />
                 )}
             </div>
             <span className="text-[9px] font-black uppercase">{t.label}</span>
@@ -1797,7 +1801,7 @@ export default function App() {
                     {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
                             {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
-                                const isUnseen = !seenDocIds.includes(doc.id);
+                                const isUnseen = unseenDocIds.includes(doc.id);
                                 return (
                                 <div
                                     key={doc.id}
@@ -1808,7 +1812,14 @@ export default function App() {
                                         <FileText size={20}/>
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className={`text-sm truncate ${isUnseen ? 'font-black text-black' : 'font-bold text-gray-700'}`}>{unbox(doc.Dateiname) || "Dokument"}</p>
+                                        <p className={`text-sm flex items-center ${isUnseen ? 'font-black text-black' : 'font-bold text-gray-700'}`}>
+                                            <span className="truncate min-w-0">{unbox(doc.Dateiname) || "Dokument"}</span>
+                                            {isUnseen && (
+                                                <span className="inline-flex items-center gap-1 text-red-600 text-xs font-black uppercase ml-2 shrink-0">
+                                                    <span className="w-2 h-2 bg-red-500 rounded-full" /> Neu
+                                                </span>
+                                            )}
+                                        </p>
                                         <div className="flex items-center gap-4 mt-1">
                                             <a href={doc.Link} target="_blank" rel="noreferrer" onClick={() => markAsSeen(doc.id)} className="text-[10px] text-gray-400 uppercase flex items-center gap-1 hover:text-[#b5a48b]">
                                                 Öffnen <ExternalLink size={10}/>
