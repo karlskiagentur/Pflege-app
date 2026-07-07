@@ -252,6 +252,8 @@ const getProposedDetails = (b: any) => {
 export default function App() {
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [token, setToken] = useState<string | null>(localStorage.getItem('active_token'));
+  // Push-Status Patient: 'idle' = noch nicht aktiviert, 'granted' = aktiv, 'denied' = im Browser blockiert
+  const [patientPushStatus, setPatientPushStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -460,9 +462,40 @@ export default function App() {
     }
   };
 
-  useEffect(() => { 
+  useEffect(() => {
       if (patientId) fetchData(false);
-  }, [patientId]); 
+  }, [patientId]);
+
+  // Push-Status beim Login prüfen (kein automatisches Nachfragen)
+  useEffect(() => {
+      if (!patientId) return;
+      if (typeof Notification === 'undefined') { setPatientPushStatus('denied'); return; }
+      if (Notification.permission === 'denied') { setPatientPushStatus('denied'); return; }
+      isPushSubscribed().then(subscribed => {
+          setPatientPushStatus(subscribed && Notification.permission === 'granted' ? 'granted' : 'idle');
+      });
+  }, [patientId]);
+
+  const aktivierePush = async () => {
+      try {
+          if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+              setPatientPushStatus('denied');
+              return;
+          }
+          const ok = await subscribeToPush(patientId!);
+          if (ok) {
+              setPatientPushStatus('granted');
+          } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+              setPatientPushStatus('denied');
+              alert('Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter Safari > Mitteilungen erlauben.');
+          } else {
+              alert('Ohne erlaubte Benachrichtigungen können wir Sie nicht über neue Termine oder Dokumente informieren.');
+          }
+      } catch (err: any) {
+          console.error('Push-Aktivierung fehlgeschlagen:', err);
+          alert('Benachrichtigungen konnten nicht aktiviert werden: ' + err.message);
+      }
+  };
 
   // Dokument als gelesen markieren
   const markAsSeen = (id: string) => {
@@ -1507,6 +1540,21 @@ export default function App() {
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
+        {patientPushStatus === 'idle' && (
+            <div className="bg-[#F9F7F4] rounded-2xl p-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                    <Bell size={18} className="text-[#b5a48b] shrink-0" />
+                    <span className="text-sm font-bold text-[#6b5f4e]">Aktivieren Sie Benachrichtigungen, um nichts zu verpassen</span>
+                </div>
+                <button onClick={aktivierePush} className="bg-[#b5a48b] text-white px-4 py-2 rounded-xl font-black text-xs uppercase shrink-0 active:scale-95 transition-all">Aktivieren</button>
+            </div>
+        )}
+        {patientPushStatus === 'denied' && (
+            <div className="bg-[#FAECE7] rounded-2xl p-4 flex items-center gap-2">
+                <Bell size={18} className="text-[#993C1D] shrink-0" />
+                <span className="text-sm font-bold text-[#993C1D]">Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter Safari &gt; Mitteilungen erlauben.</span>
+            </div>
+        )}
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
             <div>
                 <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
@@ -1555,10 +1603,16 @@ export default function App() {
                             </div>
                             {getValue(c, 'Telefon') && <a href={`tel:${getValue(c, 'Telefon')}`} className="bg-[#dccfbc]/10 p-3 rounded-full text-[#b5a48b]"><Phone size={20} fill="#b5a48b" /></a>}
                         </div>
-                    ); 
+                    );
                 })}
             </div>
         </section>
+
+        {patientPushStatus === 'granted' && (
+            <div className="flex items-center justify-center gap-2 text-[11px] font-bold text-[#5B9E5B]">
+                <Check size={14} strokeWidth={3} /> Benachrichtigungen aktiv
+            </div>
+        )}
     </div>
   );
 
