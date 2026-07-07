@@ -7,7 +7,7 @@ import {
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 // Deine n8n Live-URL
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
@@ -54,48 +54,68 @@ function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
   );
 }
 
-async function signAndUploadDocument(doc: any, signatureDataUrl: string, patientId: string, patientName: string, token: string) {
-  // Eigenes kleines Bestätigungs-PDF erzeugen - kein Laden des Original-PDFs (vermeidet Cross-Origin-Fehler)
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([595, 400]);
-  const { height } = page.getSize();
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+async function signAndUploadDocument(doc: any, signatureDataUrl: string, _patientId: string, patientName: string, token: string) {
+  // Feldnamen des gemappten Dokuments auf die hier genutzten Namen bringen
+  const url = doc.Link;
+  const dateiname = unbox(doc.Dateiname);
+  const typ = unbox(doc.Typ);
+
+  // 1. Original über den EIGENEN Vercel-Proxy laden (same-origin, kein CORS!)
+  //    NIEMALS direkt von der Airtable-URL fetchen - das scheitert an CORS.
+  const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(url)}&name=original.pdf`;
+  const res = await fetch(proxyUrl);
+  if (!res.ok) throw new Error('Original-Dokument konnte nicht geladen werden (Status ' + res.status + ')');
+  const originalBytes = await res.arrayBuffer();
+
+  // 2. PDF laden - ODER Bild in ein PDF einbetten (alte Dokumente sind teils JPGs)
+  let pdfDoc;
+  const nameLower = (dateiname || '').toLowerCase();
+  const istBild = nameLower.endsWith('.jpg') || nameLower.endsWith('.jpeg') || nameLower.endsWith('.png');
+  if (istBild) {
+    pdfDoc = await PDFDocument.create();
+    const img = nameLower.endsWith('.png')
+      ? await pdfDoc.embedPng(originalBytes)
+      : await pdfDoc.embedJpg(originalBytes);
+    const page = pdfDoc.addPage([595, 842]); // A4
+    const scale = Math.min(495 / img.width, 700 / img.height);
+    page.drawImage(img, { x: 50, y: 842 - 60 - img.height * scale, width: img.width * scale, height: img.height * scale });
+  } else {
+    pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
+  }
+
+  // 3. Unterschrift unten rechts auf der LETZTEN Seite platzieren
+  const pages = pdfDoc.getPages();
+  const lastPage = pages[pages.length - 1];
+  const { width } = lastPage.getSize();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  const dateiname = unbox(doc.Dateiname) || 'Dokument.pdf';
-  page.drawText('Bestätigung', { x: 50, y: height - 60, size: 20, font: fontBold });
-  page.drawText(`Dokument: ${dateiname}`, { x: 50, y: height - 100, size: 12, font });
-  page.drawText(`Patient: ${patientName}`, { x: 50, y: height - 120, size: 12, font });
-  page.drawText(`Bestätigt am: ${new Date().toLocaleString('de-DE')}`, { x: 50, y: height - 140, size: 12, font });
-
   const pngImage = await pdfDoc.embedPng(signatureDataUrl);
-  const sigWidth = 200, sigHeight = sigWidth * (pngImage.height / pngImage.width);
-  page.drawImage(pngImage, { x: 50, y: height - 200 - sigHeight, width: sigWidth, height: sigHeight });
-  page.drawText('Unterschrift', { x: 50, y: height - 210 - sigHeight, size: 10, font });
+  const sigWidth = 160;
+  const sigHeight = sigWidth * (pngImage.height / pngImage.width);
+  const sigX = width - sigWidth - 50;
+  const sigY = 55;
 
-  const pdfBytes = await pdfDoc.save();
-  const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
+  // Weißes Kästchen dahinter, damit die Unterschrift auf jedem Untergrund lesbar ist
+  lastPage.drawRectangle({ x: sigX - 8, y: sigY - 22, width: sigWidth + 16, height: sigHeight + 30, color: rgb(1, 1, 1) });
+  lastPage.drawImage(pngImage, { x: sigX, y: sigY, width: sigWidth, height: sigHeight });
+  const jetzt = new Date().toLocaleDateString('de-DE') + ', ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  lastPage.drawText(`${patientName}, ${jetzt}`, { x: sigX, y: sigY - 14, size: 8, font, color: rgb(0.2, 0.2, 0.2) });
 
-  // Über bestehenden Upload-Weg hochladen
+  // 4. Speichern & über den bestehenden Weg hochladen (Backend verknüpft
+  //    automatisch mit dem Original und setzt "Bestätigt am")
+  const signedBytes = await pdfDoc.save();
+  const blob = new Blob([signedBytes as BlobPart], { type: 'application/pdf' });
+  const basisName = (dateiname || 'Dokument').replace(/\.(pdf|jpg|jpeg|png)$/i, '');
+
   const formData = new FormData();
   formData.append('token', token);
-  formData.append('patientId', patientId);
   formData.append('patientName', patientName);
-  formData.append('typ', unbox(doc.Typ));
+  formData.append('typ', typ);
   formData.append('originalDocumentId', doc.id);
-  formData.append('data', blob, `Bestaetigung_${dateiname}`);
+  formData.append('data', blob, `Unterschrieben_${basisName}.pdf`);
 
-  const uploadUrl = `${N8N_BASE_URL}/upload_document`;
-  console.log('Upload an', uploadUrl);
-  for (const pair of formData.entries()) {
-    console.log(' -', pair[0], pair[1]);
-  }
-
-  const res = await fetch(uploadUrl, { method: 'POST', body: formData });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Server antwortete mit ${res.status}: ${text}`);
-  }
+  const uploadRes = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
+  if (!uploadRes.ok) throw new Error('Upload fehlgeschlagen (Status ' + uploadRes.status + ')');
 }
 
 // --- HELFER ---
