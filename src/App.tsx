@@ -1555,6 +1555,12 @@ export default function App() {
                 <span className="text-sm font-bold text-[#993C1D]">Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter Safari &gt; Mitteilungen erlauben.</span>
             </div>
         )}
+        {patientPushStatus === 'granted' && (
+            <div className="bg-[#EEF6EE] rounded-2xl p-4 flex items-center gap-2">
+                <Check size={18} className="text-[#5B9E5B] shrink-0" strokeWidth={3} />
+                <span className="text-sm font-bold text-[#3f7a3f]">Benachrichtigungen sind aktiviert</span>
+            </div>
+        )}
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
             <div>
                 <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
@@ -1607,12 +1613,6 @@ export default function App() {
                 })}
             </div>
         </section>
-
-        {patientPushStatus === 'granted' && (
-            <div className="flex items-center justify-center gap-2 text-[11px] font-bold text-[#5B9E5B]">
-                <Check size={14} strokeWidth={3} /> Benachrichtigungen aktiv
-            </div>
-        )}
     </div>
   );
 
