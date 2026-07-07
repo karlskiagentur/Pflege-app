@@ -1781,17 +1781,19 @@ export default function App() {
          {activeModal === 'new-appointment' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3><p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label><input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Uhrzeit (Optional)</label><input type="time" value={requestTime} onChange={(e)=>setRequestTime(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund (Tätigkeit)</label><input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Einkaufen, Arzt..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" /></div><button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />} {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}</button></div></div>)}
          
          {activeModal === 'folder' && (
-            <div className="bg-white w-full max-w-md h-[80vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10">
-                <div className="flex justify-between items-center mb-8">
-                    <h3 className="text-2xl font-black">{uploadContext}</h3>
-                    <button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+            <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 flex flex-col">
+                <div className="shrink-0">
+                    <div className="flex justify-between items-center mb-8">
+                        <h3 className="text-2xl font-black">{uploadContext}</h3>
+                        <button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+                    </div>
+                    <button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all">
+                        <Plus size={20}/> Neu hochladen
+                    </button>
+                    <p className="text-[10px] font-black text-gray-400 uppercase mb-4">Bisherige Dokumente</p>
                 </div>
-                <button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all">
-                    <Plus size={20}/> Neu hochladen
-                </button>
-                
-                <div className="space-y-4">
-                    <p className="text-[10px] font-black text-gray-400 uppercase">Bisherige Dokumente</p>
+
+                <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 pr-1">
                     {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
                             {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
@@ -1837,7 +1839,7 @@ export default function App() {
          )}
 
          {activeModal === 'sign' && signDoc && (
-            <div className="bg-white w-full max-w-md h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto">
+            <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto overscroll-contain">
                 <button onClick={() => { setActiveModal(null); setSignDoc(null); }} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
                 <h3 className="text-xl font-black mb-1 pr-10">Bestätigen & Unterschreiben</h3>
                 <p className="text-xs text-gray-400 mb-4">{unbox(signDoc.Dateiname) || "Dokument"}</p>
