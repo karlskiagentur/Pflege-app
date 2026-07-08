@@ -392,7 +392,9 @@ export default function App() {
                 Link: getFileUrl(d, 'Datei'),
                 Richtung: getValue(d, 'Richtung'),
                 Vom_Patienten_Gesehen: getValue(d, 'Vom_Patienten_Gesehen'),
-                Vom_Patienten_Bestaetigt_Am: getValue(d, 'Vom_Patienten_Bestätigt_Am')
+                Vom_Patienten_Bestaetigt_Am: getValue(d, 'Vom_Patienten_Bestätigt_Am'),
+                Datum: getValue(d, 'Datum') || getValue(d, 'Erstellt'),
+                Bezahlt: getValue(d, 'Bezahlt') === 'true' || getValue(d, 'Bezahlt') === 'Bezahlt' || d.fields?.Bezahlt === true
             })));
 
             const bData = json.data.besuche || [];
@@ -605,6 +607,31 @@ export default function App() {
         }
     }
     setLohnDownloading(false);
+  };
+
+  // Rechnung aufs Handy laden (Dateien-App via Web-Share, sonst Blob-Download)
+  const downloadRechnung = async (item: any) => {
+    try {
+        const name = item.dateiname || 'Rechnung.pdf';
+        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent(name)}`;
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`Server antwortete mit ${res.status}`);
+        const blob = await res.blob();
+        const file = new File([blob], name, { type: 'application/pdf' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: name });
+        } else {
+            const u = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = u; a.download = file.name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(u);
+        }
+    } catch (err: any) {
+        if (err.name !== 'AbortError') {
+            console.error('Fehler beim Rechnungs-Download:', err);
+            alert('Fehler beim Herunterladen: ' + err.message);
+        }
+    }
   };
 
   const openSignModal = (doc: any) => {
@@ -1920,7 +1947,50 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 pr-1">
-                    {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
+                    {uploadContext === 'Rechnung' ? (() => {
+                        const rechnungen = sichtbareDokumente.filter(d => unbox(d.Typ) === 'Rechnung' && unbox(d.Richtung) === 'Vom Pflegedienst');
+                        const offen = rechnungen.filter(d => !d.Bezahlt);
+                        const bezahlt = rechnungen.filter(d => d.Bezahlt);
+                        if (rechnungen.length === 0) return (
+                            <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50">
+                                <Euro className="text-gray-300"/>
+                                <p className="text-sm font-bold text-gray-400">Noch keine Rechnungen</p>
+                            </div>
+                        );
+                        const RechnungCard = (doc: any, offenVariant: boolean) => (
+                            <div key={doc.id} className={offenVariant
+                                ? "border-l-4 border-orange-400 bg-orange-50/40 border border-orange-100 p-4 rounded-2xl"
+                                : "bg-gray-50 border border-gray-100 p-3 rounded-2xl"}>
+                                <div className="flex items-center justify-between gap-2">
+                                    <p className={`font-bold truncate min-w-0 ${offenVariant ? 'text-sm text-gray-800' : 'text-[13px] text-gray-600'}`}>{unbox(doc.Dateiname) || 'Rechnung'}</p>
+                                    {offenVariant
+                                        ? <span className="shrink-0 text-[10px] font-black uppercase text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full">Offen</span>
+                                        : <span className="shrink-0 text-[10px] font-black uppercase text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Bezahlt</span>}
+                                </div>
+                                {doc.Datum && <p className="text-[10px] text-gray-400 mt-0.5">{formatDate(doc.Datum)}</p>}
+                                <div className="flex items-center gap-4 mt-2">
+                                    <button onClick={() => { markAsSeen(doc.id); window.open(doc.Link, '_blank'); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1"><Eye size={12}/> Vorschau</button>
+                                    <button onClick={() => { markAsSeen(doc.id); downloadRechnung({ url: doc.Link, dateiname: unbox(doc.Dateiname) }); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1"><Download size={12}/> Herunterladen</button>
+                                </div>
+                            </div>
+                        );
+                        return (
+                            <div className="space-y-6">
+                                {offen.length > 0 && (
+                                    <div>
+                                        <p className="text-[11px] font-black uppercase text-orange-500 mb-2">Noch zu bezahlen ({offen.length})</p>
+                                        <div className="space-y-3">{offen.map(d => RechnungCard(d, true))}</div>
+                                    </div>
+                                )}
+                                {bezahlt.length > 0 && (
+                                    <div>
+                                        <p className="text-[11px] font-black uppercase text-gray-400 mb-2">Archiv ({bezahlt.length})</p>
+                                        <div className="space-y-2">{bezahlt.map(d => RechnungCard(d, false))}</div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })() : sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
                             {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
                                 const isUnseen = unseenDocIds.includes(doc.id);
@@ -1952,7 +2022,7 @@ export default function App() {
                                                     <Check size={14}/> Unterschrieben
                                                 </span>
                                             )}
-                                            {unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am && (
+                                            {unbox(doc.Typ) === 'Leistungsnachweis' && unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am && (
                                                 <button onClick={() => { markAsSeen(doc.id); openSignModal(doc); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
                                                     <PenLine size={10}/> Bestätigen & Unterschreiben
                                                 </button>
