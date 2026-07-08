@@ -7,7 +7,6 @@ import {
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 // n8n nur noch für Schreib-Endpunkte (submit, upload, update_task, push, ...);
 // Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
@@ -55,64 +54,22 @@ function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
 }
 
 async function signAndUploadDocument(doc: any, signatureDataUrl: string, _patientId: string, patientName: string, token: string) {
-  // Feldnamen des gemappten Dokuments auf die hier genutzten Namen bringen
-  const url = doc.Link;
   const dateiname = unbox(doc.Dateiname);
-  const typ = unbox(doc.Typ);
 
-  // 1. Original über den EIGENEN Vercel-Proxy laden (same-origin, kein CORS!)
-  //    NIEMALS direkt von der Airtable-URL fetchen - das scheitert an CORS.
-  const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(url)}&name=original.pdf`;
-  const res = await fetch(proxyUrl);
-  if (!res.ok) throw new Error('Original-Dokument konnte nicht geladen werden (Status ' + res.status + ')');
-  const originalBytes = await res.arrayBuffer();
+  // Serverseite lädt das Original, findet den Unterschrift-Anker und stempelt das PNG exakt.
+  const res = await fetch('/api/sign-document', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pdfUrl: doc.Link, signaturePng: signatureDataUrl }),
+  });
+  if (!res.ok) throw new Error('Signatur fehlgeschlagen (Status ' + res.status + ')');
+  const blob = await res.blob();
 
-  // 2. PDF laden - ODER Bild in ein PDF einbetten (alte Dokumente sind teils JPGs)
-  let pdfDoc;
-  const nameLower = (dateiname || '').toLowerCase();
-  const istBild = /\.(jpg|jpeg|png)$/.test(nameLower);
-  if (istBild) {
-    pdfDoc = await PDFDocument.create();
-    const img = nameLower.endsWith('.png')
-      ? await pdfDoc.embedPng(originalBytes)
-      : await pdfDoc.embedJpg(originalBytes);
-    const page = pdfDoc.addPage([595, 842]); // A4
-    const scale = Math.min(495 / img.width, 700 / img.height);
-    page.drawImage(img, { x: 50, y: 842 - 70 - img.height * scale, width: img.width * scale, height: img.height * scale });
-  } else {
-    pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
-  }
-
-  // 3. Unterschrift: LETZTE Seite, UNTERES DRITTEL, rechts (getestete Werte!)
-  const pages = pdfDoc.getPages();
-  const lastPage = pages[pages.length - 1];
-  const { width, height } = lastPage.getSize();
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-
-  const pngImage = await pdfDoc.embedPng(signatureDataUrl);
-  const sigWidth = 170;
-  const sigHeight = sigWidth * (pngImage.height / pngImage.width);
-  const sigX = width - sigWidth - 50;
-  const sigY = height * 0.22;   // unteres Drittel - NICHT ändern, getestet
-
-  // weißes Kästchen (Lesbarkeit), Signatur, Linie, Name+Datum, Vermerk
-  lastPage.drawRectangle({ x: sigX - 10, y: sigY - 26, width: sigWidth + 20, height: sigHeight + 36, color: rgb(1, 1, 1) });
-  lastPage.drawImage(pngImage, { x: sigX, y: sigY, width: sigWidth, height: sigHeight });
-  lastPage.drawLine({ start: { x: sigX, y: sigY - 4 }, end: { x: sigX + sigWidth, y: sigY - 4 }, thickness: 0.7, color: rgb(0.45, 0.42, 0.36) });
-  const jetzt = new Date().toLocaleDateString('de-DE') + ', ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-  lastPage.drawText(`${patientName}, ${jetzt}`, { x: sigX, y: sigY - 14, size: 8, font, color: rgb(0.2, 0.2, 0.2) });
-  lastPage.drawText('Digital bestätigt in der Wunschlos App', { x: sigX, y: sigY - 23, size: 6.5, font, color: rgb(0.45, 0.45, 0.45) });
-
-  // 4. Speichern & über den bestehenden Weg hochladen (Backend verknüpft
-  //    automatisch mit dem Original und setzt "Bestätigt am")
-  const signedBytes = await pdfDoc.save();
-  const blob = new Blob([signedBytes as BlobPart], { type: 'application/pdf' });
   const basisName = (dateiname || 'Dokument').replace(/\.(pdf|jpg|jpeg|png)$/i, '');
-
   const formData = new FormData();
   formData.append('token', token);
   formData.append('patientName', patientName);
-  formData.append('typ', typ);
+  formData.append('typ', unbox(doc.Typ));
   formData.append('originalDocumentId', doc.id);
   formData.append('data', blob, `Unterschrieben_${basisName}.pdf`);
 
