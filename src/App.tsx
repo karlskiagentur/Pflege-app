@@ -1934,16 +1934,10 @@ export default function App() {
          {activeModal === 'new-appointment' && (<div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left"><button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button><div className="space-y-6"><h3 className="text-xl font-black flex items-center gap-3"><CalendarDays className="text-[#dccfbc]"/> Neuer Termin</h3><p className="text-xs text-gray-400">Schlagen Sie einen Tag vor. Wir bestätigen kurzfristig.</p><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Wunschdatum</label><input type="date" value={requestDate} onChange={(e)=>setRequestDate(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Uhrzeit (Optional)</label><input type="time" value={requestTime} onChange={(e)=>setRequestTime(e.target.value)} className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none font-bold" style={{ colorScheme: 'light' }} /></div><div className="space-y-2"><label className="text-[10px] font-black uppercase text-[#b5a48b]">Grund (Tätigkeit)</label><input type="text" value={requestReason} onChange={(e)=>setRequestReason(e.target.value)} placeholder="z.B. Einkaufen, Arzt..." className="bg-[#F9F7F4] w-full p-4 rounded-2xl outline-none text-sm" /></div><button onClick={handleNewTerminRequest} disabled={isSending || !requestDate} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex justify-center items-center gap-2">{isSending ? <RefreshCw className="animate-spin" size={16}/> : <Send size={16} />} {sentStatus === 'success' ? 'Anfrage gesendet!' : 'Anfrage senden'}</button></div></div>)}
          
          {activeModal === 'folder' && (
-            <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 flex flex-col">
-                <div className="shrink-0">
-                    <div className="flex justify-between items-center mb-8">
-                        <h3 className="text-2xl font-black">{uploadContext}</h3>
-                        <button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button>
-                    </div>
-                    <button onClick={() => setActiveModal('upload')} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 mb-8 shadow-lg active:scale-95 transition-all">
-                        <Plus size={20}/> Neu hochladen
-                    </button>
-                    <p className="text-[10px] font-black text-gray-400 uppercase mb-4">Bisherige Dokumente</p>
+            <div className="bg-white w-full max-w-md max-h-[88vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 flex flex-col">
+                <div className="shrink-0 flex justify-between items-center mb-5">
+                    <h3 className="text-2xl font-black">{uploadContext}</h3>
+                    <button onClick={()=>setActiveModal(null)} className="bg-gray-100 p-2 rounded-full"><X size={20}/></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 pr-1">
@@ -1951,26 +1945,20 @@ export default function App() {
                         const rechnungen = sichtbareDokumente.filter(d => unbox(d.Typ) === 'Rechnung' && unbox(d.Richtung) === 'Vom Pflegedienst');
                         const offen = rechnungen.filter(d => !d.Bezahlt);
                         const bezahlt = rechnungen.filter(d => d.Bezahlt);
-                        if (rechnungen.length === 0) return (
-                            <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50">
-                                <Euro className="text-gray-300"/>
-                                <p className="text-sm font-bold text-gray-400">Noch keine Rechnungen</p>
-                            </div>
-                        );
                         const RechnungCard = (doc: any, offenVariant: boolean) => (
-                            <div key={doc.id} className={offenVariant
-                                ? "border-l-4 border-orange-400 bg-orange-50/40 border border-orange-100 p-4 rounded-2xl"
-                                : "bg-gray-50 border border-gray-100 p-3 rounded-2xl"}>
-                                <div className="flex items-center justify-between gap-2">
-                                    <p className={`font-bold truncate min-w-0 ${offenVariant ? 'text-sm text-gray-800' : 'text-[13px] text-gray-600'}`}>{unbox(doc.Dateiname) || 'Rechnung'}</p>
+                            <div key={doc.id} className={`rounded-2xl p-5 min-h-[88px] ${offenVariant
+                                ? 'border-l-4 border-orange-400 bg-orange-50/40 border border-orange-100'
+                                : 'bg-gray-50 border border-gray-100'}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <p className="text-lg font-bold text-[#3A3A3A] truncate min-w-0">{unbox(doc.Dateiname) || 'Rechnung'}</p>
                                     {offenVariant
-                                        ? <span className="shrink-0 text-[10px] font-black uppercase text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full">Offen</span>
-                                        : <span className="shrink-0 text-[10px] font-black uppercase text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Bezahlt</span>}
+                                        ? <span className="shrink-0 text-sm font-black uppercase text-orange-700 bg-orange-100 px-3 py-1 rounded-full">Offen</span>
+                                        : <span className="shrink-0 text-sm font-black uppercase text-green-800 bg-green-100 px-3 py-1 rounded-full">Bezahlt</span>}
                                 </div>
-                                {doc.Datum && <p className="text-[10px] text-gray-400 mt-0.5">{formatDate(doc.Datum)}</p>}
-                                <div className="flex items-center gap-4 mt-2">
-                                    <button onClick={() => { markAsSeen(doc.id); window.open(doc.Link, '_blank'); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1"><Eye size={12}/> Vorschau</button>
-                                    <button onClick={() => { markAsSeen(doc.id); downloadRechnung({ url: doc.Link, dateiname: unbox(doc.Dateiname) }); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1"><Download size={12}/> Herunterladen</button>
+                                {doc.Datum && <p className="text-sm text-[#6b5f4e] mt-1">{formatDate(doc.Datum)}</p>}
+                                <div className="flex gap-3 mt-4">
+                                    <button onClick={() => { markAsSeen(doc.id); window.open(doc.Link, '_blank'); }} className="flex-1 min-h-[48px] py-4 rounded-2xl bg-[#F9F7F4] text-[#6b5f4e] font-bold text-base flex items-center justify-center gap-2 active:scale-95 transition-all"><Eye size={18}/> Vorschau</button>
+                                    <button onClick={() => { markAsSeen(doc.id); downloadRechnung({ url: doc.Link, dateiname: unbox(doc.Dateiname) }); }} className="flex-1 min-h-[48px] py-4 rounded-2xl bg-[#b5a48b] text-white font-bold text-base flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"><Download size={18}/> Herunterladen</button>
                                 </div>
                             </div>
                         );
@@ -1978,67 +1966,80 @@ export default function App() {
                             <div className="space-y-6">
                                 {offen.length > 0 && (
                                     <div>
-                                        <p className="text-[11px] font-black uppercase text-orange-500 mb-2">Noch zu bezahlen ({offen.length})</p>
-                                        <div className="space-y-3">{offen.map(d => RechnungCard(d, true))}</div>
+                                        <p className="text-sm font-black uppercase text-orange-600 mb-3">Noch zu bezahlen ({offen.length})</p>
+                                        <div className="space-y-4">{offen.map(d => RechnungCard(d, true))}</div>
                                     </div>
                                 )}
                                 {bezahlt.length > 0 && (
                                     <div>
-                                        <p className="text-[11px] font-black uppercase text-gray-400 mb-2">Archiv ({bezahlt.length})</p>
-                                        <div className="space-y-2">{bezahlt.map(d => RechnungCard(d, false))}</div>
+                                        <p className="text-sm font-black uppercase text-gray-400 mb-3">Archiv ({bezahlt.length})</p>
+                                        <div className="space-y-4">{bezahlt.map(d => RechnungCard(d, false))}</div>
+                                    </div>
+                                )}
+                                {rechnungen.length === 0 && (
+                                    <div className="bg-gray-50 p-5 rounded-2xl flex items-center gap-4 opacity-60">
+                                        <Euro className="text-gray-300"/>
+                                        <p className="text-base font-bold text-gray-400">Noch keine Rechnungen</p>
                                     </div>
                                 )}
                             </div>
                         );
                     })() : sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
-                        <div className="space-y-3">
+                        <div className="space-y-4">
                             {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
                                 const isUnseen = unseenDocIds.includes(doc.id);
                                 const istUnterschrieben = (unbox(doc.Dateiname) || '').startsWith('Unterschrieben_');
+                                const kannUnterschreiben = unbox(doc.Typ) === 'Leistungsnachweis' && unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am;
                                 return (
                                 <div
                                     key={doc.id}
-                                    className={`bg-white border p-4 rounded-2xl flex items-center gap-4 relative ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100'}`}
+                                    className={`relative rounded-2xl p-5 min-h-[88px] border ${isUnseen ? 'border-[#b5a48b] bg-[#FFFBEB]' : 'border-gray-100 bg-white'}`}
                                 >
                                     {isUnseen && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full -mt-1 -mr-1 shadow-sm" />}
-                                    <div className={`p-3 rounded-full ${isUnseen ? 'bg-[#b5a48b] text-white' : 'bg-[#dccfbc]/10 text-[#b5a48b]'}`}>
-                                        <FileText size={20}/>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className={`text-sm flex items-center ${isUnseen ? 'font-black text-black' : 'font-bold text-gray-700'}`}>
-                                            <span className="truncate min-w-0">{unbox(doc.Dateiname) || "Dokument"}</span>
-                                            {isUnseen && (
-                                                <span className="inline-flex items-center gap-1 text-red-600 text-xs font-black uppercase ml-2 shrink-0">
-                                                    <span className="w-2 h-2 bg-red-500 rounded-full" /> Neu
-                                                </span>
-                                            )}
-                                        </p>
-                                        <div className="flex items-center gap-4 mt-1">
-                                            <a href={doc.Link} target="_blank" rel="noreferrer" onClick={() => markAsSeen(doc.id)} className="text-[10px] text-gray-400 uppercase flex items-center gap-1 hover:text-[#b5a48b]">
-                                                Öffnen <ExternalLink size={10}/>
-                                            </a>
+                                    <div className="flex items-start gap-3">
+                                        <div className={`p-3 rounded-full shrink-0 ${isUnseen ? 'bg-[#b5a48b] text-white' : 'bg-[#dccfbc]/20 text-[#b5a48b]'}`}>
+                                            <FileText size={22}/>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-lg font-bold text-[#3A3A3A] flex items-center gap-2">
+                                                <span className="truncate min-w-0">{unbox(doc.Dateiname) || "Dokument"}</span>
+                                                {isUnseen && (
+                                                    <span className="inline-flex items-center gap-1 text-red-600 text-sm font-black uppercase shrink-0">
+                                                        <span className="w-2 h-2 bg-red-500 rounded-full" /> Neu
+                                                    </span>
+                                                )}
+                                            </p>
                                             {istUnterschrieben && (
-                                                <span className="inline-flex items-center gap-1 text-green-700 text-xs font-black uppercase">
-                                                    <Check size={14}/> Unterschrieben
-                                                </span>
-                                            )}
-                                            {unbox(doc.Typ) === 'Leistungsnachweis' && unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am && (
-                                                <button onClick={() => { markAsSeen(doc.id); openSignModal(doc); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
-                                                    <PenLine size={10}/> Bestätigen & Unterschreiben
-                                                </button>
+                                                <p className="text-sm text-green-700 font-bold flex items-center gap-1 mt-1">
+                                                    <Check size={16}/> Unterschrieben
+                                                </p>
                                             )}
                                         </div>
+                                    </div>
+                                    <div className="flex gap-3 mt-4">
+                                        <button onClick={() => { markAsSeen(doc.id); window.open(doc.Link, '_blank'); }} className="flex-1 min-h-[48px] py-4 rounded-2xl bg-[#F9F7F4] text-[#6b5f4e] font-bold text-base flex items-center justify-center gap-2 active:scale-95 transition-all"><Eye size={18}/> Öffnen</button>
+                                        {kannUnterschreiben && (
+                                            <button onClick={() => { markAsSeen(doc.id); openSignModal(doc); }} className="flex-1 min-h-[48px] py-4 rounded-2xl bg-[#b5a48b] text-white font-bold text-base flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"><PenLine size={18}/> Unterschreiben</button>
+                                        )}
                                     </div>
                                 </div>
                                 );
                             })}
                         </div>
                     ) : (
-                        <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-4 opacity-50">
+                        <div className="bg-gray-50 p-5 rounded-2xl flex items-center gap-4 opacity-60">
                             <FileText className="text-gray-300"/>
-                            <p className="text-sm font-bold text-gray-400">Archiv ist leer</p>
+                            <p className="text-base font-bold text-gray-400">Noch keine Dokumente</p>
                         </div>
                     )}
+
+                    {/* Upload dezent, unter der Liste (nur falls der Patient selbst etwas einreicht) */}
+                    <div className="mt-8 flex flex-col items-center">
+                        <button onClick={() => setActiveModal('upload')} className="flex items-center gap-2 text-sm text-[#b5a48b] border border-[#e0dccf] px-4 py-2 rounded-full active:scale-95 transition-all">
+                            <Plus size={16}/> Eigenes Dokument hochladen
+                        </button>
+                        <p className="text-xs text-gray-400 mt-2 text-center">Nur nötig, falls Sie selbst etwas einreichen möchten.</p>
+                    </div>
                 </div>
             </div>
          )}
