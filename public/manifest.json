@@ -1,0 +1,11 @@
+{
+  "name": "Wunschlos Pflege",
+  "short_name": "Wunschlos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F9F7F4",
+  "theme_color": "#dccfbc",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

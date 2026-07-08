@@ -252,8 +252,8 @@ const getProposedDetails = (b: any) => {
 export default function App() {
   const [patientId, setPatientId] = useState<string | null>(localStorage.getItem('active_patient_id'));
   const [token, setToken] = useState<string | null>(localStorage.getItem('active_token'));
-  // Push-Status Patient: 'idle' = noch nicht aktiviert, 'granted' = aktiv, 'denied' = im Browser blockiert
-  const [patientPushStatus, setPatientPushStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
+  // Push-Status Patient: 'idle' = noch nicht aktiviert, 'granted' = aktiv, 'denied' = blockiert, 'install' = iOS ohne Home-Bildschirm-Installation
+  const [patientPushStatus, setPatientPushStatus] = useState<'idle' | 'granted' | 'denied' | 'install'>('idle');
   const [fullName, setFullName] = useState('');
   const [loginCode, setLoginCode] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -467,9 +467,16 @@ export default function App() {
   }, [patientId]);
 
   // Push-Status beim Login prüfen (kein automatisches Nachfragen)
+  // iOS: Web-Push funktioniert NUR, wenn die App zum Home-Bildschirm hinzugefügt wurde.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
   useEffect(() => {
       if (!patientId) return;
-      if (typeof Notification === 'undefined') { setPatientPushStatus('denied'); return; }
+      if (typeof Notification === 'undefined' || !('PushManager' in window)) {
+          // iOS im Safari-Tab: Push-API existiert erst nach "Zum Home-Bildschirm"
+          setPatientPushStatus(isIOS && !isStandalone ? 'install' : 'denied');
+          return;
+      }
       if (Notification.permission === 'denied') { setPatientPushStatus('denied'); return; }
       isPushSubscribed().then(subscribed => {
           setPatientPushStatus(subscribed && Notification.permission === 'granted' ? 'granted' : 'idle');
@@ -478,16 +485,19 @@ export default function App() {
 
   const aktivierePush = async () => {
       try {
-          if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+          if (typeof Notification === 'undefined' || !('PushManager' in window)) {
+              setPatientPushStatus(isIOS && !isStandalone ? 'install' : 'denied');
+              return;
+          }
+          if (Notification.permission === 'denied') {
               setPatientPushStatus('denied');
               return;
           }
           const ok = await subscribeToPush(patientId!);
           if (ok) {
               setPatientPushStatus('granted');
-          } else if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+          } else if ((Notification.permission as string) === 'denied') {
               setPatientPushStatus('denied');
-              alert('Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter Safari > Mitteilungen erlauben.');
           } else {
               alert('Ohne erlaubte Benachrichtigungen können wir Sie nicht über neue Termine oder Dokumente informieren.');
           }
@@ -1552,13 +1562,17 @@ export default function App() {
         {patientPushStatus === 'denied' && (
             <div className="bg-[#FAECE7] rounded-2xl p-4 flex items-center gap-2">
                 <Bell size={18} className="text-[#993C1D] shrink-0" />
-                <span className="text-sm font-bold text-[#993C1D]">Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter Safari &gt; Mitteilungen erlauben.</span>
+                <span className="text-sm font-bold text-[#993C1D]">
+                    {isIOS
+                        ? 'Benachrichtigungen sind blockiert. Bitte in den iPhone-Einstellungen unter "Wunschlos" > Mitteilungen erlauben.'
+                        : 'Benachrichtigungen sind blockiert. Bitte in den Browser-Einstellungen für diese Website erlauben.'}
+                </span>
             </div>
         )}
-        {patientPushStatus === 'granted' && (
-            <div className="bg-[#EEF6EE] rounded-2xl p-4 flex items-center gap-2">
-                <Check size={18} className="text-[#5B9E5B] shrink-0" strokeWidth={3} />
-                <span className="text-sm font-bold text-[#3f7a3f]">Benachrichtigungen sind aktiviert</span>
+        {patientPushStatus === 'install' && (
+            <div className="bg-[#F9F7F4] rounded-2xl p-4 flex items-center gap-2">
+                <Bell size={18} className="text-[#b5a48b] shrink-0" />
+                <span className="text-sm font-bold text-[#6b5f4e]">Für Benachrichtigungen: App über das Teilen-Symbol zum Home-Bildschirm hinzufügen und dort öffnen.</span>
             </div>
         )}
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
@@ -1613,6 +1627,13 @@ export default function App() {
                 })}
             </div>
         </section>
+
+        {patientPushStatus === 'granted' && (
+            <div className="bg-[#EEF6EE] rounded-2xl p-4 flex items-center gap-2">
+                <Check size={18} className="text-[#5B9E5B] shrink-0" strokeWidth={3} />
+                <span className="text-sm font-bold text-[#3f7a3f]">Benachrichtigungen sind aktiviert</span>
+            </div>
+        )}
     </div>
   );
 
