@@ -12,8 +12,35 @@ import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push'
 // Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
+// Canvas auf den tatsächlich bemalten Bereich zuschneiden (kein leerer Rand),
+// damit das PNG später proportional klein in die Box passt. null = leer.
+function trimSignature(canvas: HTMLCanvasElement): string | null {
+  const ctx = canvas.getContext('2d')!;
+  const { width, height } = canvas;
+  const img = ctx.getImageData(0, 0, width, height).data;
+  let minX = width, minY = height, maxX = 0, maxY = 0, found = false;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (img[(y * width + x) * 4 + 3] > 10) {
+        found = true;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (!found) return null;
+  const pad = 8;
+  minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+  maxX = Math.min(width, maxX + pad); maxY = Math.min(height, maxY + pad);
+  const w = maxX - minX, h = maxY - minY;
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  out.getContext('2d')!.drawImage(canvas, minX, minY, w, h, 0, 0, w, h);
+  return out.toDataURL('image/png');
+}
+
 // Signaturfeld: Canvas an die angezeigte Größe gekoppelt (scharf + korrekte
-// Koordinaten, auch im Querformat). Meldet die aktuelle Zeichnung per onChange.
+// Koordinaten, auch im Querformat). Meldet die zugeschnittene Zeichnung per onChange.
 function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -47,7 +74,8 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void
   const end = () => {
     drawing.current = false;
     canvasRef.current!.getContext('2d')!.beginPath();
-    if (hasDrawn.current) onChange(canvasRef.current!.toDataURL('image/png'));
+    // Zugeschnittene Signatur senden (nur bemalter Bereich, kein leerer Rand)
+    if (hasDrawn.current) onChange(trimSignature(canvasRef.current!));
   };
   const draw = (e: any) => {
     if (!drawing.current) return;
@@ -1966,6 +1994,10 @@ export default function App() {
                     <SignaturePad key="klient" onChange={setSigKlient} />
                 ) : (
                     <SignaturePad key="bestaetigung" onChange={setSigBestaetigung} />
+                )}
+
+                {isLandscape && (signaturStep === 1 ? !sigKlient : !sigBestaetigung) && (
+                    <p className="text-[11px] text-gray-400 text-center mt-2">Bitte zuerst unterschreiben.</p>
                 )}
 
                 <div className="flex gap-3 mt-5">

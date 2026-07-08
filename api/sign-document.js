@@ -9,13 +9,18 @@ const DATEI_FIELD = 'fld7vyNPt2Be9xAaT'; // Anhang-Feld "Datei" in der Dokumente
 const BOX_KLIENT = { x0: 25.1, x1: 210.9, y0: 109.4, y1: 144.6 };
 const BOX_BESTAETIGUNG = { x0: 526.1, x1: 670.8, y0: 58.5, y1: 93.8 };
 
-// PNG proportional in eine Box einpassen (zentriert)
-function fitInBox(pngDims, box, pad = 2) {
-  const bw = (box.x1 - box.x0) - 2 * pad, bh = (box.y1 - box.y0) - 2 * pad;
-  const ratio = pngDims.width / pngDims.height;
-  let w = bw, h = w / ratio;
-  if (h > bh) { h = bh; w = h * ratio; }
-  return { x: box.x0 + pad + (bw - w) / 2, y: box.y0 + pad + (bh - h) / 2, w, h };
+// PNG proportional in eine Box einpassen (zentriert). Gibt x/y/width/height
+// zurück - drawImage MUSS width+height bekommen, sonst zeichnet pdf-lib in
+// Originalgröße des PNG (= viel zu groß).
+function fitInBox(png, box, pad = 3) {
+  const bw = (box.x1 - box.x0) - 2 * pad;
+  const bh = (box.y1 - box.y0) - 2 * pad;
+  const ratio = png.width / png.height;   // echtes Seitenverhältnis der Zeichnung
+  let w = bw, h = w / ratio;              // erst an Breite anpassen
+  if (h > bh) { h = bh; w = h * ratio; }  // falls zu hoch -> an Höhe
+  const x = box.x0 + pad + (bw - w) / 2;  // zentriert
+  const y = box.y0 + pad + (bh - h) / 2;
+  return { x, y, width: w, height: h };
 }
 
 const toPng = (dataUrl) => Buffer.from(String(dataUrl).replace(/^data:image\/png;base64,/, ''), 'base64');
