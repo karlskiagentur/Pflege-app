@@ -1516,8 +1516,12 @@ export default function App() {
   );
 
   const openTasksCount = tasks.filter(t => !t.done).length;
+  // Bestätigte Originale ausblenden - sichtbar bleibt nur die unterschriebene Version
+  const sichtbareDokumente = documents.filter(d =>
+    !(unbox(d.Richtung) === 'Vom Pflegedienst' && unbox(d.Vom_Patienten_Bestaetigt_Am))
+  );
   // Berechne ungelesene Dokumente (serverbasiert, geräteübergreifend) - einheitliche Definition
-  const unseenDocs = documents.filter(d =>
+  const unseenDocs = sichtbareDokumente.filter(d =>
     (unbox(getValue(d, 'Typ')) === 'Rechnung' || unbox(getValue(d, 'Typ')) === 'Leistungsnachweis') &&
     unbox(getValue(d, 'Richtung')) === 'Vom Pflegedienst' &&
     !unbox(getValue(d, 'Vom_Patienten_Gesehen'))
@@ -1728,7 +1732,7 @@ export default function App() {
 
   const renderHochladen = () => {
     // FILTER: Nur Dokumente anzeigen, die zum aktuellen Context passen
-    const filteredDocs = documents.filter(d => unbox(d.Typ) === uploadContext);
+    const filteredDocs = sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext);
 
     return (
         <div className="space-y-4 animate-in fade-in pb-12">
@@ -1895,10 +1899,11 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 pr-1">
-                    {documents.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
+                    {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).length > 0 ? (
                         <div className="space-y-3">
-                            {documents.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
+                            {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
                                 const isUnseen = unseenDocIds.includes(doc.id);
+                                const istUnterschrieben = (unbox(doc.Dateiname) || '').startsWith('Unterschrieben_');
                                 return (
                                 <div
                                     key={doc.id}
@@ -1921,11 +1926,12 @@ export default function App() {
                                             <a href={doc.Link} target="_blank" rel="noreferrer" onClick={() => markAsSeen(doc.id)} className="text-[10px] text-gray-400 uppercase flex items-center gap-1 hover:text-[#b5a48b]">
                                                 Öffnen <ExternalLink size={10}/>
                                             </a>
-                                            {doc.Vom_Patienten_Bestaetigt_Am ? (
-                                                <span className="text-[10px] text-[#5B9E5B] font-black uppercase flex items-center gap-1">
-                                                    <Check size={10}/> Bestätigt am {formatDate(doc.Vom_Patienten_Bestaetigt_Am)}
+                                            {istUnterschrieben && (
+                                                <span className="inline-flex items-center gap-1 text-green-700 text-xs font-black uppercase">
+                                                    <Check size={14}/> Unterschrieben
                                                 </span>
-                                            ) : (
+                                            )}
+                                            {unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am && (
                                                 <button onClick={() => { markAsSeen(doc.id); setSignDoc(doc); setActiveModal('sign'); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
                                                     <PenLine size={10}/> Bestätigen & Unterschreiben
                                                 </button>
