@@ -9,9 +9,9 @@ import {
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
-// Deine n8n Live-URL
+// n8n nur noch für Schreib-Endpunkte (submit, upload, update_task, push, ...);
+// Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
-const AGGREGATOR_ENDPOINT = 'get_full_app_data';
 
 function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -363,8 +363,8 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        const response = await fetch(`${N8N_BASE_URL}/${AGGREGATOR_ENDPOINT}?token=${authToken}`, { 
-            signal: controller.signal 
+        const response = await fetch(`/api/app-data?token=${authToken}`, {
+            signal: controller.signal
         });
         
         if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
@@ -533,7 +533,7 @@ export default function App() {
 
     setIsLoggingIn(true);
     try {
-      const res = await fetch(`${N8N_BASE_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
+      const res = await fetch('/api/patient-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
       const data = await res.json();
       if (data.status === "success" && data.patientId && data.token) {
         localStorage.setItem('active_patient_id', data.patientId);
@@ -774,7 +774,7 @@ export default function App() {
     setLoginError(null);
     setIsLoggingIn(true);
     try {
-      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_login`, {
+      const res = await fetch('/api/ma-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: fullName, code: loginCode })
@@ -796,13 +796,13 @@ export default function App() {
   };
 
   const fetchMitarbeiterTermine = async () => {
-    if (!mitarbeiterName) return;
+    if (!mitarbeiterId) return;
     setMitarbeiterLoading(true);
     try {
-      const res = await fetch(`${N8N_BASE_URL}/mitarbeiter_termine`, {
+      const res = await fetch('/api/ma-termine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterName: mitarbeiterName })
+        body: JSON.stringify({ mitarbeiterId: mitarbeiterId })
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -1857,7 +1857,7 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
         <button 
             key={t.id} 
-            onClick={() => { setActiveTab(t.id); fetchData(true); }}
+            onClick={() => { setActiveTab(t.id); if (Date.now() - lastFetchTimeRef.current > 45000) fetchData(true); }}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${activeTab === t.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
