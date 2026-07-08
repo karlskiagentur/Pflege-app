@@ -4,7 +4,7 @@ import {
   X, Upload, Mic, LogOut, Calendar as CalendarIcon,
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine
+  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
 
@@ -12,10 +12,31 @@ import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push'
 // Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
 const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
 
-function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
+// Signaturfeld: Canvas an die angezeigte Größe gekoppelt (scharf + korrekte
+// Koordinaten, auch im Querformat). Meldet die aktuelle Zeichnung per onChange.
+function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const hasDrawn = useRef(false);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const resize = () => {
+      const r = c.getBoundingClientRect();
+      c.width = r.width;
+      c.height = r.height;
+      // Zeichnung geht beim Umbrechen/Drehen verloren -> Eltern-State leeren
+      if (hasDrawn.current) { hasDrawn.current = false; onChange(null); }
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    return () => {
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('orientationchange', resize);
+    };
+  }, []);
 
   const getPos = (e: any) => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -23,7 +44,11 @@ function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
     return { x: point.clientX - rect.left, y: point.clientY - rect.top };
   };
   const start = (e: any) => { drawing.current = true; draw(e); };
-  const end = () => { drawing.current = false; canvasRef.current!.getContext('2d')!.beginPath(); };
+  const end = () => {
+    drawing.current = false;
+    canvasRef.current!.getContext('2d')!.beginPath();
+    if (hasDrawn.current) onChange(canvasRef.current!.toDataURL('image/png'));
+  };
   const draw = (e: any) => {
     if (!drawing.current) return;
     e.preventDefault();
@@ -34,47 +59,21 @@ function SignaturePad({ onSave }: { onSave: (dataUrl: string) => void }) {
     ctx.lineTo(x, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, y);
   };
   const clear = () => {
-    canvasRef.current!.getContext('2d')!.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height);
+    const c = canvasRef.current!;
+    c.getContext('2d')!.clearRect(0, 0, c.width, c.height);
     hasDrawn.current = false;
+    onChange(null);
   };
-  const save = () => { if (hasDrawn.current) onSave(canvasRef.current!.toDataURL('image/png')); };
 
   return (
     <div>
-      <canvas ref={canvasRef} width={340} height={160}
-        className="border-2 border-dashed border-[#e0dccf] rounded-2xl bg-white touch-none w-full"
+      <canvas ref={canvasRef}
+        className="border-2 border-dashed border-[#e0dccf] rounded-2xl bg-white touch-none w-full h-40"
         onMouseDown={start} onMouseMove={draw} onMouseUp={end} onMouseLeave={end}
         onTouchStart={start} onTouchMove={draw} onTouchEnd={end} />
-      <div className="flex gap-3 mt-4">
-        <button onClick={clear} className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-4 rounded-2xl font-black uppercase">Löschen</button>
-        <button onClick={save} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase">Bestätigen</button>
-      </div>
+      <button onClick={clear} className="mt-3 w-full bg-[#F9F7F4] text-[#b5a48b] py-3 rounded-2xl font-black uppercase text-sm">Löschen</button>
     </div>
   );
-}
-
-async function signAndUploadDocument(doc: any, signatureDataUrl: string, _patientId: string, patientName: string, token: string) {
-  const dateiname = unbox(doc.Dateiname);
-
-  // Serverseite lädt das Original, findet den Unterschrift-Anker und stempelt das PNG exakt.
-  const res = await fetch('/api/sign-document', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pdfUrl: doc.Link, signaturePng: signatureDataUrl }),
-  });
-  if (!res.ok) throw new Error('Signatur fehlgeschlagen (Status ' + res.status + ')');
-  const blob = await res.blob();
-
-  const basisName = (dateiname || 'Dokument').replace(/\.(pdf|jpg|jpeg|png)$/i, '');
-  const formData = new FormData();
-  formData.append('token', token);
-  formData.append('patientName', patientName);
-  formData.append('typ', unbox(doc.Typ));
-  formData.append('originalDocumentId', doc.id);
-  formData.append('data', blob, `Unterschrieben_${basisName}.pdf`);
-
-  const uploadRes = await fetch(`${N8N_BASE_URL}/upload_document`, { method: 'POST', body: formData });
-  if (!uploadRes.ok) throw new Error('Upload fehlgeschlagen (Status ' + uploadRes.status + ')');
 }
 
 // --- HELFER ---
@@ -260,6 +259,10 @@ export default function App() {
   const [selectedLohn, setSelectedLohn] = useState<any>(null);
   const [signDoc, setSignDoc] = useState<any>(null);
   const [isSigning, setIsSigning] = useState(false);
+  const [signaturStep, setSignaturStep] = useState<1 | 2>(1);
+  const [sigKlient, setSigKlient] = useState<string | null>(null);
+  const [sigBestaetigung, setSigBestaetigung] = useState<string | null>(null);
+  const [isLandscape, setIsLandscape] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth > window.innerHeight : true);
   const [lohnDownloading, setLohnDownloading] = useState(false);
   const [uploadContext, setUploadContext] = useState<'Rechnung' | 'Leistungsnachweis' | ''>(''); 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -423,6 +426,17 @@ export default function App() {
       if (patientId) fetchData(false);
   }, [patientId]);
 
+  // Geräte-Ausrichtung verfolgen (Signatur-Pad nur im Querformat)
+  useEffect(() => {
+      const update = () => setIsLandscape(window.innerWidth > window.innerHeight);
+      window.addEventListener('resize', update);
+      window.addEventListener('orientationchange', update);
+      return () => {
+          window.removeEventListener('resize', update);
+          window.removeEventListener('orientationchange', update);
+      };
+  }, []);
+
   // Push-Status beim Login prüfen (kein automatisches Nachfragen)
   // iOS: Web-Push funktioniert NUR, wenn die App zum Home-Bildschirm hinzugefügt wurde.
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
@@ -565,17 +579,39 @@ export default function App() {
     setLohnDownloading(false);
   };
 
-  const handleSignSave = async (signatureDataUrl: string) => {
-    if (!signDoc || !patientId || !token) return;
+  const openSignModal = (doc: any) => {
+    setSignDoc(doc);
+    setSignaturStep(1);
+    setSigKlient(null);
+    setSigBestaetigung(null);
+    setActiveModal('sign');
+  };
+  const closeSignModal = () => {
+    setActiveModal(null);
+    setSignDoc(null);
+    setSignaturStep(1);
+    setSigKlient(null);
+    setSigBestaetigung(null);
+  };
+
+  const handleSignSubmit = async () => {
+    if (!signDoc || !token || !sigKlient) return;
     setIsSigning(true);
     try {
-        await signAndUploadDocument(signDoc, signatureDataUrl, patientId, getValue(patientData, 'Name'), token);
-        setActiveModal(null);
-        setSignDoc(null);
+        const res = await fetch('/api/sign-document', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, originalDocumentId: signDoc.id, signaturKlient: sigKlient, signaturBestaetigung: sigBestaetigung }),
+        });
+        if (!res.ok) {
+            const t = await res.text().catch(() => '');
+            throw new Error(`Server antwortete mit ${res.status}: ${t}`);
+        }
+        closeSignModal();
         fetchData(true);
     } catch (err: any) {
         console.error('Bestätigung fehlgeschlagen:', err);
-        alert('Fehler beim Bestätigen: ' + err.message);
+        alert('Fehler beim Absenden der Unterschriften: ' + err.message);
     }
     setIsSigning(false);
   };
@@ -1889,7 +1925,7 @@ export default function App() {
                                                 </span>
                                             )}
                                             {unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am && (
-                                                <button onClick={() => { markAsSeen(doc.id); setSignDoc(doc); setActiveModal('sign'); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
+                                                <button onClick={() => { markAsSeen(doc.id); openSignModal(doc); }} className="text-[10px] text-[#b5a48b] font-black uppercase flex items-center gap-1">
                                                     <PenLine size={10}/> Bestätigen & Unterschreiben
                                                 </button>
                                             )}
@@ -1909,24 +1945,44 @@ export default function App() {
             </div>
          )}
 
-         {activeModal === 'sign' && signDoc && (
-            <div className="bg-white w-full max-w-md max-h-[85vh] rounded-t-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto overscroll-contain">
-                <button onClick={() => { setActiveModal(null); setSignDoc(null); }} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
-                <h3 className="text-xl font-black mb-1 pr-10">Bestätigen & Unterschreiben</h3>
-                <p className="text-xs text-gray-400 mb-4">{unbox(signDoc.Dateiname) || "Dokument"}</p>
+         {activeModal === 'sign' && signDoc && (() => {
+            const istZweiSchritt = unbox(signDoc.Typ) === 'Leistungsnachweis';
+            return (
+            <div className="bg-white w-full max-w-2xl max-h-[92vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto overscroll-contain">
+                <button onClick={closeSignModal} className="absolute top-5 right-5 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
+                {istZweiSchritt && <p className="text-[10px] font-black uppercase text-[#b5a48b]">Schritt {signaturStep} von 2</p>}
+                <h3 className="text-xl font-black mb-1 pr-10">{signaturStep === 1 ? 'Unterschrift des Klienten' : 'Bestätigung der erbrachten Leistungen'}</h3>
+                <p className="text-xs text-gray-400 mb-4 flex items-center gap-2">
+                    {unbox(signDoc.Dateiname) || "Dokument"}
+                    <a href={signDoc.Link} target="_blank" rel="noreferrer" className="text-[#b5a48b] font-black uppercase inline-flex items-center gap-1"><ExternalLink size={10}/> Ansehen</a>
+                </p>
 
-                <div className="bg-[#F9F7F4] rounded-2xl overflow-hidden mb-6 border border-gray-100">
-                    <iframe src={signDoc.Link} className="w-full h-[40vh] border-none" title="Dokument-Vorschau" />
-                    <button onClick={() => window.open(signDoc.Link, '_blank')} className="w-full text-[10px] text-[#b5a48b] font-black uppercase py-2 flex items-center justify-center gap-1 border-t border-gray-100">
-                        <ExternalLink size={10}/> In neuem Tab öffnen
-                    </button>
+                {!isLandscape ? (
+                    <div className="bg-[#FAF3E9] rounded-2xl p-8 text-center my-6">
+                        <RotateCcw size={40} className="text-[#b5a48b] mx-auto mb-3" />
+                        <p className="font-bold text-[#6b5f4e]">Bitte drehen Sie Ihr Gerät ins Querformat zum Unterschreiben.</p>
+                    </div>
+                ) : signaturStep === 1 ? (
+                    <SignaturePad key="klient" onChange={setSigKlient} />
+                ) : (
+                    <SignaturePad key="bestaetigung" onChange={setSigBestaetigung} />
+                )}
+
+                <div className="flex gap-3 mt-5">
+                    {signaturStep === 2 && (
+                        <button onClick={() => setSignaturStep(1)} className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-4 rounded-2xl font-black uppercase">Zurück</button>
+                    )}
+                    {istZweiSchritt && signaturStep === 1 ? (
+                        <button disabled={!sigKlient} onClick={() => setSignaturStep(2)} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase disabled:opacity-40 active:scale-95 transition-all">Weiter</button>
+                    ) : (
+                        <button disabled={(signaturStep === 2 ? !sigBestaetigung : !sigKlient) || isSigning} onClick={handleSignSubmit} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase disabled:opacity-40 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                            {isSigning ? <RefreshCw className="animate-spin" size={18}/> : 'Bestätigen & Absenden'}
+                        </button>
+                    )}
                 </div>
-
-                <p className="text-[10px] font-black uppercase text-[#b5a48b] mb-2">Hier unterschreiben</p>
-                <SignaturePad onSave={handleSignSave} />
-                {isSigning && <div className="flex justify-center mt-4"><RefreshCw className="animate-spin text-[#b5a48b]" /></div>}
             </div>
-         )}
+            );
+         })()}
 
          {activeModal === 'revoke-consent' && (
             <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left border-t-4 border-red-400">
