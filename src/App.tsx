@@ -41,7 +41,7 @@ function trimSignature(canvas: HTMLCanvasElement): string | null {
 
 // Signaturfeld: Canvas an die angezeigte Größe gekoppelt (scharf + korrekte
 // Koordinaten, auch im Querformat). Meldet die zugeschnittene Zeichnung per onChange.
-function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
+function SignaturePad({ onChange, clearRef }: { onChange: (dataUrl: string | null) => void; clearRef?: React.MutableRefObject<(() => void) | null> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const hasDrawn = useRef(false);
@@ -92,15 +92,14 @@ function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void
     hasDrawn.current = false;
     onChange(null);
   };
+  // "Löschen" liegt im Modal (eine Button-Reihe) und ruft hierüber clear auf
+  if (clearRef) clearRef.current = clear;
 
   return (
-    <div>
-      <canvas ref={canvasRef}
-        className="border-2 border-dashed border-[#e0dccf] rounded-2xl bg-white touch-none w-full h-40"
-        onMouseDown={start} onMouseMove={draw} onMouseUp={end} onMouseLeave={end}
-        onTouchStart={start} onTouchMove={draw} onTouchEnd={end} />
-      <button onClick={clear} className="mt-3 w-full bg-[#F9F7F4] text-[#b5a48b] py-3 rounded-2xl font-black uppercase text-sm">Löschen</button>
-    </div>
+    <canvas ref={canvasRef}
+      className="border-2 border-dashed border-[#e0dccf] rounded-2xl bg-white touch-none w-full h-full min-h-[120px]"
+      onMouseDown={start} onMouseMove={draw} onMouseUp={end} onMouseLeave={end}
+      onTouchStart={start} onTouchMove={draw} onTouchEnd={end} />
   );
 }
 
@@ -317,8 +316,9 @@ export default function App() {
   const isDragging = useRef(false);
 
   const besucheRef = useRef<any[]>([]);
-  const isFetchingRef = useRef(false); 
-  const lastFetchTimeRef = useRef<number>(0); 
+  const isFetchingRef = useRef(false);
+  const lastFetchTimeRef = useRef<number>(0);
+  const sigClearRef = useRef<(() => void) | null>(null); 
 
   const handleDrag = (e: any) => {
     if (!isDragging.current) return;
@@ -1975,39 +1975,46 @@ export default function App() {
 
          {activeModal === 'sign' && signDoc && (() => {
             const istZweiSchritt = unbox(signDoc.Typ) === 'Leistungsnachweis';
+            const sigVorhanden = signaturStep === 1 ? !!sigKlient : !!sigBestaetigung;
             return (
-            <div className="bg-white w-full max-w-2xl max-h-[92vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 overflow-y-auto overscroll-contain">
+            <div className="bg-white w-full max-w-2xl max-h-[95vh] rounded-t-[3rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 flex flex-col">
                 <button onClick={closeSignModal} className="absolute top-5 right-5 p-2 bg-gray-100 rounded-full z-10"><X size={20}/></button>
-                {istZweiSchritt && <p className="text-[10px] font-black uppercase text-[#b5a48b]">Schritt {signaturStep} von 2</p>}
-                <h3 className="text-xl font-black mb-1 pr-10">{signaturStep === 1 ? 'Unterschrift des Klienten' : 'Bestätigung der erbrachten Leistungen'}</h3>
-                <p className="text-xs text-gray-400 mb-4 flex items-center gap-2">
-                    {unbox(signDoc.Dateiname) || "Dokument"}
-                    <a href={signDoc.Link} target="_blank" rel="noreferrer" className="text-[#b5a48b] font-black uppercase inline-flex items-center gap-1"><ExternalLink size={10}/> Ansehen</a>
-                </p>
+                <div className="shrink-0">
+                    {istZweiSchritt && <p className="text-[10px] font-black uppercase text-[#b5a48b]">Schritt {signaturStep} von 2</p>}
+                    <h3 className="text-xl font-black mb-1 pr-10">{signaturStep === 1 ? 'Unterschrift des Klienten' : 'Bestätigung der erbrachten Leistungen'}</h3>
+                    <p className="text-xs text-gray-400 mb-3 flex items-center gap-2">
+                        {unbox(signDoc.Dateiname) || "Dokument"}
+                        <a href={signDoc.Link} target="_blank" rel="noreferrer" className="text-[#b5a48b] font-black uppercase inline-flex items-center gap-1"><ExternalLink size={10}/> Ansehen</a>
+                    </p>
+                </div>
 
-                {!isLandscape ? (
-                    <div className="bg-[#FAF3E9] rounded-2xl p-8 text-center my-6">
-                        <RotateCcw size={40} className="text-[#b5a48b] mx-auto mb-3" />
-                        <p className="font-bold text-[#6b5f4e]">Bitte drehen Sie Ihr Gerät ins Querformat zum Unterschreiben.</p>
-                    </div>
-                ) : signaturStep === 1 ? (
-                    <SignaturePad key="klient" onChange={setSigKlient} />
-                ) : (
-                    <SignaturePad key="bestaetigung" onChange={setSigBestaetigung} />
-                )}
+                <div className="flex-1 min-h-0 flex flex-col justify-center">
+                    {!isLandscape ? (
+                        <div className="bg-[#FAF3E9] rounded-2xl p-8 text-center">
+                            <RotateCcw size={40} className="text-[#b5a48b] mx-auto mb-3" />
+                            <p className="font-bold text-[#6b5f4e]">Bitte drehen Sie Ihr Gerät ins Querformat zum Unterschreiben.</p>
+                        </div>
+                    ) : signaturStep === 1 ? (
+                        <SignaturePad key="klient" onChange={setSigKlient} clearRef={sigClearRef} />
+                    ) : (
+                        <SignaturePad key="bestaetigung" onChange={setSigBestaetigung} clearRef={sigClearRef} />
+                    )}
+                    {isLandscape && !sigVorhanden && (
+                        <p className="text-[11px] text-gray-400 text-center mt-2 shrink-0">Bitte zuerst unterschreiben.</p>
+                    )}
+                </div>
 
-                {isLandscape && (signaturStep === 1 ? !sigKlient : !sigBestaetigung) && (
-                    <p className="text-[11px] text-gray-400 text-center mt-2">Bitte zuerst unterschreiben.</p>
-                )}
-
-                <div className="flex gap-3 mt-5">
+                <div className="flex gap-3 mt-4 shrink-0">
+                    {isLandscape && (
+                        <button onClick={() => sigClearRef.current && sigClearRef.current()} className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-4 rounded-2xl font-black uppercase">Löschen</button>
+                    )}
                     {signaturStep === 2 && (
                         <button onClick={() => setSignaturStep(1)} className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-4 rounded-2xl font-black uppercase">Zurück</button>
                     )}
                     {istZweiSchritt && signaturStep === 1 ? (
                         <button disabled={!sigKlient} onClick={() => setSignaturStep(2)} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase disabled:opacity-40 active:scale-95 transition-all">Weiter</button>
                     ) : (
-                        <button disabled={(signaturStep === 2 ? !sigBestaetigung : !sigKlient) || isSigning} onClick={handleSignSubmit} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase disabled:opacity-40 flex items-center justify-center gap-2 active:scale-95 transition-all">
+                        <button disabled={!sigVorhanden || isSigning} onClick={handleSignSubmit} className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase disabled:opacity-40 flex items-center justify-center gap-2 active:scale-95 transition-all">
                             {isSigning ? <RefreshCw className="animate-spin" size={18}/> : 'Bestätigen & Absenden'}
                         </button>
                     )}
