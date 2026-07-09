@@ -13,8 +13,9 @@ export default async function handler(req, res) {
     res.status(405).json({ status: 'error', message: 'Nur POST' }); return;
   }
   const { mitarbeiterId, titel, nachricht } = req.body || {};
+  // Leere Payloads (Testläufe) sind kein Fehler
   if (!mitarbeiterId || !nachricht) {
-    res.status(400).json({ status: 'error', message: 'mitarbeiterId und nachricht nötig' });
+    res.status(200).json({ status: 'skipped', grund: 'Ungültiger Aufruf' });
     return;
   }
   try {
@@ -22,23 +23,44 @@ export default async function handler(req, res) {
       `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Personal/${mitarbeiterId}`,
       { headers: { 'Authorization': `Bearer ${process.env.AIRTABLE_TOKEN}` } }
     );
-    const data = await resp.json();
-    if (!resp.ok) { res.status(500).json({ status: 'error', detail: data }); return; }
-
-    const abo = data.fields && data.fields.Push_Subscription;
-    if (!abo) {
-      res.status(200).json({ status: 'skipped', message: 'Kein Abo' });
+    // Mitarbeiter nicht gefunden -> fachlich leer, kein Fehler
+    if (resp.status === 404) {
+      res.status(200).json({ status: 'skipped', grund: 'Mitarbeiter nicht gefunden' });
+      return;
+    }
+    const data = await resp.json().catch(() => ({}));
+    // Echter Airtable-Fehler (429/5xx/Auth) -> 500
+    if (!resp.ok) {
+      console.error('send-push-pfleger Airtable-Fehler:', { mitarbeiterId, status: resp.status, detail: data });
+      res.status(500).json({ status: 'error', message: `Airtable ${resp.status}` });
       return;
     }
 
-    const subscription = JSON.parse(abo);
-    const payload = JSON.stringify({
-      title: titel || 'Wunschlos Pflege',
-      body: nachricht
-    });
-    await webpush.sendNotification(subscription, payload);
+    const abo = data.fields && data.fields.Push_Subscription;
+    if (!abo) {
+      res.status(200).json({ status: 'skipped', grund: 'Kein Abo' });
+      return;
+    }
+
+    let subscription;
+    try { subscription = JSON.parse(abo); }
+    catch { res.status(200).json({ status: 'skipped', grund: 'Abo ungültig' }); return; }
+
+    const payload = JSON.stringify({ title: titel || 'Wunschlos Pflege', body: nachricht });
+    try {
+      await webpush.sendNotification(subscription, payload);
+    } catch (err) {
+      // Push-Dienst lehnt ab (z.B. 404/410 = Abo abgelaufen) -> kein technischer Fehler
+      if (err && err.statusCode) {
+        console.error('send-push-pfleger Zustellung fehlgeschlagen:', { mitarbeiterId, statusCode: err.statusCode });
+        res.status(200).json({ status: 'skipped', grund: 'Abo nicht mehr zustellbar', statusCode: err.statusCode });
+        return;
+      }
+      throw err; // echter Fehler -> 500
+    }
     res.status(200).json({ status: 'success' });
   } catch (e) {
-    res.status(500).json({ status: 'error', message: String(e) });
+    console.error('send-push-pfleger Fehler:', { mitarbeiterId, message: String((e && e.message) || e) });
+    res.status(500).json({ status: 'error', message: String((e && e.message) || e) });
   }
 }

@@ -30,9 +30,16 @@ function fmt(v) {
   });
 }
 
+// Datensatz laden. Nicht gefunden (404) -> null (fachlich leer);
+// echte Fehler (Airtable nicht erreichbar, 429, 5xx) werfen weiter -> 500.
 async function loadRec(table, id) {
   if (!id) return null;
-  try { return await airtable(`${table}/${id}`); } catch { return null; }
+  try {
+    return await airtable(`${table}/${id}`);
+  } catch (e) {
+    if (e && e.status === 404) return null;
+    throw e;
+  }
 }
 
 // Push_Subscription eines Records (falls vorhanden) in das Set aufnehmen (dedupliziert)
@@ -67,14 +74,23 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ status: 'error', message: 'Nur POST' }); return; }
 
   const { type, recordId, ereignis } = req.body || {};
+
+  // Leere/kaputte Payloads (z.B. Airtable-Testläufe) sind kein Fehler
+  if (!type || !recordId) {
+    res.status(200).json({ status: 'skipped', grund: 'Ungültiger Aufruf' }); return;
+  }
+
   try {
     const subs = new Set();
     let message = '';
+    let istMitteilung = false;
 
     if (type === 'besuch') {
       const rec = await loadRec(TABLES.BESUCHE, recordId);
-      if (!rec) { res.status(404).json({ status: 'error', message: 'Besuch nicht gefunden' }); return; }
+      if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Besuch nicht gefunden' }); return; }
       const f = rec.fields || {};
+      const patientIds = f.Patient || [];
+      if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       const taetigkeit = txt(f['Tätigkeit']);
       const wann = fmt(f['Uhrzeit']);
       if (ereignis === 'Abgesagt') {
@@ -84,18 +100,21 @@ export default async function handler(req, res) {
       } else {
         message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
       }
-      await addPatientSub(subs, firstLink(f.Patient));
+      await addPatientSub(subs, patientIds[0]);
 
     } else if (type === 'dokument') {
       const rec = await loadRec(TABLES.DOKUMENTE, recordId);
-      if (!rec) { res.status(404).json({ status: 'error', message: 'Dokument nicht gefunden' }); return; }
+      if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Dokument nicht gefunden' }); return; }
       const f = rec.fields || {};
+      const patientIds = f.Patient || [];
+      if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       message = `Neue(r) ${txt(f.Typ)} für Sie verfügbar - jetzt in der App ansehen.`;
-      await addPatientSub(subs, firstLink(f.Patient));
+      await addPatientSub(subs, patientIds[0]);
 
     } else if (type === 'mitteilung') {
+      istMitteilung = true;
       const rec = await loadRec(MITTEILUNGEN, recordId);
-      if (!rec) { res.status(404).json({ status: 'error', message: 'Mitteilung nicht gefunden' }); return; }
+      if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Mitteilung nicht gefunden' }); return; }
       const f = rec.fields || {};
       const ziel = txt(f.Zielgruppe);
 
@@ -122,13 +141,18 @@ export default async function handler(req, res) {
       }
 
     } else {
-      res.status(400).json({ status: 'error', message: 'Unbekannter type' }); return;
+      res.status(200).json({ status: 'skipped', grund: 'Unbekannter type' }); return;
+    }
+
+    // Keine Empfänger -> skipped. Bei Mitteilung Status NICHT auf "Gesendet" setzen,
+    // damit sie nicht als versendet hängen bleibt.
+    if (subs.size === 0) {
+      res.status(200).json({ status: 'skipped', grund: istMitteilung ? 'Keine Empfänger' : 'Kein Push-Abo' }); return;
     }
 
     const sent = await sendToAll([...subs], message);
 
-    // Mitteilung nach erfolgreichem Versand als "Gesendet" markieren
-    if (type === 'mitteilung') {
+    if (istMitteilung) {
       await airtable(`${MITTEILUNGEN}/${recordId}`, {
         method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Gesendet' } }),
       });
@@ -136,7 +160,8 @@ export default async function handler(req, res) {
 
     res.status(200).json({ status: 'ok', sent });
   } catch (e) {
-    console.error('push-event Fehler:', e);
+    // Nur echte technische Fehler landen hier (Airtable nicht erreichbar, Env fehlt, ...)
+    console.error('push-event Fehler:', { type, recordId, message: String((e && e.message) || e) });
     res.status(500).json({ status: 'error', message: String((e && e.message) || e) });
   }
 }
