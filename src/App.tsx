@@ -8,10 +8,6 @@ import {
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 
-// n8n nur noch für Schreib-Endpunkte (submit, upload, update_task, push, ...);
-// Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
-const N8N_BASE_URL = 'https://karlskiagentur.app.n8n.cloud/webhook';
-
 // Canvas auf den tatsächlich bemalten Bereich zuschneiden (kein leerer Rand),
 // damit das PNG später proportional klein in die Box passt. null = leer.
 function trimSignature(canvas: HTMLCanvasElement): string | null {
@@ -564,9 +560,9 @@ export default function App() {
       // Optimistisch: Punkt/Badge reagiert sofort (Quelle der Wahrheit ist der Server)
       setDocuments(prev => prev.map(d => d.id === id ? { ...d, Vom_Patienten_Gesehen: 'true' } : d));
       // Server geräteübergreifend informieren, danach neu laden -> Badges verschwinden sofort
-      fetch(`${N8N_BASE_URL}/mark_document_seen`, {
+      fetch('/api/mark-seen', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documentId: id })
+        body: JSON.stringify({ token, documentId: id })
       }).then(() => fetchData(true)).catch(e => console.error(e));
   };
 
@@ -592,12 +588,10 @@ export default function App() {
   const handleRevokeConsent = async () => {
     setIsSending(true);
     try {
-        const formData = new FormData();
-        formData.append('token', token!);
-        formData.append('patientName', getValue(patientData, 'Name'));
-        formData.append('typ', 'Widerruf_Digitale_Rechnung'); 
-        formData.append('nachricht', 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.');
-        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch('/api/service-submit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, typ: 'Widerruf_Digitale_Rechnung' }),
+        });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
             throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -716,7 +710,7 @@ export default function App() {
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
-      const res = await fetch(`${N8N_BASE_URL}/update_task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus, token: token }) });
+      const res = await fetch('/api/update-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, taskId: id, status: !currentStatus ? 'Erledigt' : 'Offen' }) });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -731,11 +725,10 @@ export default function App() {
   const handleTerminConfirm = async (recordId: string) => {
     setConfirmedTermine([...confirmedTermine, recordId]);
     try {
-        const formData = new FormData();
-        formData.append('token', token!);
-        formData.append('typ', 'Termin_bestatigen');
-        formData.append('recordId', recordId);
-        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch('/api/service-submit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, typ: 'Termin_bestatigen', recordId }),
+        });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
             throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -754,14 +747,12 @@ export default function App() {
     setPendingChanges([...pendingChanges, recordId]);
     setEditingTermin(null);
     try {
-        const formData = new FormData();
-        formData.append('token', token!);
-        formData.append('typ', 'Terminverschiebung');
-        formData.append('recordId', recordId);
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
-        formData.append('nachricht', nachricht);
-        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch('/api/service-submit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, typ: 'Terminverschiebung', recordId, nachricht }),
+        });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
             throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -796,17 +787,12 @@ export default function App() {
       setRequestDate(""); setRequestTime(""); setRequestReason("");
       setIsSending(true);
       try {
-        const formData = new FormData();
-        formData.append('token', token!);
-        formData.append('patientName', getValue(patientData, 'Name'));
-        formData.append('typ', 'Terminanfrage');
-        formData.append('betreff', saveReason || "Terminanfrage");
-        formData.append('wunschDatum', saveDate);              // roh, YYYY-MM-DD
-        if (saveTime) formData.append('wunschZeit', saveTime); // roh, HH:MM (falls gesetzt)
         let note = `Wunschtermin: ${formatDate(saveDate)}`;
         if (saveTime) note += ` um ${saveTime} Uhr`;
-        formData.append('nachricht', note);
-        const res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+        const res = await fetch('/api/service-submit', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, typ: 'Terminanfrage', betreff: saveReason || "Terminanfrage", wunschDatum: saveDate, wunschZeit: saveTime || undefined, nachricht: note }),
+        });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
             throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -824,20 +810,18 @@ export default function App() {
   const submitData = async (type: string, payload: string) => {
     setIsSending(true);
     try {
-      const formData = new FormData();
-      formData.append('token', token!);
-      formData.append('patientId', patientId!);
-      formData.append('patientName', getValue(patientData, 'Name'));
       let res: Response;
       if (activeModal === 'upload' && selectedFiles.length > 0) {
-          formData.append('typ', type.replace('-Upload', '')); formData.append('data', selectedFiles[0]);
-          const uploadUrl = `${N8N_BASE_URL}/upload_document`;
-          console.log('Upload an', uploadUrl);
-          for (const pair of formData.entries()) { console.log(' -', pair[0], pair[1]); }
-          res = await fetch(uploadUrl, { method: 'POST', body: formData });
+          const formData = new FormData();
+          formData.append('token', token!);
+          formData.append('typ', type.replace('-Upload', ''));
+          formData.append('data', selectedFiles[0]);
+          res = await fetch('/api/upload', { method: 'POST', body: formData });
       } else {
-          formData.append('typ', type); formData.append('nachricht', payload);
-          res = await fetch(`${N8N_BASE_URL}/service_submit`, { method: 'POST', body: formData });
+          res = await fetch('/api/service-submit', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token, typ: type, nachricht: payload }),
+          });
       }
       if (!res.ok) {
           const text = await res.text().catch(() => '');
@@ -858,7 +842,7 @@ export default function App() {
   };
 
   // Login Screen
-  // === MITARBEITER: Login, Termine, Push, Urlaub, Lohn (n8n + /api) ===
+  // === MITARBEITER: Login, Termine, Push, Urlaub, Lohn (alles über /api) ===
   const handleMitarbeiterLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);

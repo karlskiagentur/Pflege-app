@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   try {
     const formula = `filterByFormula=${encodeURIComponent(`FIND('${mitarbeiterId}', ARRAYJOIN({Pfleger_ID}))`)}`;
     const records = await fetchAll(TABLES.BESUCHE, formula);
-    // Rohes Record-Array wie n8n mitarbeiter_termine (App sortiert selbst)
+    // Rohes Record-Array wie zuvor mitarbeiter_termine (App sortiert selbst)
     res.status(200).json(records);
   } catch (e) {
     sendError(res, e);

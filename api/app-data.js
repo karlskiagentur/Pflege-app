@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       fetchAll(TABLES.KONTAKTE),
     ]);
 
-    // Format exakt wie der bisherige n8n-Aggregator get_full_app_data
+    // Format exakt wie der bisherige Aggregator get_full_app_data
     res.status(200).json({
       data: { patienten_daten: patient, kontakte, besuche, tasks, dokumente },
     });

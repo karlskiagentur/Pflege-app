@@ -108,7 +108,7 @@ export default async function handler(req, res) {
     const base64 = Buffer.from(out).toString('base64');
     const filename = `Unterschrieben_${String(origName).replace(/\.(pdf|jpg|jpeg|png)$/i, '')}.pdf`;
 
-    // 5) Neuen Dokument-Datensatz anlegen + Anhang hochladen (direkt Airtable, kein n8n)
+    // 5) Neuen Dokument-Datensatz anlegen + Anhang hochladen (direkt Airtable)
     const created = await airtable(TABLES.DOKUMENTE, {
       method: 'POST',
       body: JSON.stringify({

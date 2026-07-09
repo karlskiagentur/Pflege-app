@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     await airtable(`${TABLES.PERSONAL}/${rec.id}`, {
       method: 'PATCH', body: JSON.stringify({ fields: { Session_Token: token } }),
     });
-    // Format wie n8n mitarbeiter_login: status + mitarbeiterId + name
+    // Format wie zuvor mitarbeiter_login: status + mitarbeiterId + name
     res.status(200).json({
       status: 'success',
       mitarbeiterId: rec.id,

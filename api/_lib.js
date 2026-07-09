@@ -11,7 +11,12 @@ export const TABLES = {
   AUFGABEN: 'tbllNVrLFPfjRltL4',
   DOKUMENTE: 'tblKoScXr5PeI8HKl',
   KONTAKTE: 'tbl0rLFTYlqNwDigk',
+  URLAUB: 'tblPfBhWtAg9GEhWb',
+  MELDUNGEN: 'tblnl3Zc4L1OLTNkH',
 };
+
+// Anhang-Feld "Datei" der Dokumente-Tabelle (für content.airtable.com uploadAttachment)
+export const DOKUMENT_DATEI_FELD = 'fld7vyNPt2Be9xAaT';
 
 export async function airtable(path, opts = {}) {
   const resp = await fetch(`https://api.airtable.com/v0/${BASE}/${path}`, {
@@ -58,6 +63,15 @@ function bearer(req) {
   const h = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
   const m = /^Bearer\s+(.+)$/i.exec(h);
   return m ? m[1].trim() : '';
+}
+
+// Patienten-Record anhand eines Session_Token aus dem BODY (nicht Header).
+// Gibt null zurück, wenn Token fehlt/ungültig oder kein Treffer.
+export async function patientByToken(token) {
+  if (!token || !/^[A-Za-z0-9_-]{20,}$/.test(String(token))) return null;
+  const formula = encodeURIComponent(`{Session_Token} = '${token}'`);
+  const data = await airtable(`${TABLES.PATIENTEN}?filterByFormula=${formula}&maxRecords=1`);
+  return (data.records || [])[0] || null;
 }
 
 // Liefert den eingeloggten Patienten-Record oder schickt 401 und gibt null zurück.
