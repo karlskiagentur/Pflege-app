@@ -467,6 +467,19 @@ export default function App() {
       };
   }, []);
 
+  // App-Icon-Badge löschen, sobald die App geöffnet/sichtbar ist
+  useEffect(() => {
+      const clearBadge = () => {
+          if ('clearAppBadge' in navigator) {
+              (navigator as any).clearAppBadge().catch(() => {});
+          }
+      };
+      clearBadge();
+      const onVisible = () => { if (document.visibilityState === 'visible') clearBadge(); };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
   // Push-Status beim Login prüfen (kein automatisches Nachfragen)
   // iOS: Web-Push funktioniert NUR, wenn die App zum Home-Bildschirm hinzugefügt wurde.
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);

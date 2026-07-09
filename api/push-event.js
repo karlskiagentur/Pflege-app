@@ -55,18 +55,36 @@ async function addPersonalSub(set, personalId) {
   addSub(set, await loadRec(TABLES.PERSONAL, personalId));
 }
 
+// Endpoint gekürzt fürs Log (letzte ~12 Zeichen genügen zur Unterscheidung)
+const kurzEndpoint = (sub) => {
+  try { const e = JSON.parse(sub).endpoint || ''; return '...' + e.slice(-12); } catch { return '?'; }
+};
+
+// Versendet an alle Abos, sammelt je Abo ein Detail-Ergebnis (fürs Airtable-Log)
 async function sendToAll(subs, message) {
   const payload = JSON.stringify({ title: TITLE, body: message });
-  let sent = 0;
+  let gesendet = 0, fehlgeschlagen = 0;
+  const details = [];
   for (const s of subs) {
+    const endpointKurz = kurzEndpoint(s);
     try {
-      await webpush.sendNotification(JSON.parse(s), payload);
-      sent++;
+      const r = await webpush.sendNotification(JSON.parse(s), payload);
+      gesendet++;
+      details.push({ endpointKurz, code: (r && r.statusCode) || 201 });
     } catch (err) {
-      console.error('Push fehlgeschlagen:', err && err.statusCode, err && err.body);
+      fehlgeschlagen++;
+      const code = err && err.statusCode;
+      const eintrag = { endpointKurz, code: code || 'ERR' };
+      if (code === 404 || code === 410) {
+        eintrag.hinweis = 'Abo abgelaufen - Klient muss Benachrichtigungen in der App neu aktivieren';
+      } else {
+        eintrag.fehler = String((err && err.message) || err);
+      }
+      console.error('Push fehlgeschlagen:', endpointKurz, code, err && err.body);
+      details.push(eintrag);
     }
   }
-  return sent;
+  return { gesendet, fehlgeschlagen, details };
 }
 
 export default async function handler(req, res) {
@@ -150,7 +168,7 @@ export default async function handler(req, res) {
       res.status(200).json({ status: 'skipped', grund: istMitteilung ? 'Keine Empfänger' : 'Kein Push-Abo' }); return;
     }
 
-    const sent = await sendToAll([...subs], message);
+    const { gesendet, fehlgeschlagen, details } = await sendToAll([...subs], message);
 
     if (istMitteilung) {
       await airtable(`${MITTEILUNGEN}/${recordId}`, {
@@ -158,7 +176,7 @@ export default async function handler(req, res) {
       });
     }
 
-    res.status(200).json({ status: 'ok', sent });
+    res.status(200).json({ status: 'ok', gesendet, fehlgeschlagen, details });
   } catch (e) {
     // Nur echte technische Fehler landen hier (Airtable nicht erreichbar, Env fehlt, ...)
     console.error('push-event Fehler:', { type, recordId, message: String((e && e.message) || e) });
