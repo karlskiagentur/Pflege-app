@@ -1,11 +1,11 @@
 import crypto from 'crypto';
-import { airtable, sendError, TABLES } from './_lib.js';
+import { airtable, sendError, handledPreflight, TABLES } from './_lib.js';
 
 const LOCK_AFTER = 5;
 const LOCK_MINUTES = 15;
 
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') {
     res.status(405).json({ status: 'error', message: 'Nur POST' }); return;
   }
@@ -48,6 +48,6 @@ export default async function handler(req, res) {
     });
     res.status(200).json({ status: 'success', token, patientId: rec.id });
   } catch (e) {
-    sendError(res, e);
+    sendError(res, e, 'api/patient-login');
   }
 }

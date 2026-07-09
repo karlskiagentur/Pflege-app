@@ -1,31 +1,29 @@
+import { airtable, sendError, requireMitarbeiter, esc, handledPreflight } from './_lib.js';
+
+const URLAUB = 'tbltiTbieKAxp4pSQ'; // Tabelle "Mitarbeiter_Urlaub" (ID statt Name)
+
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') {
     res.status(405).json({ status: 'error', message: 'Nur POST' }); return;
   }
-  const { mitarbeiterId } = req.body || {};
-  if (!mitarbeiterId) {
-    res.status(400).json({ status: 'error', message: 'mitarbeiterId nötig' });
-    return;
-  }
   try {
-    const formula = encodeURIComponent(`{Mitarbeiter_ID} = '${mitarbeiterId}'`);
-    const resp = await fetch(
-      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Mitarbeiter_Urlaub?filterByFormula=${formula}`,
-      { headers: { 'Authorization': `Bearer ${process.env.AIRTABLE_TOKEN}` } }
-    );
-    const data = await resp.json();
-    if (!resp.ok) { res.status(500).json({ status: 'error', detail: data }); return; }
+    const ma = await requireMitarbeiter(req, res);
+    if (!ma) return;
+    const mitarbeiterId = ma.id;
+
+    const formula = encodeURIComponent(`{Mitarbeiter_ID} = '${esc(mitarbeiterId)}'`);
+    const data = await airtable(`${URLAUB}?filterByFormula=${formula}`);
     const liste = (data.records || []).map(r => ({
       id: r.id,
-      von: r.fields.Von || '',
-      bis: r.fields.Bis || '',
-      status: r.fields.Status || 'Beantragt',
-      notiz: r.fields.Notiz || '',
+      von: (r.fields && r.fields.Von) || '',
+      bis: (r.fields && r.fields.Bis) || '',
+      status: (r.fields && r.fields.Status) || 'Beantragt',
+      notiz: (r.fields && r.fields.Notiz) || '',
     }));
     liste.sort((a, b) => new Date(b.von).getTime() - new Date(a.von).getTime());
     res.status(200).json(liste);
   } catch (e) {
-    res.status(500).json({ status: 'error', message: String(e) });
+    sendError(res, e, 'api/urlaub-liste');
   }
 }

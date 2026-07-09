@@ -7,6 +7,24 @@ import {
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw
 } from 'lucide-react';
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
+import { reportClientError, fetchWithTimeout } from './report';
+
+// Alle Patienten-Schreibpfade laufen jetzt über /api (Vercel) statt n8n.
+// (n8n wird dadurch für die App überflüssig.)
+
+// Datei -> reines Base64 (ohne data:-Präfix) für JSON-Uploads.
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result || '');
+      const comma = s.indexOf(',');
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 // Canvas auf den tatsächlich bemalten Bereich zuschneiden (kein leerer Rand),
 // damit das PNG später proportional klein in die Box passt. null = leer.
@@ -244,6 +262,7 @@ export default function App() {
   const [mitarbeiterToken, setMitarbeiterToken] = useState<string | null>(localStorage.getItem('active_mitarbeiter_token'));
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
+  const [mitarbeiterError, setMitarbeiterError] = useState<string | null>(null);
   const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
   const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
   const [meldungTyp, setMeldungTyp] = useState<string>('');
@@ -274,8 +293,14 @@ export default function App() {
 
   // Gelesene Dokumente speichern
   const [seenDocIds, setSeenDocIds] = useState<string[]>(() => {
-      const saved = localStorage.getItem('seen_docs');
-      return saved ? JSON.parse(saved) : [];
+      // Robust gegen korruptes localStorage: sonst crasht der Mount = weißer Bildschirm.
+      try {
+        const saved = localStorage.getItem('seen_docs');
+        const parsed = saved ? JSON.parse(saved) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
   });
 
   const [showAllTasks, setShowAllTasks] = useState(false);
@@ -348,12 +373,14 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
-        const response = await fetch(`/api/app-data?token=${authToken}`, {
-            signal: controller.signal
+        // Token im Authorization-Header statt in der URL (landet sonst in Logs/History).
+        const response = await fetch(`/api/app-data`, {
+            signal: controller.signal,
+            headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        
+
         if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
-        
+
         let json = await response.json();
         
         if (Array.isArray(json) && json.length > 0) {
@@ -442,8 +469,14 @@ export default function App() {
         }
 
     } catch (e: any) {
-        if (e.name !== 'AbortError' && !background) setErrorMsg("Ladefehler.");
+        if (e.name === 'AbortError') {
+            if (!background) setErrorMsg("Zeitüberschreitung – bitte Internetverbindung prüfen und erneut laden.");
+        } else {
+            if (!background) setErrorMsg("Ladefehler. Bitte erneut versuchen.");
+            reportClientError('fetchData', e, { background });
+        }
     } finally {
+        clearTimeout(timeoutId);
         isFetchingRef.current = false;
         if (!background) setLoading(false);
     }
@@ -562,7 +595,7 @@ export default function App() {
       // Server geräteübergreifend informieren, danach neu laden -> Badges verschwinden sofort
       fetch('/api/mark-seen', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, documentId: id })
+        body: JSON.stringify({ token: token, documentId: id })
       }).then(() => fetchData(true)).catch(e => console.error(e));
   };
 
@@ -588,9 +621,10 @@ export default function App() {
   const handleRevokeConsent = async () => {
     setIsSending(true);
     try {
-        const res = await fetch('/api/service-submit', {
+        const res = await fetchWithTimeout('/api/service-submit', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, typ: 'Widerruf_Digitale_Rechnung' }),
+            body: JSON.stringify({ token: token, typ: 'Widerruf_Digitale_Rechnung',
+              nachricht: 'Der Patient hat die Einwilligung für digitale Rechnungen widerrufen.' }),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -614,8 +648,9 @@ export default function App() {
     setLohnDownloading(true);
     try {
         const fileName = `Lohnabrechnung_${lohn.zeitraum}.pdf`;
-        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}`;
-        const response = await fetch(proxyUrl);
+        const authToken = mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || '';
+        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}&token=${encodeURIComponent(authToken)}`;
+        const response = await fetchWithTimeout(proxyUrl, {}, 30000);
         if (!response.ok) {
             const text = await response.text().catch(() => '');
             throw new Error(`Server antwortete mit ${response.status}: ${text}`);
@@ -649,8 +684,9 @@ export default function App() {
   const downloadRechnung = async (item: any) => {
     try {
         const name = item.dateiname || 'Rechnung.pdf';
-        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent(name)}`;
-        const res = await fetch(proxyUrl);
+        const authToken = token || localStorage.getItem('active_token') || '';
+        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent(name)}&token=${encodeURIComponent(authToken)}`;
+        const res = await fetchWithTimeout(proxyUrl, {}, 30000);
         if (!res.ok) throw new Error(`Server antwortete mit ${res.status}`);
         const blob = await res.blob();
         const file = new File([blob], name, { type: 'application/pdf' });
@@ -710,7 +746,7 @@ export default function App() {
   const toggleTask = async (id: string, currentStatus: boolean) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentStatus } : t));
     try {
-      const res = await fetch('/api/update-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, taskId: id, status: !currentStatus ? 'Erledigt' : 'Offen' }) });
+      const res = await fetchWithTimeout('/api/update-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id, done: !currentStatus, token: token }) });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -725,9 +761,9 @@ export default function App() {
   const handleTerminConfirm = async (recordId: string) => {
     setConfirmedTermine([...confirmedTermine, recordId]);
     try {
-        const res = await fetch('/api/service-submit', {
+        const res = await fetchWithTimeout('/api/service-submit', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, typ: 'Termin_bestatigen', recordId }),
+            body: JSON.stringify({ token: token, typ: 'Termin_bestatigen', recordId: recordId }),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -749,9 +785,9 @@ export default function App() {
     try {
         let nachricht = `Verschiebung gewünscht von ${formatDate(oldDateRaw)} auf ${formatDate(newTerminDate)}`;
         if (newTerminTime) nachricht += ` um ca. ${newTerminTime} Uhr`;
-        const res = await fetch('/api/service-submit', {
+        const res = await fetchWithTimeout('/api/service-submit', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, typ: 'Terminverschiebung', recordId, nachricht }),
+            body: JSON.stringify({ token: token, typ: 'Terminverschiebung', recordId: recordId, nachricht: nachricht }),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -789,9 +825,14 @@ export default function App() {
       try {
         let note = `Wunschtermin: ${formatDate(saveDate)}`;
         if (saveTime) note += ` um ${saveTime} Uhr`;
-        const res = await fetch('/api/service-submit', {
+        const res = await fetchWithTimeout('/api/service-submit', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, typ: 'Terminanfrage', betreff: saveReason || "Terminanfrage", wunschDatum: saveDate, wunschZeit: saveTime || undefined, nachricht: note }),
+            body: JSON.stringify({
+              token: token, typ: 'Terminanfrage',
+              betreff: saveReason || 'Terminanfrage',
+              wunschDatum: saveDate, wunschZeit: saveTime || undefined,
+              nachricht: note,
+            }),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -812,15 +853,22 @@ export default function App() {
     try {
       let res: Response;
       if (activeModal === 'upload' && selectedFiles.length > 0) {
-          const formData = new FormData();
-          formData.append('token', token!);
-          formData.append('typ', type.replace('-Upload', ''));
-          formData.append('data', selectedFiles[0]);
-          res = await fetch('/api/upload', { method: 'POST', body: formData });
-      } else {
-          res = await fetch('/api/service-submit', {
+          // Datei als Base64 per JSON an die Vercel-Funktion (kein n8n mehr).
+          const file = selectedFiles[0];
+          const fileBase64 = await fileToBase64(file);
+          res = await fetchWithTimeout('/api/upload-document', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token, typ: type, nachricht: payload }),
+              body: JSON.stringify({
+                token: token, typ: type.replace('-Upload', ''),
+                filename: file.name || 'Dokument.pdf',
+                mimeType: file.type || 'application/pdf',
+                fileBase64,
+              }),
+          }, 60000);
+      } else {
+          res = await fetchWithTimeout('/api/service-submit', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: token, typ: type, nachricht: payload }),
           });
       }
       if (!res.ok) {
@@ -871,15 +919,34 @@ export default function App() {
     }
   };
 
+  // Session abgelaufen/ungültig -> Mitarbeiter sauber ausloggen (statt leerer Liste).
+  const logoutMitarbeiterAuth = () => {
+    localStorage.removeItem('active_mitarbeiter_id');
+    localStorage.removeItem('active_mitarbeiter_name');
+    localStorage.removeItem('active_mitarbeiter_token');
+    setMitarbeiterId(null);
+    setMitarbeiterName('');
+    setMitarbeiterToken(null);
+    setLoginError('Ihre Sitzung ist abgelaufen. Bitte erneut anmelden.');
+  };
+
+  // Auth-Header für Mitarbeiter-Endpunkte.
+  const maAuth = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || ''}`,
+  });
+
   const fetchMitarbeiterTermine = async () => {
     if (!mitarbeiterId) return;
     setMitarbeiterLoading(true);
+    setMitarbeiterError(null);
     try {
-      const res = await fetch('/api/ma-termine', {
+      const res = await fetchWithTimeout('/api/ma-termine', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId: mitarbeiterId })
+        headers: maAuth(),
+        body: JSON.stringify({})
       });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -894,7 +961,8 @@ export default function App() {
       setMitarbeiterTermine(liste);
     } catch (err: any) {
       console.error('Fehler beim Laden der Termine:', err);
-      alert('Fehler beim Laden der Termine: ' + err.message);
+      setMitarbeiterError('Termine konnten nicht geladen werden. Bitte erneut versuchen.');
+      reportClientError('ma-termine', err, {});
     } finally {
       setMitarbeiterLoading(false);
     }
@@ -916,7 +984,7 @@ export default function App() {
   const handleMitarbeiterPush = async () => {
       if (!mitarbeiterId) return;
       setMitarbeiterPushStatus('loading');
-      const ok = await subscribeMitarbeiter(mitarbeiterId);
+      const ok = await subscribeMitarbeiter(mitarbeiterId, mitarbeiterToken || undefined);
       setMitarbeiterPushStatus(ok ? 'subscribed' : 'denied');
       if (ok) {
         setMitarbeiterPushMsg('Verbindung aktualisiert ✓');
@@ -927,18 +995,19 @@ export default function App() {
   useEffect(() => {
       if (!mitarbeiterId) return;
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-      subscribeMitarbeiter(mitarbeiterId).catch((e) => console.log('Stiller Push-Sync fehlgeschlagen:', e));
+      subscribeMitarbeiter(mitarbeiterId, mitarbeiterToken || undefined).catch((e) => console.log('Stiller Push-Sync fehlgeschlagen:', e));
   }, [mitarbeiterId]);
 
   const fetchUrlaubListe = async () => {
     if (!mitarbeiterId) return;
     setUrlaubLoading(true);
     try {
-      const res = await fetch('/api/urlaub-liste', {
+      const res = await fetchWithTimeout('/api/urlaub-liste', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId }),
+        headers: maAuth(),
+        body: JSON.stringify({}),
       });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -948,6 +1017,7 @@ export default function App() {
     } catch (err: any) {
       console.error('Fehler beim Laden der Urlaubsliste:', err);
       alert('Fehler beim Laden der Urlaubsanträge: ' + err.message);
+      reportClientError('urlaub-liste', err, {});
     }
     finally { setUrlaubLoading(false); }
   };
@@ -956,11 +1026,12 @@ export default function App() {
     if (!urlaubVon || !urlaubBis) return;
     setUrlaubSending(true);
     try {
-      const res = await fetch('/api/urlaub-antrag', {
+      const res = await fetchWithTimeout('/api/urlaub-antrag', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId, mitarbeiterName, von: urlaubVon, bis: urlaubBis, notiz: urlaubNotiz }),
+        headers: maAuth(),
+        body: JSON.stringify({ von: urlaubVon, bis: urlaubBis, notiz: urlaubNotiz }),
       });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -970,6 +1041,7 @@ export default function App() {
     } catch (err: any) {
       console.error('Fehler beim Urlaubsantrag:', err);
       alert('Fehler beim Senden des Urlaubsantrags: ' + err.message);
+      reportClientError('urlaub-antrag', err, {});
     }
     finally { setUrlaubSending(false); }
   };
@@ -978,11 +1050,12 @@ export default function App() {
     if (!mitarbeiterId) return;
     setLohnLoading(true);
     try {
-      const res = await fetch('/api/lohn-liste', {
+      const res = await fetchWithTimeout('/api/lohn-liste', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mitarbeiterId }),
+        headers: maAuth(),
+        body: JSON.stringify({}),
       });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -1039,17 +1112,17 @@ export default function App() {
         const patientId = (meldungTermin.fields && meldungTermin.fields.Patient
           && meldungTermin.fields.Patient[0]) || '';
         const besuchId = meldungTermin.id;
-        const res = await fetch('/api/meldung-senden', {
+        const res = await fetchWithTimeout('/api/meldung-senden', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: maAuth(),
           body: JSON.stringify({
-            mitarbeiterName: mitarbeiterName,
             typ: meldungTyp,
             patientId: patientId,
             besuchId: besuchId,
             notiz: meldungNotiz,
           }),
         });
+        if (res.status === 401) { logoutMitarbeiterAuth(); return; }
         if (!res.ok) {
           const text = await res.text().catch(() => '');
           throw new Error(`Server antwortete mit ${res.status}: ${text}`);
@@ -1081,6 +1154,13 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
+        {/* Fehler-Banner: Daten konnten nicht geladen werden (statt still leerer Liste) */}
+        {mitarbeiterError && (
+          <div className="mb-4 bg-[#F8E8E6] border border-[#E5B8B2] text-[#B5483C] rounded-2xl p-4 flex items-center justify-between gap-3">
+            <span className="text-sm font-bold">{mitarbeiterError}</span>
+            <button onClick={() => fetchMitarbeiterTermine()} className="text-xs font-black uppercase bg-white/70 rounded-full px-3 py-2 shrink-0">Erneut</button>
+          </div>
+        )}
         {/* TAB: START / NOTFALL */}
         {mitarbeiterTab === 'uebersicht' && (
           <div className="animate-in fade-in">

@@ -1,78 +1,79 @@
-import { airtable, ownOr403, patientByToken, sendError, TABLES } from './_lib.js';
+import { airtable, requireAuth, ownOr403, sendError, handledPreflight, TABLES } from './_lib.js';
 
-// Berliner Wandzeit -> UTC-ISO (DST-sicher). Reicht für die Terminplanung.
-function berlinToISO(dateStr, timeStr) {
-  const t = timeStr && timeStr.length >= 4 ? timeStr : '00:00';
-  const base = new Date(`${dateStr}T${t}:00Z`);
-  const berlin = new Date(base.toLocaleString('en-US', { timeZone: 'Europe/Berlin' }));
-  const utc = new Date(base.toLocaleString('en-US', { timeZone: 'UTC' }));
-  return new Date(base.getTime() - (berlin.getTime() - utc.getTime())).toISOString();
-}
+const URLAUB = 'tblPfBhWtAg9GEhWb'; // Patienten-Urlaub
 
-// Ersetzt den früheren Endpunkt service_submit - App-Eingaben direkt nach Airtable.
+// Ersetzt den n8n-Webhook "service_submit" – vollständig auf Vercel, ohne n8n.
+// Erwartet JSON (kein FormData mehr):
+//   { token, typ, recordId?, nachricht?, betreff?, wunschDatum?, wunschZeit? }
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') { res.status(405).json({ status: 'error', message: 'Nur POST' }); return; }
-
-  const { token, typ } = req.body || {};
-  if (!token || !typ) { res.status(200).json({ status: 'skipped', grund: 'Ungültiger Aufruf' }); return; }
-
   try {
-    const patient = await patientByToken(token);
-    if (!patient) { res.status(401).json({ status: 'error', message: 'Nicht autorisiert' }); return; }
+    const patient = await requireAuth(req, res);
+    if (!patient) return;
 
-    if (typ === 'Terminanfrage') {
-      const { betreff, wunschDatum, wunschZeit, nachricht } = req.body;
-      if (!wunschDatum) { res.status(200).json({ status: 'skipped', grund: 'wunschDatum fehlt' }); return; }
-      const fields = {
-        Patient: [patient.id],
-        'Tätigkeit': betreff || 'Terminanfrage',
-        Status: 'Anfrage',
-        Uhrzeit: berlinToISO(wunschDatum, wunschZeit),
-      };
-      if (nachricht) fields.Notiz_Patient = nachricht;
-      const rec = await airtable(TABLES.BESUCHE, { method: 'POST', body: JSON.stringify({ fields }) });
-      res.status(200).json({ status: 'ok', id: rec.id }); return;
-    }
+    const { typ, recordId, nachricht, betreff, wunschDatum, wunschZeit } = req.body || {};
+    const t = String(typ || '');
 
-    if (typ === 'Termin_bestatigen') {
-      const { recordId } = req.body;
-      if (!recordId) { res.status(200).json({ status: 'skipped', grund: 'recordId fehlt' }); return; }
-      const owned = await ownOr403(res, TABLES.BESUCHE, recordId, patient.id);
-      if (!owned) return;
-      await airtable(`${TABLES.BESUCHE}/${recordId}`, { method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Bestätigt' } }) });
-      res.status(200).json({ status: 'ok' }); return;
-    }
-
-    if (typ === 'Terminverschiebung') {
-      const { recordId, nachricht } = req.body;
-      if (!recordId) { res.status(200).json({ status: 'skipped', grund: 'recordId fehlt' }); return; }
-      const owned = await ownOr403(res, TABLES.BESUCHE, recordId, patient.id);
-      if (!owned) return;
+    // Terminbestätigung: eigener Besuch -> Status "Bestätigt"
+    if (t.includes('Termin_bestatigen')) {
+      const rec = await ownOr403(res, TABLES.BESUCHE, recordId, patient.id);
+      if (!rec) return;
       await airtable(`${TABLES.BESUCHE}/${recordId}`, {
-        method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Änderungswunsch', Notiz_Patient: nachricht || '' } }),
+        method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Bestätigt' } }),
       });
-      res.status(200).json({ status: 'ok' }); return;
+      res.status(200).json({ status: 'success' }); return;
     }
 
-    if (typ === 'Urlaubsmeldung') {
-      const { nachricht } = req.body;
-      const rec = await airtable(TABLES.URLAUB, {
-        method: 'POST', body: JSON.stringify({ fields: { Patient: [patient.id], Zeitraum: nachricht || '', Status: 'Neu' } }),
+    // Terminverschiebung: eigener Besuch -> Status "Änderungswunsch" + Notiz
+    if (t.includes('Terminverschiebung')) {
+      const rec = await ownOr403(res, TABLES.BESUCHE, recordId, patient.id);
+      if (!rec) return;
+      await airtable(`${TABLES.BESUCHE}/${recordId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ fields: { Status: 'Änderungswunsch', Notiz_Patient: String(nachricht || '').slice(0, 2000) } }),
       });
-      res.status(200).json({ status: 'ok', id: rec.id }); return;
+      res.status(200).json({ status: 'success' }); return;
     }
 
-    if (typ === 'Widerruf_Digitale_Rechnung') {
+    // Neue Terminanfrage: neuer Besuch, verknüpft mit dem eingeloggten Patienten
+    if (t.includes('Terminanfrage')) {
+      const fields = {
+        Tätigkeit: String(betreff || 'Terminanfrage').slice(0, 200),
+        Patient: [patient.id],
+        Status: 'Anfrage',
+      };
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(wunschDatum || ''))) {
+        fields.Datum = wunschDatum;
+        const zeit = /^\d{2}:\d{2}$/.test(String(wunschZeit || '')) ? wunschZeit : '00:00';
+        fields.Uhrzeit = `${wunschDatum}T${zeit}:00`;
+      }
+      const data = await airtable(TABLES.BESUCHE, {
+        method: 'POST', body: JSON.stringify({ fields, typecast: true }),
+      });
+      res.status(200).json({ status: 'success', id: data.id }); return;
+    }
+
+    // Widerruf digitale Rechnung: Datum am eigenen Patienten-Record setzen
+    if (t.includes('Widerruf')) {
       await airtable(`${TABLES.PATIENTEN}/${patient.id}`, {
-        method: 'PATCH', body: JSON.stringify({ fields: { Digitale_Rechnung_Widerrufen_Am: new Date().toISOString().slice(0, 10) } }),
+        method: 'PATCH',
+        body: JSON.stringify({ fields: { Digitale_Rechnung_Widerrufen_Am: new Date().toISOString().slice(0, 10) }, typecast: true }),
       });
-      res.status(200).json({ status: 'ok' }); return;
+      res.status(200).json({ status: 'success' }); return;
     }
 
-    res.status(200).json({ status: 'skipped', grund: 'Unbekannter typ' });
+    // Urlaubsmeldung des Patienten: neuer Urlaub-Record
+    if (t.includes('Urlaub')) {
+      const data = await airtable(URLAUB, {
+        method: 'POST',
+        body: JSON.stringify({ fields: { Status: 'Neu', Patient: [patient.id], Zeitraum: String(nachricht || '').slice(0, 500) }, typecast: true }),
+      });
+      res.status(200).json({ status: 'success', id: data.id }); return;
+    }
+
+    res.status(400).json({ status: 'error', message: 'Unbekannter Typ' });
   } catch (e) {
-    console.error('service-submit Fehler:', { typ, message: String((e && e.message) || e) });
-    sendError(res, e);
+    sendError(res, e, 'api/service-submit');
   }
 }
