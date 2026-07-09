@@ -6,7 +6,7 @@ import {
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw
 } from 'lucide-react';
-import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter } from './push';
+import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 
 // n8n nur noch für Schreib-Endpunkte (submit, upload, update_task, push, ...);
 // Lese-Pfade (Login, App-Daten, MA-Termine) laufen über /api (Vercel).
@@ -245,6 +245,7 @@ export default function App() {
   const [loginMode, setLoginMode] = useState<'select' | 'patient' | 'mitarbeiter'>('select');
   const [mitarbeiterId, setMitarbeiterId] = useState<string | null>(localStorage.getItem('active_mitarbeiter_id'));
   const [mitarbeiterName, setMitarbeiterName] = useState<string>(localStorage.getItem('active_mitarbeiter_name') || '');
+  const [mitarbeiterToken, setMitarbeiterToken] = useState<string | null>(localStorage.getItem('active_mitarbeiter_token'));
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
   const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
@@ -507,7 +508,7 @@ export default function App() {
               setPatientPushStatus('denied');
               return;
           }
-          const ok = await subscribeToPush(patientId!);
+          const ok = await subscribeToPush(token!);
           if (ok) {
               setPatientPushStatus('granted');
           } else if ((Notification.permission as string) === 'denied') {
@@ -518,6 +519,34 @@ export default function App() {
       } catch (err: any) {
           console.error('Push-Aktivierung fehlgeschlagen:', err);
           alert('Benachrichtigungen konnten nicht aktiviert werden: ' + err.message);
+      }
+  };
+
+  // Push-Abo hart erneuern (altes verwerfen, neu abonnieren, serverseitig speichern).
+  // Funktioniert für Klient und Mitarbeiter - je nach übergebenem Token.
+  const pushErneuern = async (authToken: string | null) => {
+      if (!authToken) { alert('Bitte zuerst neu anmelden.'); return; }
+      try {
+          const reg = await navigator.serviceWorker.ready;
+          const alt = await reg.pushManager.getSubscription();
+          if (alt) { await alt.unsubscribe(); }
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') {
+              alert('Bitte Benachrichtigungen in den Geräte-Einstellungen erlauben.');
+              return;
+          }
+          const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: VAPID_APP_SERVER_KEY,
+          });
+          const res = await fetch('/api/save-subscription', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: authToken, subscription: sub }),
+          });
+          if (!res.ok) throw new Error('Speichern fehlgeschlagen (' + res.status + ')');
+          alert('Benachrichtigungen wurden erneuert.');
+      } catch (err: any) {
+          alert('Erneuern fehlgeschlagen: ' + err.message);
       }
   };
 
@@ -844,8 +873,10 @@ export default function App() {
       if (data.status === "success" && data.mitarbeiterId) {
         localStorage.setItem('active_mitarbeiter_id', data.mitarbeiterId);
         localStorage.setItem('active_mitarbeiter_name', data.name || '');
+        if (data.token) localStorage.setItem('active_mitarbeiter_token', data.token);
         setMitarbeiterId(data.mitarbeiterId);
         setMitarbeiterName(data.name || '');
+        setMitarbeiterToken(data.token || null);
       } else {
         setLoginError("Name oder Code nicht korrekt");
       }
@@ -1061,7 +1092,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
           <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); setMitarbeiterId(null); setMitarbeiterName(''); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
         </div>
       </header>
 
@@ -1164,12 +1195,13 @@ export default function App() {
               <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center mb-3">Einstellungen</p>
               <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
                 {mitarbeiterPushStatus === 'subscribed' ? (
-                  <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-col items-center gap-1">
                     <div className="flex items-center justify-center gap-2 text-[#1e4620] font-bold text-sm">
                       <Check size={18} strokeWidth={3} /> Benachrichtigungen aktiv
                     </div>
-                    <button onClick={handleMitarbeiterPush} className="text-xs text-[#b5a48b] underline px-4 py-2">
-                      Erneut verbinden
+                    <p className="text-xs text-gray-500 text-center mt-1">Falls Benachrichtigungen nicht mehr ankommen, hier erneuern.</p>
+                    <button onClick={() => pushErneuern(mitarbeiterToken)} className="mt-1 text-xs font-black uppercase text-[#b5a48b] border border-[#dccfbc] rounded-full px-4 py-2 active:scale-95 transition-all">
+                      Erneuern
                     </button>
                   </div>
                 ) : mitarbeiterPushStatus === 'loading' ? (
@@ -1694,9 +1726,13 @@ export default function App() {
         </section>
 
         {patientPushStatus === 'granted' && (
-            <div className="bg-[#EEF6EE] rounded-2xl p-4 flex items-center gap-2">
-                <Check size={18} className="text-[#5B9E5B] shrink-0" strokeWidth={3} />
-                <span className="text-sm font-bold text-[#3f7a3f]">Benachrichtigungen sind aktiviert</span>
+            <div className="bg-[#EEF6EE] rounded-2xl p-4">
+                <div className="flex items-center gap-2">
+                    <Check size={18} className="text-[#5B9E5B] shrink-0" strokeWidth={3} />
+                    <span className="text-sm font-bold text-[#3f7a3f]">Benachrichtigungen sind aktiviert</span>
+                </div>
+                <p className="text-xs text-[#3f7a3f]/80 mt-2">Falls Benachrichtigungen nicht mehr ankommen, hier erneuern.</p>
+                <button onClick={() => pushErneuern(token)} className="mt-2 text-xs font-black uppercase text-[#3f7a3f] border border-[#5B9E5B]/40 rounded-full px-4 py-2 active:scale-95 transition-all">Erneuern</button>
             </div>
         )}
     </div>

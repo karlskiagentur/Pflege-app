@@ -1,5 +1,4 @@
 const VAPID_PUBLIC_KEY = "BGsTbCfunMpxOpMNTuMy9S5ERDA1yUi3mYhWa5zkBOXrcCnDxLSaYt4ixweedP7zhP4sOUG3--ZrjssD0W2daFo";
-const SAVE_SUBSCRIPTION_URL = "https://karlskiagentur.app.n8n.cloud/webhook/save_push_subscription";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -11,6 +10,9 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   }
   return outputArray;
 }
+
+// Fertiger applicationServerKey (Uint8Array) für pushManager.subscribe()
+export const VAPID_APP_SERVER_KEY = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   try {
@@ -27,7 +29,8 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   }
 }
 
-export async function subscribeToPush(patientId: string): Promise<boolean> {
+// token = Session_Token des Klienten (der Server findet den Datensatz selbst).
+export async function subscribeToPush(token: string): Promise<boolean> {
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.error('Push wird von diesem Browser nicht unterstützt.');
@@ -45,13 +48,13 @@ export async function subscribeToPush(patientId: string): Promise<boolean> {
 
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      applicationServerKey: VAPID_APP_SERVER_KEY
     });
 
-    const response = await fetch(SAVE_SUBSCRIPTION_URL, {
+    const response = await fetch('/api/save-subscription', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patientId: patientId, subscription: subscription.toJSON() })
+      body: JSON.stringify({ token, subscription: subscription.toJSON() })
     });
 
     if (!response.ok) {
