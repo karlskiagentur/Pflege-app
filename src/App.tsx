@@ -1131,7 +1131,7 @@ export default function App() {
                 </div>
                 <div className="bg-white rounded-[2rem] border border-gray-100 overflow-hidden">
                   {[
-                    ['WO?', 'Genaue Adresse des Patienten'],
+                    ['WO?', 'Genaue Adresse des Klienten'],
                     ['WAS?', 'Was ist passiert?'],
                     ['WIE VIELE?', 'Anzahl betroffener Personen'],
                     ['WELCHE?', 'Welche Verletzungen oder Beschwerden?'],
@@ -1508,7 +1508,7 @@ export default function App() {
               onClick={() => setLoginMode('patient')}
               className="w-full bg-[#b5a48b] text-white py-6 rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
             >
-              <User size={20} /> Ich bin Patient
+              <User size={20} /> Ich bin Klient
             </button>
 
             <button
@@ -1535,10 +1535,10 @@ export default function App() {
             <img src="/logo.png" alt="Logo" className="w-48 mx-auto mb-4" />
 
             <p className="text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] mb-6">
-              {loginMode === 'patient' ? 'Patienten-Login' : 'Mitarbeiter-Login'}
+              {loginMode === 'patient' ? 'Klienten-Login' : 'Mitarbeiter-Login'}
             </p>
 
-            <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Patienten-ID' : 'Mitarbeiter-ID'} required />
+            <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Klienten-ID' : 'Mitarbeiter-ID'} required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
 
             {loginError && (
@@ -1556,7 +1556,7 @@ export default function App() {
               onClick={() => { setLoginMode(loginMode === 'patient' ? 'mitarbeiter' : 'patient'); setLoginError(null); setFullName(''); setLoginCode(''); }}
               className="w-full text-center text-[10px] font-black uppercase tracking-widest text-[#b5a48b] mt-4 hover:opacity-70 transition-opacity"
             >
-              {loginMode === 'patient' ? 'Als Mitarbeiter anmelden' : 'Als Patient anmelden'}
+              {loginMode === 'patient' ? 'Als Mitarbeiter anmelden' : 'Als Klient anmelden'}
             </button>
           </form>
         )}
