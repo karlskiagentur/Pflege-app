@@ -69,7 +69,7 @@ export async function subscribeToPush(token: string): Promise<boolean> {
   }
 }
 
-export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boolean> {
+export async function subscribeMitarbeiter(mitarbeiterId: string, token?: string): Promise<boolean> {
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.error('Push wird von diesem Browser nicht unterstützt.');
@@ -117,14 +117,13 @@ export async function subscribeMitarbeiter(mitarbeiterId: string): Promise<boole
     console.log('Subscription:', subscription.toJSON());
 
     // 5. Abo IMMER an Airtable schicken (auch wenn schon eines existierte)
+    //    Auth über den Mitarbeiter-Session-Token (Server ermittelt den Datensatz selbst).
+    const authToken = token || localStorage.getItem('active_mitarbeiter_token') || '';
     const response = await fetch('/api/abo-pfleger', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify({ mitarbeiterId: mitarbeiterId, subscription: subscription.toJSON() })
     });
-    const responseText = await response.text();
-    console.log('Airtable-Antwort:', response.status, responseText);
-
     if (!response.ok) {
       console.error('Subscription konnte nicht gespeichert werden:', response.status);
       return false;

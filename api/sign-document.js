@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { airtable, TABLES } from './_lib.js';
+import { airtable, ownOr403, reportError, TABLES } from './_lib.js';
 
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_KEY = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
@@ -45,8 +45,10 @@ export default async function handler(req, res) {
     const patient = await patientByToken(token);
     if (!patient) { res.status(401).send('Nicht autorisiert'); return; }
 
-    // 2) Original-Dokument + Datei-URL
-    const orig = await airtable(`${TABLES.DOKUMENTE}/${originalDocumentId}`);
+    // 2) Original-Dokument: Format prüfen UND Eigentum verifizieren (IDOR-Schutz).
+    //    Ein Patient darf nur eigene Dokumente signieren.
+    const orig = await ownOr403(res, TABLES.DOKUMENTE, originalDocumentId, patient.id);
+    if (!orig) return; // ownOr403 hat bereits 400/403 gesendet
     const of = orig.fields || {};
     const att = (of.Datei || [])[0];
     const fileUrl = att && att.url;
@@ -145,6 +147,7 @@ export default async function handler(req, res) {
     res.status(200).json({ status: 'ok' });
   } catch (e) {
     console.error('sign-document Fehler:', e);
-    res.status(500).send('Signatur fehlgeschlagen: ' + String((e && e.message) || e));
+    reportError('api/sign-document', (e && e.message) || e, {});
+    res.status(500).send('Signatur fehlgeschlagen. Bitte später erneut versuchen.');
   }
 }

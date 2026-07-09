@@ -1,9 +1,9 @@
-import { airtable, sendError, TABLES } from './_lib.js';
+import { airtable, sendError, esc, handledPreflight, TABLES } from './_lib.js';
 
 // Speichert das Push-Abo am richtigen Datensatz - anhand des Session_Token.
 // Funktioniert für Klienten (Patienten-Tabelle) UND Mitarbeiter (Personal-Tabelle).
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') { res.status(405).json({ status: 'error', message: 'Nur POST' }); return; }
 
   const { token, subscription } = req.body || {};
@@ -16,7 +16,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const formula = encodeURIComponent(`{Session_Token} = '${token}'`);
+    const formula = encodeURIComponent(`{Session_Token} = '${esc(token)}'`);
     const body = JSON.stringify({ fields: { Push_Subscription: JSON.stringify(subscription) } });
 
     // 1) Klient?
@@ -38,7 +38,6 @@ export default async function handler(req, res) {
     // 3) Nichts gefunden
     res.status(401).json({ status: 'error', message: 'Nicht autorisiert' });
   } catch (e) {
-    console.error('save-subscription Fehler:', String((e && e.message) || e));
-    sendError(res, e);
+    sendError(res, e, 'api/save-subscription');
   }
 }

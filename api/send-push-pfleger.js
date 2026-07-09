@@ -53,6 +53,19 @@ export default async function handler(req, res) {
       // Push-Dienst lehnt ab (z.B. 404/410 = Abo abgelaufen) -> kein technischer Fehler
       if (err && err.statusCode) {
         console.error('send-push-pfleger Zustellung fehlgeschlagen:', { mitarbeiterId, statusCode: err.statusCode });
+        // Abgelaufenes Abo aus Airtable entfernen, damit nicht bei jedem Versand erneut scheitert.
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          try {
+            await fetch(
+              `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Personal/${mitarbeiterId}`,
+              {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${process.env.AIRTABLE_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fields: { Push_Subscription: '' } }),
+              }
+            );
+          } catch (_) { /* Aufräumen ist best effort */ }
+        }
         res.status(200).json({ status: 'skipped', grund: 'Abo nicht mehr zustellbar', statusCode: err.statusCode });
         return;
       }

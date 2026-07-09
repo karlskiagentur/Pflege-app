@@ -1,26 +1,24 @@
-import { airtable, ownOr403, patientByToken, sendError, TABLES } from './_lib.js';
+import { airtable, requireAuth, ownOr403, sendError, handledPreflight, TABLES } from './_lib.js';
 
-// Ersetzt den früheren Endpunkt mark_document_seen.
+// Ersetzt den n8n-Webhook "mark_document_seen". JSON: { token, documentId }
+// Neu: Token-Pflicht + Eigentumsprüfung (vorher ohne jede Auth).
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') { res.status(405).json({ status: 'error', message: 'Nur POST' }); return; }
-
-  const { token, documentId } = req.body || {};
-  if (!token || !documentId) { res.status(200).json({ status: 'skipped', grund: 'Ungültiger Aufruf' }); return; }
-
   try {
-    const patient = await patientByToken(token);
-    if (!patient) { res.status(401).json({ status: 'error', message: 'Nicht autorisiert' }); return; }
+    const patient = await requireAuth(req, res);
+    if (!patient) return;
 
-    const owned = await ownOr403(res, TABLES.DOKUMENTE, documentId, patient.id);
-    if (!owned) return;
+    const { documentId } = req.body || {};
+    const rec = await ownOr403(res, TABLES.DOKUMENTE, documentId, patient.id);
+    if (!rec) return;
 
     await airtable(`${TABLES.DOKUMENTE}/${documentId}`, {
-      method: 'PATCH', body: JSON.stringify({ fields: { Vom_Patienten_Gesehen: true } }),
+      method: 'PATCH',
+      body: JSON.stringify({ fields: { Vom_Patienten_Gesehen: true }, typecast: true }),
     });
-    res.status(200).json({ status: 'ok' });
+    res.status(200).json({ status: 'success' });
   } catch (e) {
-    console.error('mark-seen Fehler:', { documentId, message: String((e && e.message) || e) });
-    sendError(res, e);
+    sendError(res, e, 'api/mark-seen');
   }
 }

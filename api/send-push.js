@@ -22,6 +22,17 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  // Optionaler Missbrauchsschutz: Ist PUSH_RELAY_SECRET gesetzt, muss der
+  // Aufrufer es als Header "x-relay-secret" mitschicken. So kann dieser
+  // Broadcast-Endpunkt nicht als fremder Push-Versand-Relay genutzt werden.
+  const secret = process.env.PUSH_RELAY_SECRET;
+  if (secret) {
+    const got = (req.headers['x-relay-secret'] || '').toString();
+    if (got !== secret) {
+      return res.status(401).json({ error: 'Nicht autorisiert' });
+    }
+  }
+
   try {
     const { title, body, subscriptions } = req.body || {};
 
