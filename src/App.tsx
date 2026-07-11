@@ -142,7 +142,18 @@ const getFileUrl = (item: any, fieldName: string) => {
     if (!item) return "";
     let fileData = item[fieldName] || (item.fields ? item.fields[fieldName] : null);
     if (Array.isArray(fileData) && fileData.length > 0) {
-        return fileData[0].url || ""; 
+        return fileData[0].url || "";
+    }
+    return "";
+};
+
+// Echter Dateiname des Anhangs (Fallback, damit der Name immer mit dem
+// Original-Dateinamen vom hochladenden Pflegedienst beginnt).
+const getFileName = (item: any, fieldName: string) => {
+    if (!item) return "";
+    let fileData = item[fieldName] || (item.fields ? item.fields[fieldName] : null);
+    if (Array.isArray(fileData) && fileData.length > 0) {
+        return fileData[0].filename || "";
     }
     return "";
 };
@@ -416,7 +427,7 @@ export default function App() {
             setDocuments(dData.map((d:any) => ({
                 id: d.id,
                 Typ: getValue(d, 'Typ'),
-                Dateiname: getValue(d, 'Dateiname'),
+                Dateiname: getValue(d, 'Dateiname') || getFileName(d, 'Datei'),
                 Link: getFileUrl(d, 'Datei'),
                 Richtung: getValue(d, 'Richtung'),
                 Vom_Patienten_Gesehen: getValue(d, 'Vom_Patienten_Gesehen'),
@@ -2124,7 +2135,9 @@ export default function App() {
                         <div className="space-y-4">
                             {sichtbareDokumente.filter(d => unbox(d.Typ) === uploadContext).map(doc => {
                                 const isUnseen = unseenDocIds.includes(doc.id);
-                                const istUnterschrieben = (unbox(doc.Dateiname) || '').startsWith('Unterschrieben_');
+                                // Neu: Endung "_unterschrieben"; alt: Präfix "Unterschrieben_" (beides erkennen)
+                                const dnLower = (unbox(doc.Dateiname) || '').toLowerCase();
+                                const istUnterschrieben = dnLower.includes('_unterschrieben') || dnLower.startsWith('unterschrieben_');
                                 const kannUnterschreiben = unbox(doc.Typ) === 'Leistungsnachweis' && unbox(doc.Richtung) === 'Vom Pflegedienst' && !doc.Vom_Patienten_Bestaetigt_Am;
                                 return (
                                 <div

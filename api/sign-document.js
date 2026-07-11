@@ -53,7 +53,9 @@ export default async function handler(req, res) {
     const att = (of.Datei || [])[0];
     const fileUrl = att && att.url;
     if (!fileUrl) { res.status(400).send('Original hat keine Datei'); return; }
-    const origName = of.Dateiname || 'Dokument';
+    // Original-Dateiname vom hochladenden Pflegedienst: bevorzugt der echte
+    // Anhang-Dateiname, sonst das Textfeld. So beginnt der Name immer mit dem Original.
+    const origName = (att && att.filename) || of.Dateiname || 'Dokument';
     const origTyp = of.Typ || '';
 
     const fileRes = await fetch(fileUrl);
@@ -108,7 +110,9 @@ export default async function handler(req, res) {
 
     const out = await pdfDoc.save();
     const base64 = Buffer.from(out).toString('base64');
-    const filename = `Unterschrieben_${String(origName).replace(/\.(pdf|jpg|jpeg|png)$/i, '')}.pdf`;
+    // Neuer Namensstil: Original-Name vorne, hinten "_unterschrieben".
+    const origBase = String(origName).replace(/\.(pdf|jpe?g|png)$/i, '');
+    const filename = `${origBase}_unterschrieben.pdf`;
 
     // 5) Neuen Dokument-Datensatz anlegen + Anhang hochladen (direkt Airtable)
     const created = await airtable(TABLES.DOKUMENTE, {
