@@ -278,6 +278,9 @@ export default function App() {
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
   const [mitarbeiterError, setMitarbeiterError] = useState<string | null>(null);
+  // Ist-Dauer-Erfassung durch den Pfleger (pro Termin)
+  const [dauerInput, setDauerInput] = useState<Record<string, string>>({});
+  const [dauerSaving, setDauerSaving] = useState<string | null>(null);
   const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
   const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
   const [meldungTyp, setMeldungTyp] = useState<string>('');
@@ -983,6 +986,33 @@ export default function App() {
     }
   };
 
+  // Pfleger erfasst die tatsächliche Dauer eines Einsatzes (Minuten) -> Airtable.
+  const saveIstDauer = async (besuchId: string, minutenStr: string) => {
+    const minuten = parseInt(minutenStr, 10);
+    if (!Number.isFinite(minuten) || minuten < 0) { alert('Bitte eine gültige Minutenzahl eingeben.'); return; }
+    setDauerSaving(besuchId);
+    try {
+      const res = await fetchWithTimeout('/api/besuch-dauer', {
+        method: 'POST',
+        headers: maAuth(),
+        body: JSON.stringify({ besuchId, minuten }),
+      });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Server antwortete mit ${res.status}: ${text}`);
+      }
+      setDauerInput(prev => { const n = { ...prev }; delete n[besuchId]; return n; });
+      await fetchMitarbeiterTermine();
+    } catch (err: any) {
+      console.error('Fehler beim Speichern der Dauer:', err);
+      alert('Dauer konnte nicht gespeichert werden: ' + err.message);
+      reportClientError('besuch-dauer', err, {});
+    } finally {
+      setDauerSaving(null);
+    }
+  };
+
   useEffect(() => {
     if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine();
   }, [mitarbeiterId, mitarbeiterName]);
@@ -1488,6 +1518,38 @@ export default function App() {
                     <div style={{ backgroundColor: badge.bg, color: badge.color }} className="py-3 text-center font-black uppercase text-[10px] tracking-wider flex items-center justify-center gap-2">
                       {renderBadgeIcon(badge.icon)}
                       {badge.text}
+                    </div>
+                    {/* IST-DAUER: der Pfleger erfasst nach dem Termin die tatsächliche Dauer */}
+                    <div className="border-t border-gray-100 px-6 py-4">
+                      {(() => {
+                        const istMin = Number(getValue(t, 'Ist_Dauer_Minuten')) || 0;
+                        const planMin = Math.round((Number(getValue(t, 'Dauer')) || 0) / 60);
+                        const editing = dauerInput[t.id] !== undefined;
+                        if (istMin > 0 && !editing) {
+                          return (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-black text-[#0F6E56] flex items-center gap-1.5"><Check size={16}/> Erfasst: {istMin} Min</span>
+                              <button onClick={() => setDauerInput(p => ({ ...p, [t.id]: String(istMin) }))} className="text-[11px] font-black uppercase text-gray-400 active:opacity-60">Ändern</button>
+                            </div>
+                          );
+                        }
+                        const val = dauerInput[t.id] ?? String(planMin || '');
+                        return (
+                          <div>
+                            <p className="text-[11px] font-black uppercase text-gray-400 mb-2">Tatsächliche Dauer (Minuten)</p>
+                            <div className="flex items-center gap-2">
+                              <input type="number" inputMode="numeric" min={0} value={val}
+                                onChange={(e) => setDauerInput(p => ({ ...p, [t.id]: e.target.value }))}
+                                className="w-24 border-2 border-[#E8DCC8] rounded-xl px-3 py-3 text-lg font-bold text-center text-[#3A3A3A]" />
+                              <button disabled={dauerSaving === t.id}
+                                onClick={() => saveIstDauer(t.id, val)}
+                                className="flex-1 bg-[#b5a48b] text-white py-3 rounded-xl font-black uppercase text-sm active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                              {dauerSaving === t.id ? <RefreshCw className="animate-spin" size={16}/> : <Check size={16}/>} Dauer speichern
+                              </button>
+                            </div>
+                        </div>
+                        );
+                      })()}
                     </div>
                     {/* PROBLEM MELDEN */}
                     <button onClick={() => { setMeldungTermin(t); setMeldungTyp(''); setMeldungNotiz(''); }}
