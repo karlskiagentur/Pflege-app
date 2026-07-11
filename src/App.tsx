@@ -4,8 +4,12 @@ import {
   X, Upload, Mic, LogOut, Calendar as CalendarIcon,
   ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
-  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw
+  Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw, MapPin, Navigation
 } from 'lucide-react';
+
+// Google-Maps-Link zu einer Adresse (öffnet die Karten-App auf dem Handy).
+const mapsUrl = (adresse: string) =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
 
@@ -1193,6 +1197,13 @@ export default function App() {
                       <div className="flex-1 text-left">
                         <p className={`text-sm font-black ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
                         <p className={`text-xs ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
+                        {getValue(t, 'Adresse_Klient') && (
+                          <a href={mapsUrl(getValue(t, 'Adresse_Klient'))} target="_blank" rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 mt-1 text-[11px] font-bold text-[#0F6E56] active:opacity-60">
+                            <Navigation size={11}/> Route
+                          </a>
+                        )}
                       </div>
                       <span className={`text-[10px] font-black uppercase shrink-0 ${tile.labelCls}`}>{tile.label}</span>
                     </div>
@@ -1440,6 +1451,18 @@ export default function App() {
                             <RefreshCw size={10} strokeWidth={3} />
                             <span className="text-[10px] font-black uppercase">Vertretung</span>
                           </div>
+                        )}
+                        {/* ADRESSE + MAPS: damit der Mitarbeiter weiß, wohin */}
+                        {getValue(t, 'Adresse_Klient') && (
+                          <a
+                            href={mapsUrl(getValue(t, 'Adresse_Klient'))}
+                            target="_blank" rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-start gap-1.5 mt-2 text-[#0F6E56] active:opacity-60"
+                          >
+                            <MapPin size={13} className="mt-0.5 shrink-0" />
+                            <span className="text-sm underline decoration-dotted leading-snug">{getValue(t, 'Adresse_Klient')}</span>
+                          </a>
                         )}
                       </div>
                       {/* RECHTS: Dauer */}

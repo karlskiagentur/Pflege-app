@@ -18,6 +18,19 @@ export default async function handler(req, res) {
     const patient = (pdata.records || [])[0];
     if (!patient) { res.status(200).json({ status: 'unauthorized' }); return; }
 
+    // "Zuletzt aktiv" pflegen (gedrosselt): so sieht der Pflegedienst, ob/wann der
+    // Klient die App nutzt. Nur schreiben, wenn > 10 Min her (spart Schreibzugriffe).
+    try {
+      const last = patient.fields && patient.fields.Zuletzt_aktiv;
+      const stale = !last || (Date.now() - new Date(last).getTime() > 10 * 60 * 1000);
+      if (stale) {
+        await airtable(`${TABLES.PATIENTEN}/${patient.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ fields: { Zuletzt_aktiv: new Date().toISOString() } }),
+        });
+      }
+    } catch (_) { /* Aktivitäts-Zeitstempel ist unkritisch, darf den Load nie stören */ }
+
     const byPatient = `filterByFormula=${encodeURIComponent(`FIND('${esc(patient.id)}', ARRAYJOIN({PatientID_live}))`)}`;
     const [besuche, tasks, dokumente, kontakte] = await Promise.all([
       fetchAll(TABLES.BESUCHE, byPatient),
