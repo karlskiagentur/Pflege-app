@@ -29,7 +29,7 @@ export default async function handler(req, res) {
 
     await airtable(`${TABLES.BESUCHE}/${besuchId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ fields: { Ist_Dauer_Minuten: min, Erledigt_Am: new Date().toISOString() } }),
+      body: JSON.stringify({ fields: { Dauer_Ist: min, Erledigt_Am: new Date().toISOString() } }),
     });
     res.status(200).json({ status: 'success' });
   } catch (e) {

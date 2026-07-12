@@ -823,18 +823,10 @@ export default function App() {
 
   const handleNewTerminRequest = async () => {
       if(!requestDate) return;
-      const tempId = "temp-" + Date.now();
-      const fakeVisit = {
-          id: tempId,
-          Tätigkeit: requestReason || "Terminanfrage",
-          Uhrzeit: requestTime ? `${requestDate}T${requestTime}:00` : `${requestDate}T00:00:00`,
-          Status: "Anfrage",
-          Notiz_Patient: `Wunschtermin: ${formatDate(requestDate)}`,
-          Pfleger_Name: "Wird zugewiesen"
-      };
-      setBesuche(prev => [...prev, fakeVisit]);
-      setActiveModal(null);
-      setSentStatus('success'); 
+      // Wichtig: Die Anfrage wird NICHT als (Geister-)Termin in die Liste geschrieben.
+      // Sie geht in die separate Inbox "Terminanfragen"; der Pflegedienst legt darauf
+      // erst nach Mitarbeiter-Zuweisung einen echten Termin an. Der Klient bekommt nur
+      // eine Bestätigung.
       const saveDate = requestDate;
       const saveTime = requestTime;
       const saveReason = requestReason;
@@ -856,11 +848,12 @@ export default function App() {
             const text = await res.text().catch(() => '');
             throw new Error(`Server antwortete mit ${res.status}: ${text}`);
         }
-        setTimeout(() => fetchData(true), 2000);
+        setActiveModal(null);
+        setSentStatus('success');
+        alert('Ihre Terminanfrage wurde übermittelt. Der Pflegedienst meldet sich bei Ihnen und trägt den Termin dann ein.');
       } catch (err: any) {
           console.error('Fehler bei Terminanfrage:', err);
           setSentStatus('error');
-          setBesuche(prev => prev.filter(b => b.id !== tempId));
           alert('Fehler beim Senden der Terminanfrage: ' + err.message);
       }
       setIsSending(false);
@@ -1460,7 +1453,7 @@ export default function App() {
               </div>
             ) : (
               termineHeute.map((t) => {
-                const showDauer = formatDauer(getValue(t, 'Dauer'));
+                const showDauer = formatDauer(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer'));
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
                 const status = getValue(t, 'Status');
@@ -1522,8 +1515,8 @@ export default function App() {
                     {/* IST-DAUER: der Pfleger erfasst nach dem Termin die tatsächliche Dauer */}
                     <div className="border-t border-gray-100 px-6 py-4">
                       {(() => {
-                        const istMin = Number(getValue(t, 'Ist_Dauer_Minuten')) || 0;
-                        const planMin = Math.round((Number(getValue(t, 'Dauer')) || 0) / 60);
+                        const istMin = Number(getValue(t, 'Dauer_Ist') || getValue(t, 'Ist_Dauer_Minuten')) || 0;
+                        const planMin = Math.round((Number(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer')) || 0) / 60);
                         const editing = dauerInput[t.id] !== undefined;
                         if (istMin > 0 && !editing) {
                           return (
@@ -1918,7 +1911,7 @@ export default function App() {
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
             const isProposed = !getValue(b, 'Uhrzeit') && proposed;
             const isHighlighted = highlightedIds.includes(b.id);
-            const showDauer = formatDauer(getValue(b, 'Dauer'));
+            const showDauer = formatDauer(getValue(b, 'Dauer_Soll') || getValue(b, 'Dauer'));
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>

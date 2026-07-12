@@ -1,6 +1,7 @@
 import { airtable, requireAuth, ownOr403, sendError, handledPreflight, TABLES } from './_lib.js';
 
 const URLAUB = 'tblPfBhWtAg9GEhWb'; // Patienten-Urlaub
+const TERMINANFRAGEN = 'tblabkgCUxZmRzz6h'; // Inbox für Klienten-Terminwünsche (nicht der Dienstplan)
 
 // Ersetzt den n8n-Webhook "service_submit" – vollständig auf Vercel, ohne n8n.
 // Erwartet JSON (kein FormData mehr):
@@ -36,19 +37,20 @@ export default async function handler(req, res) {
       res.status(200).json({ status: 'success' }); return;
     }
 
-    // Neue Terminanfrage: neuer Besuch, verknüpft mit dem eingeloggten Patienten
+    // Neue Terminanfrage: KOMMT NICHT in den Dienstplan (Besuche), sondern in die
+    // separate Inbox-Tabelle "Terminanfragen". Der Pflegedienst prüft sie dort und
+    // legt erst nach Zuweisung eines Mitarbeiters einen echten Einsatz an. So
+    // entstehen keine Einsätze ohne Mitarbeiter im Dienstplan.
     if (t.includes('Terminanfrage')) {
       const fields = {
-        Tätigkeit: String(betreff || 'Terminanfrage').slice(0, 200),
-        Patient: [patient.id],
-        Status: 'Anfrage',
+        Betreff: String(betreff || 'Terminanfrage').slice(0, 200),
+        Klient: [patient.id],
+        Nachricht: String(nachricht || '').slice(0, 2000),
+        Status: 'Neu',
       };
-      if (/^\d{4}-\d{2}-\d{2}$/.test(String(wunschDatum || ''))) {
-        fields.Datum = wunschDatum;
-        const zeit = /^\d{2}:\d{2}$/.test(String(wunschZeit || '')) ? wunschZeit : '00:00';
-        fields.Uhrzeit = `${wunschDatum}T${zeit}:00`;
-      }
-      const data = await airtable(TABLES.BESUCHE, {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(wunschDatum || ''))) fields.Wunsch_Datum = wunschDatum;
+      if (wunschZeit) fields.Wunsch_Zeit = String(wunschZeit).slice(0, 20);
+      const data = await airtable(TERMINANFRAGEN, {
         method: 'POST', body: JSON.stringify({ fields, typecast: true }),
       });
       res.status(200).json({ status: 'success', id: data.id }); return;
