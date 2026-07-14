@@ -134,7 +134,16 @@ const getValue = (item: any, fieldName: string) => {
     if (!item) return "";
     if (item[fieldName] !== undefined) return unbox(item[fieldName]);
     if (item.fields && item.fields[fieldName] !== undefined) return unbox(item.fields[fieldName]);
-    return ""; 
+    return "";
+};
+
+// Anzeige-Variante: ein leerer Wert wird als "-" dargestellt. Lücken aus der
+// Klientenliste bleiben in Airtable bewusst leer; der zuständige Pflegedienst-
+// Mitarbeiter kann sie später ergänzen. Bis dahin zeigt die App ein "-" statt
+// einer leeren Fläche (keine leeren/kaputt wirkenden Stellen in der Ansicht).
+const getValueOr = (item: any, fieldName: string, fallback = "-") => {
+    const v = getValue(item, fieldName);
+    return v === "" ? fallback : v;
 };
 
 // DATEI-EXTRAKTOR
@@ -1828,7 +1837,7 @@ export default function App() {
         <div className="bg-[#d2c2ad] rounded-[2rem] p-7 text-white shadow-md flex justify-between items-center">
             <div>
                 <p className="text-[10px] uppercase font-bold opacity-80 mb-1 tracking-widest">Status</p>
-                <h2 className="text-3xl font-black">{getValue(patientData, 'Pflegegrad')}</h2>
+                <h2 className="text-3xl font-black">{getValueOr(patientData, 'Pflegegrad')}</h2>
             </div>
             <CalendarIcon size={28}/>
         </div>
@@ -1856,8 +1865,8 @@ export default function App() {
             <h3 className="font-black text-lg border-l-4 border-[#dccfbc] pl-4 uppercase tracking-widest text-[10px] text-gray-400">Stammdaten</h3>
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-4 text-sm">
                 <div className="flex justify-between border-b pb-2"><span>Geburtsdatum</span><span className="font-bold">{formatDateLong(getValue(patientData, 'Geburtsdatum'))}</span></div>
-                <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValue(patientData, 'Versicherung')}</span></div>
-                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValue(patientData, 'Anschrift')}</p></div>
+                <div className="flex justify-between border-b pb-2"><span>Versicherung</span><span className="font-bold">{getValueOr(patientData, 'Versicherung')}</span></div>
+                <div><p className="text-gray-400">Anschrift</p><p className="font-bold text-[#3A3A3A]">{getValueOr(patientData, 'Anschrift')}</p></div>
             </div>
         </section>
 
