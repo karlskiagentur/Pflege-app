@@ -17,9 +17,12 @@ export default async function handler(req, res) {
     res.status(401).json({ status: 'error', message: 'Login fehlgeschlagen' }); return;
   }
   try {
-    // Ein Query per Kunden-Nr; Code-Vergleich in JS, damit die Sperr-Logik
-    // (Failed_Attempts/Locked_Until) denselben Record nutzen kann.
-    const formula = encodeURIComponent(`{Kunden_Nr} = '${esc(kundenNr)}'`);
+    // Query per Kunden-Nr. Das seniorentaugliche Zahlenfeld in der App kann kein "L"
+    // tippen -> reine Ziffern zusätzlich auf die Kunden-Nr-Form "L#####" abbilden.
+    // Eine exakt getippte Kunden-Nr (z. B. am Desktop) bleibt ebenfalls gÜltig.
+    const kandidaten = new Set([kundenNr]);
+    if (/^\d+$/.test(kundenNr)) kandidaten.add('L' + String(parseInt(kundenNr, 10)).padStart(5, '0'));
+    const formula = encodeURIComponent('OR(' + [...kandidaten].map((k) => `{Kunden_Nr}='${esc(k)}'`).join(',') + ')');
     const data = await airtable(`${TABLES.PATIENTEN}?filterByFormula=${formula}&maxRecords=1`);
     const rec = (data.records || [])[0];
     // Generische Meldung, damit gültige Anmelde-IDs nicht enumerierbar sind.

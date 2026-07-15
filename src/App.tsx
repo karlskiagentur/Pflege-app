@@ -632,7 +632,7 @@ export default function App() {
 
     setIsLoggingIn(true);
     try {
-      const res = await fetch('/api/patient-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fullName, code: loginCode }) });
+      const res = await fetch('/api/patient-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'L' + fullName, code: loginCode }) });
       const data = await res.json();
       if (data.status === "success" && data.patientId && data.token) {
         localStorage.setItem('active_patient_id', data.patientId);
@@ -1745,7 +1745,14 @@ export default function App() {
               {loginMode === 'patient' ? 'Klienten-Login' : 'Mitarbeiter-Login'}
             </p>
 
-            <input type="text" inputMode={loginMode === 'patient' ? 'text' : 'numeric'} value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Kunden-Nr' : 'Mitarbeiter-ID'} required />
+            {loginMode === 'patient' ? (
+              <div className="w-full bg-[#F9F7F4] rounded-2xl mb-4 flex items-center pl-5">
+                <span className="text-lg font-bold text-[#8a8a8a] select-none">L</span>
+                <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value.replace(/\D/g,''))} className="flex-1 bg-transparent p-5 pl-2 outline-none" placeholder="Kunden-Nr (nur Zahlen)" required />
+              </div>
+            ) : (
+              <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Mitarbeiter-ID" required />
+            )}
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
 
             {loginError && (
