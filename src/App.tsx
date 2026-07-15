@@ -346,6 +346,44 @@ export default function App() {
   const [sentStatus, setSentStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [newVersion, setNewVersion] = useState(false);
+
+  // Versions-Check: prüft beim Öffnen / Zurückkehren in den Vordergrund / Tab-Wechsel,
+  // ob eine neue App-Version live ist. Rein statischer Abgleich gegen index.html auf dem
+  // Vercel-CDN (mit Cache-Bust-Parameter) – KEINE Airtable-/API-Last, skaliert für alle Klienten.
+  // Kein Intervall-Polling. Bei neuer Version: Banner -> Nutzer lädt per Tipp selbst neu
+  // (kein automatisches Neuladen, damit keine laufende Eingabe verloren geht).
+  useEffect(() => {
+    const aktuelleVersion = (() => {
+      const tags = Array.from(document.querySelectorAll('script[type="module"][src]')) as HTMLScriptElement[];
+      for (const t of tags) {
+        const m = (t.getAttribute('src') || '').match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
+        if (m) return m[0];
+      }
+      return '';
+    })();
+    if (!aktuelleVersion) return;
+    let benachrichtigt = false;
+    const pruefe = async () => {
+      if (benachrichtigt || document.visibilityState !== 'visible') return;
+      try {
+        const res = await fetch('/index.html?vc=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) return;
+        const html = await res.text();
+        const m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
+        if (m && m[0] !== aktuelleVersion) { benachrichtigt = true; setNewVersion(true); }
+      } catch { /* offline o. Ä.: ignorieren, kein Fehler */ }
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') pruefe(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', pruefe);
+    const t = window.setTimeout(pruefe, 4000); // einmal kurz nach dem Öffnen
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', pruefe);
+      window.clearTimeout(t);
+    };
+  }, []);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [showArchive, setShowArchive] = useState(false);
 
@@ -2089,8 +2127,21 @@ export default function App() {
           </div>
       )}
 
+      {newVersion && (
+          <button
+            onClick={() => window.location.reload()}
+            className="fixed top-0 left-0 right-0 z-[110] bg-[#0F6E56] text-white p-6 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-white/30"
+          >
+              <div className="flex items-center gap-3 mb-1">
+                  <div className="bg-white/20 p-2.5 rounded-full"><RefreshCw size={26} /></div>
+                  <span className="font-black text-lg uppercase tracking-wide">Neue Version verfügbar</span>
+              </div>
+              <p className="text-sm opacity-90 font-bold underline decoration-2 underline-offset-4">Hier tippen zum Aktualisieren</p>
+          </button>
+      )}
+
       {showUpdateBanner && (
-          <button 
+          <button
             onClick={handleBannerClick}
             className="fixed top-0 left-0 right-0 z-[100] bg-[#3A3A3A] text-white p-8 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-[#b5a48b]"
           >

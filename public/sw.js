@@ -1,7 +1,7 @@
 // Service Worker: Push-Benachrichtigungen + Offline-Grundfähigkeit.
 // Ziel: Die App darf bei fehlendem Netz NICHT als weißer Bildschirm enden.
 
-const CACHE = 'wunschlos-v2';
+const CACHE = 'wunschlos-v3';
 // App-Shell, die offline verfügbar sein soll.
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon.png'];
 
@@ -32,9 +32,9 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // API/Backend niemals aus dem Cache bedienen.
-  if (url.pathname.startsWith('/api/') || url.hostname.includes('n8n')) {
-    return; // Standard-Netzwerkverhalten
+  // API/Backend und den Versions-Check (?vc=) niemals aus dem Cache bedienen.
+  if (url.pathname.startsWith('/api/') || url.hostname.includes('n8n') || url.searchParams.has('vc')) {
+    return; // Standard-Netzwerkverhalten, nicht cachen
   }
 
   // Seiten-Navigationen: erst Netz, bei Offline die App-Shell.
