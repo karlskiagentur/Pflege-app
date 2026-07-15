@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { airtable, sendError, handledPreflight, TABLES } from './_lib.js';
+import { airtable, esc, sendError, handledPreflight, TABLES } from './_lib.js';
 
 const LOCK_AFTER = 5;
 const LOCK_MINUTES = 15;
@@ -10,14 +10,16 @@ export default async function handler(req, res) {
     res.status(405).json({ status: 'error', message: 'Nur POST' }); return;
   }
   const { name, code } = req.body || {};
-  // Beides Zahlen - vor dem Einsetzen in die Formel auf reine Ziffern prüfen (Injection-Schutz)
-  if (!/^\d+$/.test(String(name || '')) || !/^\d+$/.test(String(code || ''))) {
+  // Login läuft über die Kunden-Nr (z. B. "L00001") + PIN. Kunden-Nr ist alphanumerisch,
+  // die PIN nur Ziffern. Vor dem Einsetzen in die Formel streng validieren (Injection-Schutz).
+  const kundenNr = String(name || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,20}$/.test(kundenNr) || !/^\d+$/.test(String(code || ''))) {
     res.status(401).json({ status: 'error', message: 'Login fehlgeschlagen' }); return;
   }
   try {
-    // Ein Query per Anmelde_ID; Code-Vergleich in JS, damit die Sperr-Logik
+    // Ein Query per Kunden-Nr; Code-Vergleich in JS, damit die Sperr-Logik
     // (Failed_Attempts/Locked_Until) denselben Record nutzen kann.
-    const formula = encodeURIComponent(`{Anmelde_ID} = ${Number(name)}`);
+    const formula = encodeURIComponent(`{Kunden_Nr} = '${esc(kundenNr)}'`);
     const data = await airtable(`${TABLES.PATIENTEN}?filterByFormula=${formula}&maxRecords=1`);
     const rec = (data.records || [])[0];
     // Generische Meldung, damit gültige Anmelde-IDs nicht enumerierbar sind.

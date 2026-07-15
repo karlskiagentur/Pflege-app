@@ -34,6 +34,22 @@ export default async function handler(req, res) {
         method: 'PATCH',
         body: JSON.stringify({ fields: { Status: 'Änderungswunsch', Notiz_Patient: String(nachricht || '').slice(0, 2000) } }),
       });
+      // Zusätzlich als Eintrag in die Inbox "Terminanfragen" (Art: Terminänderung),
+      // damit der Pflegedienst den Änderungswunsch dort zentral sieht und den
+      // betroffenen Termin direkt anklicken kann – nicht nur als Markierung im Dienstplan.
+      const rf = rec.fields || {};
+      const betreff = `Terminänderung: ${String(rf['Tätigkeit'] || 'Termin')}${rf['Datum'] ? ' am ' + rf['Datum'] : ''}`.slice(0, 200);
+      await airtable(TERMINANFRAGEN, {
+        method: 'POST',
+        body: JSON.stringify({ fields: {
+          Art: 'Terminänderung',
+          Betreff: betreff,
+          Klient: [patient.id],
+          Nachricht: String(nachricht || '').slice(0, 2000),
+          Betroffener_Termin: [recordId],
+          Status: 'Neu',
+        }, typecast: true }),
+      });
       res.status(200).json({ status: 'success' }); return;
     }
 
@@ -43,6 +59,7 @@ export default async function handler(req, res) {
     // entstehen keine Einsätze ohne Mitarbeiter im Dienstplan.
     if (t.includes('Terminanfrage')) {
       const fields = {
+        Art: 'Neue Anfrage',
         Betreff: String(betreff || 'Terminanfrage').slice(0, 200),
         Klient: [patient.id],
         Nachricht: String(nachricht || '').slice(0, 2000),

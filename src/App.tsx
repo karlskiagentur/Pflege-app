@@ -248,7 +248,7 @@ const getDisplayTitle = (b: any) => {
      if (note.includes("Grund:")) return note.split("Grund:")[1].trim(); 
      if (note.includes("Wunschdatum")) return "Terminanfrage"; 
   }
-  return title || "Termin";
+  return title || "Unterstützung";
 };
 
 const getProposedDetails = (b: any) => {
@@ -1238,7 +1238,7 @@ export default function App() {
                     <div key={t.id} className={`rounded-2xl p-4 flex items-center gap-3 ${tile.cls}`}>
                       <p className="text-sm font-bold text-gray-700 min-w-[44px]">{formatTime(getValue(t, 'Uhrzeit'))}</p>
                       <div className="flex-1 text-left">
-                        <p className={`text-sm font-black ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
+                        <p className={`text-sm font-black ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValueOr(t, 'Tätigkeit', 'Unterstützung')}</p>
                         <p className={`text-xs ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
                         {getValue(t, 'Adresse_Klient') && (
                           <a href={mapsUrl(getValue(t, 'Adresse_Klient'))} target="_blank" rel="noopener noreferrer"
@@ -1484,7 +1484,7 @@ export default function App() {
                       </div>
                       {/* MITTE: Inhalt */}
                       <div className="flex-1 border-l border-gray-100 pl-4 text-left">
-                        <p className={`font-black text-lg mb-2 ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValue(t, 'Tätigkeit')}</p>
+                        <p className={`font-black text-lg mb-2 ${isAbgesagt ? 'line-through text-gray-400' : 'text-[#3A3A3A]'}`}>{getValueOr(t, 'Tätigkeit', 'Unterstützung')}</p>
                         <div className="flex items-center gap-2">
                           <User size={12} className="text-gray-400"/>
                           <p className={`text-sm ${isAbgesagt ? 'line-through text-gray-400' : 'text-gray-500'}`}>{getValue(t, 'Patient_Name')}</p>
@@ -1524,7 +1524,7 @@ export default function App() {
                     {/* IST-DAUER: der Pfleger erfasst nach dem Termin die tatsächliche Dauer */}
                     <div className="border-t border-gray-100 px-6 py-4">
                       {(() => {
-                        const istMin = Number(getValue(t, 'Dauer_Ist') || getValue(t, 'Ist_Dauer_Minuten')) || 0;
+                        const istMin = Math.round((Number(getValue(t, 'Dauer_Ist')) || 0) / 60);
                         const planMin = Math.round((Number(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer')) || 0) / 60);
                         const editing = dauerInput[t.id] !== undefined;
                         if (istMin > 0 && !editing) {
@@ -1583,7 +1583,7 @@ export default function App() {
                         </div>
                         {/* MITTE: Inhalt */}
                         <div className="flex-1 border-l border-gray-200 pl-3 text-left">
-                          <p className="text-sm font-bold text-gray-600">{getValue(t, 'Tätigkeit')}</p>
+                          <p className="text-sm font-bold text-gray-600">{getValueOr(t, 'Tätigkeit', 'Unterstützung')}</p>
                           <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
                         </div>
                         {/* RECHTS: Status-Label */}
@@ -1634,7 +1634,7 @@ export default function App() {
                 <div className="flex items-start justify-between mb-6">
                   <div className="text-left">
                     <h3 className="text-xl font-black text-[#3A3A3A]">Meldung zu diesem Einsatz</h3>
-                    <p className="text-xs text-gray-400 mt-1">{getValue(meldungTermin, 'Tätigkeit')} · {getValue(meldungTermin, 'Patient_Name')}</p>
+                    <p className="text-xs text-gray-400 mt-1">{getValueOr(meldungTermin, 'Tätigkeit', 'Unterstützung')} · {getValue(meldungTermin, 'Patient_Name')}</p>
                   </div>
                   <button onClick={() => setMeldungTermin(null)} className="p-2 -mr-2 -mt-2 text-gray-400"><X size={22}/></button>
                 </div>
@@ -1745,7 +1745,7 @@ export default function App() {
               {loginMode === 'patient' ? 'Klienten-Login' : 'Mitarbeiter-Login'}
             </p>
 
-            <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Klienten-ID' : 'Mitarbeiter-ID'} required />
+            <input type="text" inputMode={loginMode === 'patient' ? 'text' : 'numeric'} value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder={loginMode === 'patient' ? 'Kunden-Nr' : 'Mitarbeiter-ID'} required />
             <input type="password" value={loginCode} onChange={(e)=>setLoginCode(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="PIN" required />
 
             {loginError && (

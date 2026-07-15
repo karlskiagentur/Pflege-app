@@ -27,9 +27,11 @@ export default async function handler(req, res) {
       res.status(403).json({ status: 'error', message: 'Kein Zugriff auf diesen Einsatz' }); return;
     }
 
+    // Dauer_Ist ist ein Dauer-Feld (Airtable speichert Sekunden). Der Pfleger erfasst
+    // Minuten -> in Sekunden umrechnen, damit Interface (h:mm) und Monatsformel stimmen.
     await airtable(`${TABLES.BESUCHE}/${besuchId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ fields: { Dauer_Ist: min, Erledigt_Am: new Date().toISOString() } }),
+      body: JSON.stringify({ fields: { Dauer_Ist: min * 60, Erledigt_Am: new Date().toISOString() } }),
     });
     res.status(200).json({ status: 'success' });
   } catch (e) {
