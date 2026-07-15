@@ -1784,9 +1784,10 @@ export default function App() {
             </p>
 
             {loginMode === 'patient' ? (
-              <div className="w-full bg-[#F9F7F4] rounded-2xl mb-4 flex items-center pl-5">
-                <span className="text-lg font-bold text-[#8a8a8a] select-none">L</span>
-                <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value.replace(/\D/g,''))} className="flex-1 bg-transparent p-5 pl-2 outline-none" placeholder="Kunden-Nr (nur Zahlen)" required />
+              <div className="w-full flex items-stretch gap-2 mb-4">
+                {/* Eigenes Kästchen mit fest vorgegebenem "L" – der Klient tippt nur die Ziffern seiner Kunden-Nr. */}
+                <div className="bg-[#F9F7F4] rounded-2xl px-5 flex items-center justify-center text-2xl font-black text-[#b5a48b] select-none">L</div>
+                <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value.replace(/\D/g,''))} className="flex-1 bg-[#F9F7F4] p-5 rounded-2xl outline-none" placeholder="Kunden-Nr" required />
               </div>
             ) : (
               <input type="text" inputMode="numeric" value={fullName} onChange={(e)=>setFullName(e.target.value)} className="w-full bg-[#F9F7F4] p-5 rounded-2xl mb-4 outline-none" placeholder="Mitarbeiter-ID" required />
