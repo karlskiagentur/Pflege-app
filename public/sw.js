@@ -33,7 +33,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   // API/Backend und den Versions-Check (?vc=) niemals aus dem Cache bedienen.
-  if (url.pathname.startsWith('/api/') || url.hostname.includes('n8n') || url.searchParams.has('vc')) {
+  // Videos (.mp4) ebenfalls nicht: iOS streamt per Range-Anfragen (206) - eine
+  // Cache-Antwort wuerde das Abspielen brechen; ausserdem Client-Speicher schonen.
+  if (url.pathname.startsWith('/api/') || url.hostname.includes('n8n') || url.searchParams.has('vc') || url.pathname.endsWith('.mp4')) {
     return; // Standard-Netzwerkverhalten, nicht cachen
   }
 

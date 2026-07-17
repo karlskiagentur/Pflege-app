@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard, CalendarDays, Phone, User, RefreshCw, FileText,
   X, Upload, Mic, LogOut, Calendar as CalendarIcon,
-  ChevronRight, Send, Euro, FileCheck, PlayCircle, Plane, Play, Plus,
+  ChevronRight, Send, Euro, FileCheck, Plane, Play, Plus,
   CheckCircle2, Circle, ChevronDown, ChevronUp, Check, PlusCircle, AlertCircle, History, Bell, AlertTriangle, ExternalLink, Clock,
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw, MapPin, Navigation
 } from 'lucide-react';
@@ -2196,7 +2196,9 @@ export default function App() {
       )}
 
       {activeModal && (<div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in"><div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
-         {activeModal === 'video' && (<div className="bg-black w-full max-w-md h-[50vh] rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white"><X size={20}/></button><div className="text-white text-center"><PlayCircle size={64} className="opacity-20 mx-auto"/><p className="mt-4 font-bold text-xs uppercase tracking-widest">Video wird geladen...</p></div></div>)}
+         {activeModal === 'video' && (<div className="bg-black w-full max-w-md rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white z-10"><X size={20}/></button>{/* Anleitungsvideo: selbst gehostet (Vercel CDN, kein Drittanbieter). Kein Autoplay,
+             laedt erst beim Antippen (preload=metadata) - schont Datenvolumen der Klienten. */}
+         <video src="/anleitung.mp4" poster="/anleitung-poster.jpg" controls playsInline preload="metadata" className="w-full max-h-[80vh] object-contain" onError={() => reportClientError('video-anleitung', 'Anleitungsvideo konnte nicht geladen werden')} /></div>)}
          
          {/* KI Modal deaktiviert */}
          {false && activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
