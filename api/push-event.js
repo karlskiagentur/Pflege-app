@@ -102,11 +102,15 @@ export default async function handler(req, res) {
     const subs = new Set();
     let message = '';
     let istMitteilung = false;
+    let gateTable = null; // Besuche/Dokumente: Push nur nach bewusster Freigabe (Push_senden='Senden')
 
     if (type === 'besuch') {
       const rec = await loadRec(TABLES.BESUCHE, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Besuch nicht gefunden' }); return; }
       const f = rec.fields || {};
+      // Bestaetigungs-Gate: Push nur, wenn der Mitarbeiter im Interface aktiv freigegeben hat.
+      if (txt(f.Push_senden) !== 'Senden') { res.status(200).json({ status: 'skipped', grund: 'Push nicht freigegeben' }); return; }
+      gateTable = TABLES.BESUCHE;
       const patientIds = f.Patient || [];
       if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       const taetigkeit = txt(f['Tätigkeit']);
@@ -124,6 +128,9 @@ export default async function handler(req, res) {
       const rec = await loadRec(TABLES.DOKUMENTE, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Dokument nicht gefunden' }); return; }
       const f = rec.fields || {};
+      // Bestaetigungs-Gate: Push nur, wenn der Mitarbeiter im Interface aktiv freigegeben hat.
+      if (txt(f.Push_senden) !== 'Senden') { res.status(200).json({ status: 'skipped', grund: 'Push nicht freigegeben' }); return; }
+      gateTable = TABLES.DOKUMENTE;
       const patientIds = f.Patient || [];
       if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       message = `Neue(r) ${txt(f.Typ)} für Sie verfügbar - jetzt in der App ansehen.`;
@@ -165,7 +172,12 @@ export default async function handler(req, res) {
     // Keine Empfänger -> skipped. Bei Mitteilung Status NICHT auf "Gesendet" setzen,
     // damit sie nicht als versendet hängen bleibt.
     if (subs.size === 0) {
-      res.status(200).json({ status: 'skipped', grund: istMitteilung ? 'Keine Empfänger' : 'Kein Push-Abo' }); return;
+      // Kein Empfaenger-Abo: Freigabe trotzdem als erledigt markieren, damit sie nicht
+      // dauerhaft auf "Senden" haengen bleibt und nicht erneut ausloest.
+      if (gateTable) {
+        await airtable(`${gateTable}/${recordId}`, { method: 'PATCH', body: JSON.stringify({ fields: { Push_senden: 'Gesendet' } }) });
+      }
+      res.status(200).json({ status: 'skipped', grund: istMitteilung ? 'Keine Empfänger' : 'Kein Push-Abo (als Gesendet markiert)' }); return;
     }
 
     const { gesendet, fehlgeschlagen, details } = await sendToAll([...subs], message);
@@ -173,6 +185,13 @@ export default async function handler(req, res) {
     if (istMitteilung) {
       await airtable(`${MITTEILUNGEN}/${recordId}`, {
         method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Gesendet' } }),
+      });
+    }
+    // Besuche/Dokumente: Freigabe nach dem Versand automatisch auf "Gesendet" (verhindert
+    // erneutes Ausloesen; der Mitarbeiter sieht, dass der Push raus ist).
+    if (gateTable) {
+      await airtable(`${gateTable}/${recordId}`, {
+        method: 'PATCH', body: JSON.stringify({ fields: { Push_senden: 'Gesendet' } }),
       });
     }
 
