@@ -2198,7 +2198,20 @@ export default function App() {
       {activeModal && (<div className="fixed inset-0 z-[100] flex items-end justify-center p-4 animate-in fade-in"><div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
          {activeModal === 'video' && (<div className="bg-black w-full max-w-md rounded-[2rem] overflow-hidden relative shadow-2xl animate-in zoom-in-95 flex items-center justify-center"><button onClick={()=>setActiveModal(null)} className="absolute top-4 right-4 bg-white/20 p-2 rounded-full text-white z-10"><X size={20}/></button>{/* Anleitungsvideo: selbst gehostet (Vercel CDN, kein Drittanbieter). Kein Autoplay,
              laedt erst beim Antippen (preload=metadata) - schont Datenvolumen der Klienten. */}
-         <video src="/anleitung.mp4" poster="/anleitung-poster.jpg" controls playsInline preload="metadata" className="w-full max-h-[80vh] object-contain" onError={() => reportClientError('video-anleitung', 'Anleitungsvideo konnte nicht geladen werden')} /></div>)}
+         <video src="/anleitung.mp4" poster="/anleitung-poster.jpg" controls playsInline autoPlay preload="metadata" className="w-full max-h-[80vh] object-contain"
+             ref={(v) => {
+               // Direkt ins Vollbild: iOS nativ (webkitEnterFullscreen), sonst requestFullscreen.
+               // Klappt es nicht (alte Browser, Metadaten noch nicht da), bleibt das Modal als Fallback.
+               if (!v || (v as any).dataset.fs) return;
+               (v as any).dataset.fs = '1';
+               const vollbild = () => {
+                 v.play().catch(() => {});
+                 const av = v as any;
+                 try { if (av.webkitEnterFullscreen) av.webkitEnterFullscreen(); else if (v.requestFullscreen) v.requestFullscreen().catch(() => {}); } catch { /* Modal bleibt */ }
+               };
+               if (v.readyState >= 1) vollbild(); else v.addEventListener('loadedmetadata', vollbild, { once: true });
+             }}
+             onError={() => reportClientError('video-anleitung', 'Anleitungsvideo konnte nicht geladen werden')} /></div>)}
          
          {/* KI Modal deaktiviert */}
          {false && activeModal === 'ki-telefon' && (<div className="bg-white w-full max-w-md h-[85vh] rounded-[3rem] overflow-hidden relative animate-in slide-in-from-bottom-10"><iframe src="https://app.centrals.ai/centrals/embed/Pflegedienst" className="w-full h-full border-none" /><button onClick={()=>setActiveModal(null)} className="absolute top-6 right-6 bg-black/20 p-2 rounded-full text-white"><X/></button></div>)}
