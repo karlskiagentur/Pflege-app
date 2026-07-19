@@ -113,11 +113,19 @@ export default async function handler(req, res) {
       gateTable = TABLES.BESUCHE;
       const patientIds = f.Patient || [];
       if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
-      const taetigkeit = txt(f['Tätigkeit']);
+      const taetigkeit = txt(f['Tätigkeit']) || 'Unterstützung';
       const wann = fmt(f['Uhrzeit']);
-      if (ereignis === 'Abgesagt') {
+      // Anlass serverseitig aus dem Datensatz ableiten - der Freigabe-Trigger
+      // (Push_senden='Senden') kennt den Anlass nicht. Status/Hervorhebung sind
+      // die verlässliche Quelle; ein explizit übergebenes ereignis bleibt Fallback.
+      const status = txt(f.Status);
+      const marker = txt(f.Hervorhebung);
+      let anlass = ereignis || 'Neu';
+      if (status === 'Abgesagt' || marker === 'Storniert') anlass = 'Abgesagt';
+      else if (marker === 'Änderung') anlass = 'Geändert';
+      if (anlass === 'Abgesagt') {
         message = `Ihr Termin "${taetigkeit}" wurde abgesagt.`;
-      } else if (ereignis === 'Geändert') {
+      } else if (anlass === 'Geändert') {
         message = `Ihr Termin "${taetigkeit}" wurde geändert` + (wann ? ` - neuer Termin: ${wann}.` : '.');
       } else {
         message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
@@ -136,12 +144,39 @@ export default async function handler(req, res) {
       message = `Neue(r) ${txt(f.Typ)} für Sie verfügbar - jetzt in der App ansehen.`;
       await addPatientSub(subs, patientIds[0]);
 
+    } else if (type === 'terminanfrage') {
+      // Klient -> Pflegedienst: neue Terminanfrage/-änderung aus der App.
+      // Empfänger: alle aktiven Mitarbeiter mit Push-Abo. Doppel-Schutz über
+      // das Feld Buero_benachrichtigt (wird nach dem Versand gesetzt).
+      const rec = await loadRec(TABLES.TERMINANFRAGEN, recordId);
+      if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Anfrage nicht gefunden' }); return; }
+      const f = rec.fields || {};
+      if (f.Buero_benachrichtigt) { res.status(200).json({ status: 'skipped', grund: 'Bereits benachrichtigt' }); return; }
+      gateTable = null; // eigener Marker statt Push_senden (s.u.)
+      const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Push_Subscription&fields%5B%5D=Aktiv');
+      personal.filter((p) => p.fields && p.fields.Aktiv).forEach((p) => addSub(subs, p));
+      message = txt(f.Art) === 'Terminänderung'
+        ? 'Terminänderungs-Wunsch eines Klienten eingegangen - bitte im Büro prüfen.'
+        : 'Neue Termin-Anfrage eines Klienten eingegangen - bitte im Büro prüfen.';
+      // Marker sofort setzen (unabhängig davon, ob gerade jemand ein Abo hat),
+      // damit die Anfrage nicht bei jedem Automationslauf erneut geprüft wird.
+      await airtable(`${TABLES.TERMINANFRAGEN}/${recordId}`, {
+        method: 'PATCH', body: JSON.stringify({ fields: { Buero_benachrichtigt: true } }),
+      });
+
     } else if (type === 'mitteilung') {
       istMitteilung = true;
       const rec = await loadRec(MITTEILUNGEN, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Mitteilung nicht gefunden' }); return; }
       const f = rec.fields || {};
-      const ziel = txt(f.Zielgruppe);
+      // Alt-Optionen der Zielgruppe tolerant auf die gültigen abbilden
+      // ("Error darf nie entstehen": eine falsch gewählte Alt-Option darf den
+      // Versand nicht ins Leere laufen lassen).
+      const zielRoh = txt(f.Zielgruppe);
+      const ziel = zielRoh === 'Patienten' ? 'Alle Patienten'
+        : zielRoh === 'Mitarbeiter' ? 'Alle Mitarbeiter'
+        : zielRoh === 'Alle (Broadcast)' ? 'Alle gesamt'
+        : zielRoh;
 
       if (ziel === 'Alle Patienten' || ziel === 'Alle gesamt') {
         const patienten = await fetchAll(TABLES.PATIENTEN, "fields%5B%5D=Push_Subscription");
