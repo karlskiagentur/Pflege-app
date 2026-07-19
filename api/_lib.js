@@ -40,6 +40,7 @@ export const TABLES = {
   KONTAKTE: 'tbl0rLFTYlqNwDigk',
   URLAUB: 'tblPfBhWtAg9GEhWb',
   MELDUNGEN: 'tblnl3Zc4L1OLTNkH',
+  TERMINANFRAGEN: 'tblabkgCUxZmRzz6h',
 };
 
 // Anhang-Feld "Datei" der Dokumente-Tabelle (für content.airtable.com uploadAttachment)
