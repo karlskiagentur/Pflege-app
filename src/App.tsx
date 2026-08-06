@@ -218,6 +218,23 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
+// Endzeit eines Termins, tolerant gegen Altdaten. Priorität:
+// 1. Feld "Bis" (String "HH:mm") 2. Uhrzeit + Dauer_Soll (Sekunden)
+// 3. Feld "Ende" 4. leer -> Karte zeigt nur die Startzeit.
+const getEndzeit = (item: any): string => {
+  const bis = getValue(item, 'Bis');
+  if (bis && bis.includes(':')) return bis.substring(0, 5);
+  const start = getValue(item, 'Uhrzeit');
+  const dauerSek = Number(getValue(item, 'Dauer_Soll') || getValue(item, 'Dauer')) || 0;
+  if (start && dauerSek > 0) {
+    const d = new Date(start);
+    if (!isNaN(d.getTime())) return formatTime(new Date(d.getTime() + dauerSek * 1000).toISOString());
+  }
+  const ende = getValue(item, 'Ende');
+  if (ende) return formatTime(ende);
+  return '';
+};
+
 const formatDauer = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "";
@@ -1518,7 +1535,7 @@ export default function App() {
               </div>
             ) : (
               termineHeute.map((t) => {
-                const showDauer = formatDauer(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer'));
+                const endzeit = getEndzeit(t);
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
                 const status = getValue(t, 'Status');
@@ -1533,9 +1550,10 @@ export default function App() {
                 return (
                   <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses}`}>
                     <div className="p-6 flex items-center gap-3">
-                      {/* LINKS: Uhrzeit */}
+                      {/* LINKS: Zeitspanne von - bis (ohne Endzeit: nur Start) */}
                       <div className="text-center min-w-[56px]">
                         <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                        {endzeit && <p className="text-sm font-bold text-gray-300">– {endzeit}</p>}
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                       </div>
                       {/* MITTE: Inhalt */}
@@ -1564,13 +1582,6 @@ export default function App() {
                           </a>
                         )}
                       </div>
-                      {/* RECHTS: Dauer */}
-                      {showDauer && (
-                        <div className="text-center min-w-[56px]">
-                          <p className="text-xl text-gray-300">{showDauer}</p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                        </div>
-                      )}
                     </div>
                     {/* STATUS-BALKEN */}
                     <div style={{ backgroundColor: badge.bg, color: badge.color }} className="py-3 text-center font-black uppercase text-[10px] tracking-wider flex items-center justify-center gap-2">
@@ -2013,13 +2024,14 @@ export default function App() {
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
             const isProposed = !getValue(b, 'Uhrzeit') && proposed;
             const isHighlighted = highlightedIds.includes(b.id);
-            const showDauer = formatDauer(getValue(b, 'Dauer_Soll') || getValue(b, 'Dauer'));
+            const endzeit = getValue(b, 'Uhrzeit') ? getEndzeit(b) : '';
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                 <div className="p-6 flex items-center gap-6">
                     <div className="text-center min-w-[60px]">
                         <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
+                        {endzeit && <p className="text-sm font-bold text-gray-300">– {endzeit}</p>}
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                     </div>
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
@@ -2027,12 +2039,6 @@ export default function App() {
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                         <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                     </div>
-                    {showDauer && (
-                        <div className="text-center min-w-[56px]">
-                            <p className="text-xl text-gray-300">{showDauer}</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                        </div>
-                    )}
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>
