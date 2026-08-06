@@ -3,10 +3,10 @@ import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
-// Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Lohnabrechnung.
+// Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
 
-const LOHN = 'tblMoak6mpdJtTM8S';        // Tabelle "Lohnabrechnung" (ID -> umbenenn-fest)
-const DATEI_FELD = 'fldvQ31NkOYrUEoI2';  // Anhang-Feld "Datei" (für content.airtable.com uploadAttachment)
+const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
+const DATEI_FELD = 'Datei';          // Anhang-Feld (uploadAttachment akzeptiert Feldnamen)
 
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_TOKEN = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
@@ -57,13 +57,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1) Lohnabrechnung-Zeile: Mitarbeiter-Link + Zeitraum -> Monat "YYYY-MM"
-    const lohn = await airtable(`${LOHN}/${recordId}`);
-    const lf = lohn.fields || {};
-    const maId = Array.isArray(lf.Mitarbeiter) ? lf.Mitarbeiter[0] : null;
-    const monat = String(lf.Zeitraum || '').slice(0, 7);
+    // 1) Stundenzettel-Zeile: Mitarbeiter-Link + Monat (Date) -> "YYYY-MM"
+    const zettel = await airtable(`${ZETTEL}/${recordId}`);
+    const zf = zettel.fields || {};
+    const maId = Array.isArray(zf.Mitarbeiter) ? zf.Mitarbeiter[0] : null;
+    const monat = String(zf.Monat || '').slice(0, 7);
     if (!maId || !/^\d{4}-\d{2}$/.test(monat)) {
-      throw new Error('Lohnabrechnung-Zeile unvollständig (Mitarbeiter oder Zeitraum fehlt)');
+      throw new Error('Stundenzettel-Zeile unvollständig (Mitarbeiter oder Monat fehlt)');
     }
 
     // 2) Personal-Stammdaten (nur Name + Nummer, mehr braucht das PDF nicht)
@@ -162,10 +162,17 @@ export default async function handler(req, res) {
       throw e;
     }
 
-    // 6) Status -> Erstellt
-    await airtable(`${LOHN}/${recordId}`, {
+    // 6) Ergebnis in die Zeile schreiben: Summe + Titel + Status
+    await airtable(`${ZETTEL}/${recordId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ fields: { Status: 'Erstellt' }, typecast: true }),
+      body: JSON.stringify({
+        fields: {
+          Titel: `${maName} · ${monat}`,
+          Summe_Stunden: hmm(totalSec),
+          Status: 'Erstellt',
+        },
+        typecast: true,
+      }),
     });
 
     res.status(200).json({ status: 'success', einsaetze: rows.length, summe: hmm(totalSec) });
@@ -173,7 +180,7 @@ export default async function handler(req, res) {
     // Status -> Fehler (best effort), dann Standard-Fehlerpfad (Alarm-Mail,
     // keine Namen/Secrets in der Antwort oder im Fehlertext).
     try {
-      await airtable(`${LOHN}/${recordId}`, {
+      await airtable(`${ZETTEL}/${recordId}`, {
         method: 'PATCH',
         body: JSON.stringify({ fields: { Status: 'Fehler' }, typecast: true }),
       });
