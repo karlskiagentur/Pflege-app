@@ -731,7 +731,7 @@ export default function App() {
   const handleLohnDownload = async (lohn: any) => {
     setLohnDownloading(true);
     try {
-        const fileName = `Lohnabrechnung_${lohn.zeitraum}.pdf`;
+        const fileName = lohn.name || `Lohnabrechnung_${lohn.zeitraum || ''}.pdf`;
         const authToken = mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || '';
         const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}&token=${encodeURIComponent(authToken)}`;
         const response = await fetchWithTimeout(proxyUrl, {}, 30000);
@@ -1493,22 +1493,26 @@ export default function App() {
               <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnungen vorhanden.</div>
             ) : (
               lohnListe.map((l) => (
-                l.url ? (
-                  <button key={l.id} onClick={() => { setSelectedLohn(l); setActiveModal('lohn-choice'); }} className="w-full bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between text-left active:scale-95 transition-all">
-                    <div>
-                      <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
-                      <p className="text-xs text-gray-400">{l.dateiname}</p>
-                    </div>
-                    <div className="text-[#b5a48b] p-2"><Download size={22} /></div>
-                  </button>
-                ) : (
-                  <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2 flex items-center justify-between opacity-50">
-                    <div>
-                      <p className="text-sm font-bold text-gray-700">{formatMonat(l.zeitraum)}</p>
-                      <p className="text-xs text-gray-400">Noch keine Datei hinterlegt</p>
-                    </div>
+                <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-bold text-gray-700">{l.monat}</p>
+                    {l.summe && <p className="text-xs text-gray-400 font-bold">{l.summe} Std.</p>}
                   </div>
-                )
+                  <div className="flex gap-2">
+                    {l.stundenzettel && (
+                      <button onClick={() => { setSelectedLohn({ ...l.stundenzettel, titel: `Stundenzettel ${l.monat}` }); setActiveModal('lohn-choice'); }}
+                        className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
+                        <Download size={14}/> Stundenzettel
+                      </button>
+                    )}
+                    {l.lohnabrechnung && (
+                      <button onClick={() => { setSelectedLohn({ ...l.lohnabrechnung, titel: `Lohnabrechnung ${l.monat}` }); setActiveModal('lohn-choice'); }}
+                        className="flex-1 bg-[#b5a48b] text-white py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
+                        <Download size={14}/> Lohnabrechnung
+                      </button>
+                    )}
+                  </div>
+                </div>
               ))
             )}
           </div>
@@ -1780,7 +1784,7 @@ export default function App() {
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setActiveModal(null)}></div>
           <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative animate-in slide-in-from-bottom-10 text-left">
             <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
-            <h3 className="text-xl font-black mb-6 pr-10 flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {formatMonat(selectedLohn.zeitraum)}</h3>
+            <h3 className="text-xl font-black mb-6 pr-10 flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {selectedLohn.titel || formatMonat(selectedLohn.zeitraum)}</h3>
             <div className="space-y-4">
               <button onClick={() => { window.open(selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
                 <Eye size={18}/> Vorschau
