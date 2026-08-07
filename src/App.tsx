@@ -218,6 +218,23 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
+// Endzeit eines Termins, tolerant gegen Altdaten. Priorität:
+// 1. Feld "Bis" (String "HH:mm") 2. Uhrzeit + Dauer_Soll (Sekunden)
+// 3. Feld "Ende" 4. leer -> Karte zeigt nur die Startzeit.
+const getEndzeit = (item: any): string => {
+  const bis = getValue(item, 'Bis');
+  if (bis && bis.includes(':')) return bis.substring(0, 5);
+  const start = getValue(item, 'Uhrzeit');
+  const dauerSek = Number(getValue(item, 'Dauer_Soll') || getValue(item, 'Dauer')) || 0;
+  if (start && dauerSek > 0) {
+    const d = new Date(start);
+    if (!isNaN(d.getTime())) return formatTime(new Date(d.getTime() + dauerSek * 1000).toISOString());
+  }
+  const ende = getValue(item, 'Ende');
+  if (ende) return formatTime(ende);
+  return '';
+};
+
 const formatDauer = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "";
@@ -290,6 +307,8 @@ export default function App() {
   // Ist-Dauer-Erfassung durch den Pfleger (pro Termin)
   const [dauerInput, setDauerInput] = useState<Record<string, string>>({});
   const [dauerSaving, setDauerSaving] = useState<string | null>(null);
+  const [dauerConfirm, setDauerConfirm] = useState<{ besuchId: string; minuten: number } | null>(null);
+  const [dauerHinweis, setDauerHinweis] = useState<Record<string, string>>({});
   const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
   const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
   const [meldungTyp, setMeldungTyp] = useState<string>('');
@@ -1026,10 +1045,17 @@ export default function App() {
     }
   };
 
-  // Pfleger erfasst die tatsächliche Dauer eines Einsatzes (Minuten) -> Airtable.
-  const saveIstDauer = async (besuchId: string, minutenStr: string) => {
+  // Schritt 1: Eingabe validieren und Bestätigungs-Modal öffnen (danach ist die Zeit unveränderbar).
+  const saveIstDauer = (besuchId: string, minutenStr: string) => {
     const minuten = parseInt(minutenStr, 10);
     if (!Number.isFinite(minuten) || minuten < 0) { alert('Bitte eine gültige Minutenzahl eingeben.'); return; }
+    setDauerConfirm({ besuchId, minuten });
+  };
+
+  // Schritt 2: nach Bestätigung im Modal verbindlich speichern -> Airtable.
+  const confirmIstDauer = async () => {
+    if (!dauerConfirm) return;
+    const { besuchId, minuten } = dauerConfirm;
     setDauerSaving(besuchId);
     try {
       const res = await fetchWithTimeout('/api/besuch-dauer', {
@@ -1038,11 +1064,20 @@ export default function App() {
         body: JSON.stringify({ besuchId, minuten }),
       });
       if (res.status === 401) { logoutMitarbeiterAuth(); return; }
+      if (res.status === 409) {
+        // Bereits bestätigt (z.B. zweites Gerät / Doppel-Tap): kein Fehler, nur Hinweis + Sperre anzeigen.
+        setDauerHinweis(prev => ({ ...prev, [besuchId]: 'Bereits bestätigt. Änderungen nur über das Büro.' }));
+        setDauerInput(prev => { const n = { ...prev }; delete n[besuchId]; return n; });
+        setDauerConfirm(null);
+        await fetchMitarbeiterTermine();
+        return;
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
       }
       setDauerInput(prev => { const n = { ...prev }; delete n[besuchId]; return n; });
+      setDauerConfirm(null);
       await fetchMitarbeiterTermine();
     } catch (err: any) {
       console.error('Fehler beim Speichern der Dauer:', err);
@@ -1500,7 +1535,7 @@ export default function App() {
               </div>
             ) : (
               termineHeute.map((t) => {
-                const showDauer = formatDauer(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer'));
+                const endzeit = getEndzeit(t);
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
                 const status = getValue(t, 'Status');
@@ -1515,9 +1550,10 @@ export default function App() {
                 return (
                   <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses}`}>
                     <div className="p-6 flex items-center gap-3">
-                      {/* LINKS: Uhrzeit */}
+                      {/* LINKS: Zeitspanne von - bis (ohne Endzeit: nur Start) */}
                       <div className="text-center min-w-[56px]">
                         <p className="text-xl font-bold text-gray-300">{formatTime(getValue(t, 'Uhrzeit'))}</p>
+                        {endzeit && <p className="text-sm font-bold text-gray-300">– {endzeit}</p>}
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                       </div>
                       {/* MITTE: Inhalt */}
@@ -1546,13 +1582,6 @@ export default function App() {
                           </a>
                         )}
                       </div>
-                      {/* RECHTS: Dauer */}
-                      {showDauer && (
-                        <div className="text-center min-w-[56px]">
-                          <p className="text-xl text-gray-300">{showDauer}</p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                        </div>
-                      )}
                     </div>
                     {/* STATUS-BALKEN */}
                     <div style={{ backgroundColor: badge.bg, color: badge.color }} className="py-3 text-center font-black uppercase text-[10px] tracking-wider flex items-center justify-center gap-2">
@@ -1564,12 +1593,17 @@ export default function App() {
                       {(() => {
                         const istMin = Math.round((Number(getValue(t, 'Dauer_Ist')) || 0) / 60);
                         const planMin = Math.round((Number(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer')) || 0) / 60);
-                        const editing = dauerInput[t.id] !== undefined;
-                        if (istMin > 0 && !editing) {
+                        // Gesperrt, sobald bestätigt (Dauer_Ist ODER Erledigt_Am gesetzt) - Korrekturen nur übers Büro.
+                        const locked = istMin > 0 || !!getValue(t, 'Erledigt_Am');
+                        if (locked) {
                           return (
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-black text-[#0F6E56] flex items-center gap-1.5"><Check size={16}/> Erfasst: {istMin} Min</span>
-                              <button onClick={() => setDauerInput(p => ({ ...p, [t.id]: String(istMin) }))} className="text-[11px] font-black uppercase text-gray-400 active:opacity-60">Ändern</button>
+                            <div>
+                              <span className="text-sm font-black text-[#0F6E56] flex items-center gap-1.5">
+                                Erfasst: {Math.floor(istMin / 60)}:{String(istMin % 60).padStart(2, '0')} <Check size={16}/>
+                              </span>
+                              {dauerHinweis[t.id] && (
+                                <p className="text-[11px] text-gray-400 mt-1">{dauerHinweis[t.id]}</p>
+                              )}
                             </div>
                           );
                         }
@@ -1637,6 +1671,30 @@ export default function App() {
         </>
         )}
       </main>
+
+      {/* IST-ZEIT BESTÄTIGEN */}
+      {dauerConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setDauerConfirm(null)}></div>
+          <div className="relative bg-white w-full max-w-md rounded-t-[3rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10">
+            <h3 className="text-xl font-black text-[#3A3A3A] mb-3">Ist-Zeit bestätigen</h3>
+            <p className="text-sm text-gray-500 leading-relaxed mb-6">
+              Ist-Zeit für diesen Einsatz: <span className="font-black text-[#3A3A3A]">{Math.floor(dauerConfirm.minuten / 60)} Std. {dauerConfirm.minuten % 60} Min.</span> — Stimmt das?
+              Nach dem Bestätigen ist keine Änderung mehr möglich.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDauerConfirm(null)}
+                className="flex-1 border-2 border-[#E8DCC8] text-gray-500 py-4 rounded-2xl font-black uppercase text-sm active:scale-95 transition-all">
+                Zurück
+              </button>
+              <button onClick={confirmIstDauer} disabled={dauerSaving !== null}
+                className="flex-1 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-sm shadow-lg active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {dauerSaving ? <RefreshCw className="animate-spin" size={16}/> : 'Ja, verbindlich speichern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MITARBEITER-NAV */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
@@ -1966,13 +2024,14 @@ export default function App() {
             const showDate = getValue(b, 'Uhrzeit') ? formatDate(getValue(b, 'Uhrzeit')) : (proposed ? proposed.date : "-");
             const isProposed = !getValue(b, 'Uhrzeit') && proposed;
             const isHighlighted = highlightedIds.includes(b.id);
-            const showDauer = formatDauer(getValue(b, 'Dauer_Soll') || getValue(b, 'Dauer'));
+            const endzeit = getValue(b, 'Uhrzeit') ? getEndzeit(b) : '';
 
             return (
               <div key={b.id} className={`bg-white rounded-[2rem] shadow-sm border text-left overflow-hidden transition-all duration-700 ${isHighlighted ? 'border-[#b5a48b] ring-4 ring-[#b5a48b] ring-opacity-30 bg-[#FFFBEB] scale-105' : 'border-gray-100'}`}>
                 <div className="p-6 flex items-center gap-6">
                     <div className="text-center min-w-[60px]">
                         <p className={`text-xl font-bold ${isProposed ? 'text-gray-400 italic' : 'text-gray-300'}`}>{showTime}</p>
+                        {endzeit && <p className="text-sm font-bold text-gray-300">– {endzeit}</p>}
                         <p className="text-[10px] text-gray-400 font-bold uppercase">UHR</p>
                     </div>
                     <div className="flex-1 border-l border-gray-100 pl-5 text-left">
@@ -1980,12 +2039,6 @@ export default function App() {
                         <div className="flex items-center gap-2"><User size={12} className="text-gray-400"/><p className="text-sm text-gray-500">{getValue(b, 'Pfleger_Name') || "Zuweisung folgt"}</p></div>
                         <p className={`text-[10px] mt-3 font-bold uppercase tracking-wider text-left ${isProposed ? 'text-gray-400 italic' : 'text-[#b5a48b]'}`}>Am {showDate}</p>
                     </div>
-                    {showDauer && (
-                        <div className="text-center min-w-[56px]">
-                            <p className="text-xl text-gray-300">{showDauer}</p>
-                            <p className="text-[10px] text-gray-400 font-bold uppercase">DAUER</p>
-                        </div>
-                    )}
                 </div>
                 {confirmedTermine.includes(b.id) || getValue(b, 'Status') === "Bestätigt" ? (
                     <div className="bg-[#e6f4ea] text-[#1e4620] py-4 text-center font-black uppercase text-xs flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"><Check size={16} strokeWidth={3}/> Termin angenommen</div>

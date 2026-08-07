@@ -27,6 +27,12 @@ export default async function handler(req, res) {
       res.status(403).json({ status: 'error', message: 'Kein Zugriff auf diesen Einsatz' }); return;
     }
 
+    // Sperre: Einmal bestätigt = unveränderbar. Korrekturen macht nur noch das
+    // Büro direkt im Airtable-Interface (die DB selbst bleibt bewusst offen).
+    if (f.Erledigt_Am || f.Dauer_Ist) {
+      res.status(409).json({ error: 'bereits_bestaetigt' }); return;
+    }
+
     // Dauer_Ist ist ein Dauer-Feld (Airtable speichert Sekunden). Der Pfleger erfasst
     // Minuten -> in Sekunden umrechnen, damit Interface (h:mm) und Monatsformel stimmen.
     await airtable(`${TABLES.BESUCHE}/${besuchId}`, {
