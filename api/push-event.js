@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { airtable, fetchAll, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendInfoCopy, TABLES } from './_lib.js';
 
 // Gleiche VAPID/web-push-Konfiguration wie api/send-push (gleiche Env-Variablen)
 const VAPID_PUBLIC_KEY =
@@ -102,6 +102,7 @@ export default async function handler(req, res) {
     const subs = new Set();
     let message = '';
     let istMitteilung = false;
+    let infoKopie = null; // { typ, empfaenger } -> Info-Kopie ans Büro (nur besuch/dokument/mitteilung)
     let gateTable = null; // Besuche/Dokumente: Push nur nach bewusster Freigabe (Push_senden='Senden')
 
     if (type === 'besuch') {
@@ -131,6 +132,12 @@ export default async function handler(req, res) {
         message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
       }
       await addPatientSub(subs, patientIds[0]);
+      // Zusätzlich den dem Besuch zugeteilten Mitarbeiter benachrichtigen.
+      // Zustellungen sind unabhängig (sendToAll behandelt jedes Abo einzeln).
+      const pflegerId = firstLink(f.Pfleger) || firstLink(f.Pfleger_ID);
+      const vorSize = subs.size;
+      if (pflegerId) await addPersonalSub(subs, pflegerId);
+      infoKopie = { typ: 'Termin', empfaenger: subs.size > vorSize ? 'Klient + zugeteilter Mitarbeiter' : 'Klient' };
 
     } else if (type === 'dokument') {
       const rec = await loadRec(TABLES.DOKUMENTE, recordId);
@@ -143,6 +150,7 @@ export default async function handler(req, res) {
       if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       message = `Neue(r) ${txt(f.Typ)} für Sie verfügbar - jetzt in der App ansehen.`;
       await addPatientSub(subs, patientIds[0]);
+      infoKopie = { typ: 'Dokument', empfaenger: 'Klient' };
 
     } else if (type === 'terminanfrage') {
       // Klient -> Pflegedienst: neue Terminanfrage/-änderung aus der App.
@@ -199,6 +207,7 @@ export default async function handler(req, res) {
       } else {
         message = txt(f.Nachricht);
       }
+      infoKopie = { typ: 'Mitteilung', empfaenger: ziel || 'Empfänger laut Zielgruppe' };
 
     } else {
       res.status(200).json({ status: 'skipped', grund: 'Unbekannter type' }); return;
@@ -228,6 +237,12 @@ export default async function handler(req, res) {
       await airtable(`${gateTable}/${recordId}`, {
         method: 'PATCH', body: JSON.stringify({ fields: { Push_senden: 'Gesendet' } }),
       });
+    }
+
+    // Info-Kopie ans Büro: eine Sammelkopie je erfolgreich ausgelöstem Push
+    // (besuch/dokument/mitteilung). Enthält den exakten Push-Text, keine PINs/Token.
+    if (infoKopie && gesendet > 0) {
+      await sendInfoCopy(`📩 Info-Kopie: ${infoKopie.typ}`, `Empfänger: ${infoKopie.empfaenger}\n\n${message}`);
     }
 
     res.status(200).json({ status: 'ok', gesendet, fehlgeschlagen, details });
