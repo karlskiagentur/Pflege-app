@@ -18,6 +18,16 @@ const hmm = (sec) => {
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 };
 
+// Single-Select "Monat_Auswahl" ("August 2026") -> "YYYY-MM". Unbekannter
+// Name wirft -> der äußere Catch setzt Status "Fehler" + meldet (ohne Inhalte).
+const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const parseMonatAuswahl = (s) => {
+  const m = /^([A-Za-zÄÖÜäöüß]+)\s+(\d{4})$/.exec(String(s).trim());
+  const idx = m ? MONATE.indexOf(m[1]) : -1;
+  if (idx < 0) throw new Error('Unbekannter Monat_Auswahl-Wert');
+  return `${m[2]}-${String(idx + 1).padStart(2, '0')}`;
+};
+
 const berlinHM = (iso) =>
   new Date(iso).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' });
 
@@ -61,7 +71,9 @@ export default async function handler(req, res) {
     const zettel = await airtable(`${ZETTEL}/${recordId}`);
     const zf = zettel.fields || {};
     const maId = Array.isArray(zf.Mitarbeiter) ? zf.Mitarbeiter[0] : null;
-    const monat = String(zf.Monat || '').slice(0, 7);
+    // Monat: bevorzugt aus Monat_Auswahl (Single Select), sonst Fallback Date-Feld "Monat".
+    const auswahl = String(zf.Monat_Auswahl || '').trim();
+    const monat = auswahl ? parseMonatAuswahl(auswahl) : String(zf.Monat || '').slice(0, 7);
     if (!maId || !/^\d{4}-\d{2}$/.test(monat)) {
       throw new Error('Stundenzettel-Zeile unvollständig (Mitarbeiter oder Monat fehlt)');
     }
@@ -162,17 +174,18 @@ export default async function handler(req, res) {
       throw e;
     }
 
-    // 6) Ergebnis in die Zeile schreiben: Summe + Titel + Status
+    // 6) Ergebnis in die Zeile schreiben: Summe + Titel + Status.
+    //    Monat (Date) auf den 1. des gewählten Monats setzen, falls leer oder
+    //    abweichend -> hält Sortierung/Titel konsistent, wenn nur Monat_Auswahl gesetzt war.
+    const fields = {
+      Titel: `${maName} · ${monat}`,
+      Summe_Stunden: hmm(totalSec),
+      Status: 'Erstellt',
+    };
+    if (String(zf.Monat || '').slice(0, 10) !== `${monat}-01`) fields.Monat = `${monat}-01`;
     await airtable(`${ZETTEL}/${recordId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        fields: {
-          Titel: `${maName} · ${monat}`,
-          Summe_Stunden: hmm(totalSec),
-          Status: 'Erstellt',
-        },
-        typecast: true,
-      }),
+      body: JSON.stringify({ fields, typecast: true }),
     });
 
     res.status(200).json({ status: 'success', einsaetze: rows.length, summe: hmm(totalSec) });
