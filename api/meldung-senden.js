@@ -1,4 +1,4 @@
-import { airtable, sendError, requireMitarbeiter, esc, handledPreflight, TABLES } from './_lib.js';
+import { airtable, sendError, sendProblem, requireMitarbeiter, esc, handledPreflight, TABLES } from './_lib.js';
 
 const MELDUNGEN = 'tblnl3Zc4L1OLTNkH'; // Tabelle "Meldungen" (ID statt Name)
 
@@ -23,11 +23,12 @@ export default async function handler(req, res) {
     };
 
     // Wenn ein Einsatz mitgegeben wird: prüfen, dass er dem Mitarbeiter gehört (IDOR-Schutz).
+    let besuch = null;
     if (besuchId) {
       if (!/^rec[A-Za-z0-9]{14,}$/.test(String(besuchId))) {
         res.status(400).json({ status: 'error', message: 'Ungültige besuchId' }); return;
       }
-      const besuch = await airtable(`${TABLES.BESUCHE}/${besuchId}`).catch(() => null);
+      besuch = await airtable(`${TABLES.BESUCHE}/${besuchId}`).catch(() => null);
       const pflegerIds = (besuch && besuch.fields && besuch.fields.Pfleger_ID) || [];
       const gehoert = Array.isArray(pflegerIds)
         ? pflegerIds.map(String).includes(ma.id)
@@ -49,6 +50,21 @@ export default async function handler(req, res) {
       method: 'POST',
       body: JSON.stringify({ fields }),
     });
+
+    // "Kunde nicht angetroffen" -> sofort Problem-Mail ans Büro (Mailfehler bricht nie ab).
+    if ((typ || '') === 'Kunde nicht angetroffen') {
+      const bf = (besuch && besuch.fields) || {};
+      const one = (v) => (Array.isArray(v) ? v[0] : v);
+      const vorname = String(mitarbeiterName).trim().split(/\s+/)[0] || mitarbeiterName || '?';
+      const klient = one(bf.Patient_Name) || '?';
+      const roh = one(bf.Uhrzeit);
+      const wann = roh
+        ? new Date(roh).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })
+        : '?';
+      const text = `Pfleger: ${vorname}\nKlient: ${klient}\nTermin: ${wann}` + (notiz ? `\nNotiz: ${String(notiz).slice(0, 2000)}` : '');
+      await sendProblem('⚠️ Kunde nicht angetroffen', text);
+    }
+
     res.status(200).json({ status: 'success', id: data.id });
   } catch (e) {
     sendError(res, e, 'api/meldung-senden');

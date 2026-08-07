@@ -31,6 +31,32 @@ export async function sendAlert(subject, text) {
   } catch (_) { /* Alarm darf den Request nie stören */ }
 }
 
+// Interner Resend-Versand an EINE Adresse (fire and forget, wirft nie).
+// Kein Key oder kein Empfänger -> nur Log, kein Versand.
+async function resendTo(to, subject, text) {
+  try {
+    if (!RESEND_API_KEY || !to) {
+      console.warn('[mail] übersprungen (kein Key/Empfänger):', subject);
+      return;
+    }
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: ALERT_FROM, to: [to], subject, text }),
+    });
+  } catch (_) { /* Mailversand darf den Request nie stören */ }
+}
+
+// Info-Kopie Richtung Pflegedienst. Ohne INFO_EMAIL passiert nichts.
+export async function sendInfoCopy(subject, text) {
+  await resendTo(process.env.INFO_EMAIL, subject, text);
+}
+
+// Problem-Meldung (Zeitdifferenz/Fehler/"nicht angetroffen"). Fallback: ALERT_EMAIL.
+export async function sendProblem(subject, text) {
+  await resendTo(process.env.PROBLEM_EMAIL || ALERT_EMAIL, subject, text);
+}
+
 export const TABLES = {
   PATIENTEN: 'tbl5uUUSgC9p10BHQ',
   PERSONAL: 'tbl3pMfhOLYPsQ5jF',
