@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
+import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
@@ -107,6 +108,7 @@ export default async function handler(req, res) {
     const pdf = await PDFDocument.create();
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const sigPdl = await pdf.embedPng(Buffer.from(UNTERSCHRIFT_PDL_B64, 'base64'));
     const grau = rgb(0.45, 0.45, 0.45);
     const schwarz = rgb(0.2, 0.2, 0.2);
     const A4 = [595.28, 841.89];
@@ -142,18 +144,24 @@ export default async function handler(req, res) {
       y -= 16;
     }
 
-    // Fußblock: Summe + 2 Unterschriftszeilen (braucht ~110pt, sonst neue Seite)
-    if (y < M + 110) { page = pdf.addPage(A4); y = A4[1] - M; }
+    // Fußblock: Summe + EINE (rechte) Unterschrift der Pflegedienstleitung,
+    // vor-eingedruckt. Signatur sitzt über der Linie; braucht ~180pt.
+    if (y < M + 180) { page = pdf.addPage(A4); y = A4[1] - M; }
     y -= 6;
     page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
     y -= 20;
     page.drawText(`Monatssumme: ${hmm(totalSec)} Std.`, { x: M, y, size: 12, font: bold, color: schwarz });
-    y -= 50;
-    page.drawLine({ start: { x: M, y }, end: { x: M + 200, y }, thickness: 0.8, color: schwarz });
-    page.drawLine({ start: { x: 330, y }, end: { x: 530, y }, thickness: 0.8, color: schwarz });
-    y -= 14;
-    page.drawText('Mitarbeiter', { x: M, y, size: 9, font, color: grau });
-    page.drawText('Pflegedienstleitung', { x: 330, y, size: 9, font, color: grau });
+    y -= 40;
+    // Nur EIN Unterschriftsblock (Pflegedienstleitung), rechtsbündig am Seitenrand.
+    // Der Mitarbeiter ist bereits im Kopf benannt - keine linke Zeile mehr.
+    const blockR = A4[0] - M;                       // rechter Rand des Blocks
+    const lineX0 = blockR - 200, lineX1 = blockR;
+    const sigW = 180, sigH = sigW * (600 / 1200);   // seitenverhältnis-treu (1200x600)
+    const imgX = lineX0 + (200 - sigW) / 2;         // über der Linie zentriert
+    page.drawImage(sigPdl, { x: imgX, y: y - sigH, width: sigW, height: sigH });
+    const lineY = y - sigH - 4;
+    page.drawLine({ start: { x: lineX0, y: lineY }, end: { x: lineX1, y: lineY }, thickness: 0.8, color: schwarz });
+    page.drawText('Pflegedienstleitung', { x: lineX0, y: lineY - 14, size: 9, font, color: grau });
 
     const bytes = await pdf.save();
 
