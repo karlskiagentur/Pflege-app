@@ -12,8 +12,9 @@ const DATEI_FELD = 'Datei';          // Anhang-Feld (uploadAttachment akzeptiert
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_TOKEN = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
 
-// Sekunden -> "h:mm". Minutengenau, nie auf Stunden gerundet - identisch zur
-// Arbeitsstunden-Seite im Interface (Summe der Ist_Stunden_Monat-Werte).
+// Sekunden -> "h:mm". Minutengenau, nie auf Stunden gerundet.
+// Der Zettel liest die abrechenbare Ist-Zeit aus dem Formelfeld Ist_Stunden_Monat
+// (= Dauer_Ist auf 15-min gerundet), identisch zur Arbeitsstunden-Seite im Interface.
 const hmm = (sec) => {
   const m = Math.round((Number(sec) || 0) / 60);
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
@@ -100,8 +101,9 @@ export default async function handler(req, res) {
         return ka.localeCompare(kb);
       });
 
-    // Monatssumme: Sekunden exakt addieren, Anzeige minutengenau (h:mm)
-    const totalSec = rows.reduce((s, f) => s + (Number(f.Dauer_Ist) || 0), 0);
+    // Monatssumme aus der abrechenbaren (15-min-gerundeten) Ist-Zeit je Einsatz.
+    // Ist_Stunden_Monat = Formelfeld (Dauer_Ist auf 15-min gerundet) -> Summe in 15-min-Schritten.
+    const totalSec = rows.reduce((s, f) => s + (Number(f.Ist_Stunden_Monat) || 0), 0);
 
     // 4) PDF (A4) - KEINE Klientennamen, nur Datum/Zeitfenster/Ist-Zeit
     const monatLabel = new Date(`${monat}-01T12:00:00Z`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
@@ -136,7 +138,7 @@ export default async function handler(req, res) {
       if (y < M + 40) { page = pdf.addPage(A4); y = A4[1] - M; kopf(); }
       page.drawText(datumText(f), { x: COL.datum, y, size: 10, font, color: schwarz });
       page.drawText(zeitfenster(f), { x: COL.zeit, y, size: 10, font, color: schwarz });
-      page.drawText(hmm(f.Dauer_Ist), { x: COL.ist, y, size: 10, font, color: schwarz });
+      page.drawText(hmm(f.Ist_Stunden_Monat), { x: COL.ist, y, size: 10, font, color: schwarz });
       y -= 16;
     }
     if (rows.length === 0) {
