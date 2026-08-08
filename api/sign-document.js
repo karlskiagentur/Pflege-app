@@ -1,25 +1,30 @@
-import crypto from 'crypto';
 import { PDFDocument } from 'pdf-lib';
-import { airtable, ownOr403, reportError, sendAlert, TABLES } from './_lib.js';
+import { airtable, ownOr403, reportError, TABLES } from './_lib.js';
 
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_KEY = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
 const DATEI_FIELD = 'fld7vyNPt2Be9xAaT'; // Anhang-Feld "Datei" in der Dokumente-Tabelle
 
-// GEMESSENE Boxen für den Leistungsnachweis im Querformat (841.89 x 595.28 pt).
-// Exakt vermessen am 19.07.2026 gegen die Vorlage des Pflegediensts (pdfplumber):
-// - Klient:       Unterschriftslinie y=79.4, x 22.7..215.4 ("Unterschrift des Klienten")
-// - Bestätigung:  linker Kasten des Doppelkastens, Linie y=52.4, x 652.0..728.5
-// Bei NEUER Vorlage: Positionen neu vermessen und VORLAGEN_HASH aktualisieren.
-const BOX_KLIENT = { x0: 24, x1: 214, y0: 81, y1: 112 };
-const BOX_BESTAETIGUNG = { x0: 650, x1: 730, y0: 55, y1: 81 };
+// GEMESSENE Boxen für den Leistungsnachweis im Querformat A4 (841.89 x 595.28 pt,
+// pdf-lib-Ursprung UNTEN-LINKS). Validiert gegen die Vorlage des Pflegediensts
+// (pdfplumber). Wiederhergestellt am 09.08.2026, nachdem Commit b8fa2d1 sie ~30 pt
+// zu tief geschoben hatte (Unterschriften lagen auf den Beschriftungen statt auf den Linien).
+// Referenzpunkte:
+// - Klient (links):       Unterschriftslinie ~y=109 (Beschriftung "Unterschrift des
+//                         Klienten" liegt knapp darunter, pdfplumber y_oben≈486);
+//                         Signatur-Unterkante ≈110, Höhe ~35, x 25..211.
+// - Bestätigung (rechts): Kasten "…ordnungsgemäß erbracht", Linie ~y=59, x 526..671.
+// Signatur wird per fitInBox seitenverhältnis-treu in die Box zentriert (nicht verzerrt).
+// ÄNDERN NUR nach Neuvermessung gegen die echte Vorlage.
+const BOX_KLIENT = { x0: 25.1, x1: 210.9, y0: 109.4, y1: 144.6 };
+const BOX_BESTAETIGUNG = { x0: 526.1, x1: 670.8, y0: 58.5, y1: 93.8 };
 
-// Fingerabdruck der vermessenen Leistungsnachweis-Vorlage (SHA-256).
-// Ändert der Pflegedienst die Vorlage, passt der Abdruck nicht mehr -> es wird
-// trotzdem gestempelt (bestmöglich), aber SOFORT alarmiert, damit die Positionen
-// neu vermessen werden. Verhindert stilles Verrutschen wie im Juli 2026.
-const VORLAGEN_HASH_LEISTUNGSNACHWEIS =
-  'af7d7e3525719ab84af9a9703d98902a3b17fceca50f51d0b907769e91efa2fd';
+// Anti-Drift-Schutz: erwartete Vorlagengeometrie (A4 quer, kleine Toleranz).
+// Weicht das geladene PDF ab, wird NICHT gestempelt (Boxen wären unzuverlässig),
+// sondern kontrolliert abgebrochen + gemeldet -> nie wieder stilles Verrutschen.
+const LN_FORMAT = { w: 841.89, h: 595.28, tol: 8 };
+const istLNFormat = (w, h) =>
+  Math.abs(w - LN_FORMAT.w) <= LN_FORMAT.tol && Math.abs(h - LN_FORMAT.h) <= LN_FORMAT.tol;
 
 // PNG proportional in eine Box einpassen (zentriert). Gibt x/y/width/height
 // zurück - drawImage MUSS width+height bekommen, sonst zeichnet pdf-lib in
@@ -92,27 +97,23 @@ export default async function handler(req, res) {
     const { width, height } = lastPage.getSize();
     const istQuer = width > height;
 
-    // Vorlagen-Drift-Wächter: Weicht der Leistungsnachweis von der vermessenen
-    // Vorlage ab, sofort Alarm an den Betreiber (Positionen könnten daneben sein).
-    if (origTyp === 'Leistungsnachweis' && istQuer) {
-      const hash = crypto.createHash('sha256').update(Buffer.from(originalBytes)).digest('hex');
-      if (hash !== VORLAGEN_HASH_LEISTUNGSNACHWEIS) {
-        sendAlert(
-          '⚠️ Wunschlos: Leistungsnachweis-Vorlage geändert',
-          'Ein Klient hat einen Leistungsnachweis unterschrieben, dessen Datei NICHT der vermessenen ' +
-          'Vorlage entspricht (SHA-256 weicht ab).\n\n' +
-          'Die Unterschrifts-Positionen können verrutscht sein. Bitte das erzeugte PDF prüfen und bei ' +
-          'neuer Vorlage die Boxen in api/sign-document.js neu vermessen (BOX_KLIENT/BOX_BESTAETIGUNG, ' +
-          'VORLAGEN_HASH aktualisieren).\n\nDokument: ' + origName + '\nNeuer Hash: ' + hash
-        );
-      }
-    }
-
     // 4) Stempeln (nur PNGs, kein Text/Rahmen)
     const pngK = await pdfDoc.embedPng(toPng(signaturKlient));
     const placed = {};
 
-    if (origTyp === 'Leistungsnachweis' && istQuer) {
+    if (origTyp === 'Leistungsnachweis') {
+      // Anti-Drift: NUR auf der vermessenen A4-quer-Vorlage stempeln. Weicht das
+      // Format ab, lägen die Boxen daneben -> abbrechen + melden statt still verschieben.
+      if (!istLNFormat(width, height)) {
+        reportError(
+          'api/sign-document',
+          `Leistungsnachweis-Vorlage hat unerwartetes Format ${Math.round(width)}x${Math.round(height)} ` +
+          `(erwartet ${Math.round(LN_FORMAT.w)}x${Math.round(LN_FORMAT.h)}) - bitte Platzierung prüfen`,
+          { dokument: origName, width, height }
+        );
+        res.status(422).send('Leistungsnachweis-Vorlage hat unerwartetes Format - Unterschrift wurde NICHT platziert. Bitte Vorlage prüfen.');
+        return;
+      }
       const k = fitInBox(pngK, BOX_KLIENT);
       lastPage.drawImage(pngK, k);
       placed.klient = k;
