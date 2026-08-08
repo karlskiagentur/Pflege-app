@@ -1490,7 +1490,7 @@ export default function App() {
             {lohnLoading ? (
               <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
             ) : lohnListe.length === 0 ? (
-              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnungen vorhanden.</div>
+              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnung verfügbar.</div>
             ) : (
               lohnListe.map((l) => (
                 <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
