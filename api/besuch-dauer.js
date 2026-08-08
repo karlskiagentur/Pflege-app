@@ -34,7 +34,8 @@ export default async function handler(req, res) {
     }
 
     // Dauer_Ist ist ein Dauer-Feld (Airtable speichert Sekunden). Der Pfleger erfasst
-    // Minuten -> in Sekunden umrechnen, damit Interface (h:mm) und Monatsformel stimmen.
+    // Minuten -> in Sekunden umrechnen (minutengenaue Roh-Eingabe). Die 15-min-Rundung
+    // für die Abrechnung macht das Formelfeld Ist_Stunden_Monat (gilt so auch fürs Büro).
     await airtable(`${TABLES.BESUCHE}/${besuchId}`, {
       method: 'PATCH',
       body: JSON.stringify({ fields: { Dauer_Ist: min * 60, Erledigt_Am: new Date().toISOString() } }),
