@@ -1,4 +1,7 @@
 {
+  "crons": [
+    { "path": "/api/stundenzettel-monatslauf", "schedule": "0 20 * * *" }
+  ],
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/" }
   ],
