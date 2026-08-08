@@ -21,19 +21,18 @@ export default async function handler(req, res) {
       .map((r) => {
         const f = r.fields || {};
         const monatRaw = String(f.Monat || '');
-        const sz = (f.Datei || [])[0] || null;           // Stundenzettel-PDF (automatisch)
         const la = (f.Lohnabrechnung || [])[0] || null;  // Lohnabrechnung (Büro-Upload)
         return {
           id: r.id,
           monatRaw,
           monat: /^\d{4}-\d{2}/.test(monatRaw) ? `${monatRaw.slice(5, 7)}.${monatRaw.slice(0, 4)}` : monatRaw,
           summe: f.Summe_Stunden || '',
-          stundenzettel: sz ? { name: sz.filename, url: sz.url } : null,
           lohnabrechnung: la ? { name: la.filename, url: la.url } : null,
         };
       })
-      // Zeilen ganz ohne Datei sind für den Mitarbeiter noch nicht relevant.
-      .filter((z) => z.stundenzettel || z.lohnabrechnung);
+      // In der App erscheint eine Abrechnung NUR, wenn das Büro die Lohnabrechnung
+      // manuell hochgeladen hat. Der Stundenzettel (Feld Datei) bleibt PC/Airtable-intern.
+      .filter((z) => z.lohnabrechnung);
 
     liste.sort((a, b) => b.monatRaw.localeCompare(a.monatRaw));
     res.status(200).json(liste.map(({ monatRaw, ...rest }) => rest));

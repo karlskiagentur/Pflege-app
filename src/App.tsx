@@ -1499,12 +1499,6 @@ export default function App() {
                     {l.summe && <p className="text-xs text-gray-400 font-bold">{l.summe} Std.</p>}
                   </div>
                   <div className="flex gap-2">
-                    {l.stundenzettel && (
-                      <button onClick={() => { setSelectedLohn({ ...l.stundenzettel, titel: `Stundenzettel ${l.monat}` }); setActiveModal('lohn-choice'); }}
-                        className="flex-1 bg-[#F9F7F4] text-[#b5a48b] py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
-                        <Download size={14}/> Stundenzettel
-                      </button>
-                    )}
                     {l.lohnabrechnung && (
                       <button onClick={() => { setSelectedLohn({ ...l.lohnabrechnung, titel: `Lohnabrechnung ${l.monat}` }); setActiveModal('lohn-choice'); }}
                         className="flex-1 bg-[#b5a48b] text-white py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
