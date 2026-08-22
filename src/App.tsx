@@ -8,8 +8,10 @@ import {
 } from 'lucide-react';
 
 // Google-Maps-Link zu einer Adresse (öffnet die Karten-App auf dem Handy).
+// Öffnet die ROUTE (Navigation) zur vollständigen Anschrift, nicht nur einen
+// Kartenpunkt. encodeURIComponent schützt Umlaute, Kommas und /-Hausnummern.
 const mapsUrl = (adresse: string) =>
-  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
+  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
 
