@@ -8,8 +8,10 @@ import {
 } from 'lucide-react';
 
 // Google-Maps-Link zu einer Adresse (öffnet die Karten-App auf dem Handy).
+// Öffnet die ROUTE (Navigation) zur vollständigen Anschrift, nicht nur einen
+// Kartenpunkt. encodeURIComponent schützt Umlaute, Kommas und /-Hausnummern.
 const mapsUrl = (adresse: string) =>
-  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
+  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
 
@@ -202,6 +204,12 @@ const formatMonat = (raw: any) => {
   return val; // schon "Juli 2026" o.ä. -> unverändert
 };
 
+// Sekunden -> "Std:Min" (z. B. 5430s -> "1:30"), für den Zeitnachweis.
+const stdMin = (sec: any) => {
+  const m = Math.round((Number(sec) || 0) / 60);
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+};
+
 const formatTime = (raw: any) => {
   const val = unbox(raw);
   if (!val) return "--:--";
@@ -322,6 +330,13 @@ export default function App() {
   const [urlaubListe, setUrlaubListe] = useState<any[]>([]);
   const [urlaubLoading, setUrlaubLoading] = useState(false);
   const [lohnListe, setLohnListe] = useState<any[]>([]);
+  // Lohn / Zeit: Bereichswahl + Live-Zeitnachweis (nur zur Laufzeit, nichts wird gespeichert)
+  const [lohnBereich, setLohnBereich] = useState<'abrechnung' | 'zeit'>('abrechnung');
+  const [zeitMonat, setZeitMonat] = useState<'aktuell' | 'vormonat'>('aktuell');
+  const [zeitTermine, setZeitTermine] = useState<any[] | null>(null);
+  const [zeitLoading, setZeitLoading] = useState(false);
+  const [zeitFehler, setZeitFehler] = useState('');
+  const [zeitStand, setZeitStand] = useState<Date | null>(null);
   const [lohnLoading, setLohnLoading] = useState(false);
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
@@ -1189,6 +1204,32 @@ export default function App() {
     finally { setLohnLoading(false); }
   };
 
+  // Zeitnachweis: bei jedem Öffnen FRISCH laden (inkl. noch nicht geprüfter Zeiten).
+  // Bewusst kein Dokument/PDF und kein Airtable-Write - reine Laufzeit-Ansicht.
+  const fetchZeitnachweis = async () => {
+    if (!mitarbeiterId) return;
+    setZeitLoading(true);
+    setZeitFehler('');
+    try {
+      const res = await fetchWithTimeout('/api/ma-termine', {
+        method: 'POST',
+        headers: maAuth(),
+        body: JSON.stringify({}),
+      });
+      if (res.status === 401) { logoutMitarbeiterAuth(); return; }
+      if (!res.ok) {
+        throw new Error(`Server antwortete mit ${res.status}`);
+      }
+      const data = await res.json();
+      setZeitTermine(Array.isArray(data) ? data : []);
+      setZeitStand(new Date());
+    } catch (err: any) {
+      console.error('Fehler beim Laden des Zeitnachweises:', err);
+      setZeitFehler('Der Zeitnachweis konnte nicht geladen werden. Bitte erneut versuchen.');
+      reportClientError('zeitnachweis', err, {});
+    } finally { setZeitLoading(false); }
+  };
+
   if (mitarbeiterId) {
     const heute = new Date();
     heute.setHours(0,0,0,0);
@@ -1205,6 +1246,29 @@ export default function App() {
     });
 
     const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
+
+    // --- Zeitnachweis (Lohn / Zeit): erfasste Zeiten des gewählten Monats ---
+    const zeitRef = new Date();
+    if (zeitMonat === 'vormonat') zeitRef.setMonth(zeitRef.getMonth() - 1);
+    const zeitYm = `${zeitRef.getFullYear()}-${String(zeitRef.getMonth() + 1).padStart(2, '0')}`;
+    const zeitMonatLabel = new Date(`${zeitYm}-01T12:00:00`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+    // Nur ERFASSTE Einsätze zählen (Erledigt_Am gesetzt + Dauer_Ist vorhanden);
+    // geplante Termine erscheinen nicht. Monat aus Formelfeld, Fallback Datum.
+    const zeitEinsaetze = (zeitTermine || [])
+      .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
+      .filter((t) => String(getValue(t, 'Monat') || getValue(t, 'Datum') || '').slice(0, 7) === zeitYm)
+      .sort((a, b) => {
+        const ka = `${getValue(a, 'Datum') || ''} ${getValue(a, 'Von') || formatTime(getValue(a, 'Uhrzeit'))}`;
+        const kb = `${getValue(b, 'Datum') || ''} ${getValue(b, 'Von') || formatTime(getValue(b, 'Uhrzeit'))}`;
+        return ka.localeCompare(kb);
+      });
+    const zeitSummeSec = zeitEinsaetze.reduce((s, t) => s + (Number(getValue(t, 'Dauer_Ist')) || 0), 0);
+    const zeitTage: { datum: string; rows: any[] }[] = [];
+    for (const t of zeitEinsaetze) {
+      const d = String(getValue(t, 'Datum') || getValue(t, 'Uhrzeit') || '').slice(0, 10);
+      const g = zeitTage.find((x) => x.datum === d);
+      if (g) g.rows.push(t); else zeitTage.push({ datum: d, rows: [t] });
+    }
 
     const getStatusBadge = (t: any) => {
       const status = getValue(t, 'Status');
@@ -1483,11 +1547,23 @@ export default function App() {
           <div className="animate-in fade-in">
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-[#F9F7F4] rounded-full flex items-center justify-center mx-auto mb-4"><Euro size={32} className="text-[#b5a48b]" /></div>
-              <h2 className="text-3xl font-black text-[#3A3A3A]">Lohnabrechnung</h2>
-              <p className="text-xs text-gray-400 mt-1">Deine monatlichen Abrechnungen.</p>
+              <h2 className="text-3xl font-black text-[#3A3A3A]">Lohn / Zeit</h2>
+              <p className="text-xs text-gray-400 mt-1">Abrechnungen und erfasste Zeiten.</p>
             </div>
 
-            {lohnLoading ? (
+            {/* Bereichswahl: Lohnabrechnungen | Zeitnachweis */}
+            <div className="flex gap-1.5 bg-white rounded-[1.5rem] p-1.5 border border-gray-100 mb-4">
+              <button onClick={() => setLohnBereich('abrechnung')}
+                className={`flex-1 py-3.5 rounded-[1.2rem] font-black uppercase text-[11px] transition-all active:scale-95 ${lohnBereich === 'abrechnung' ? 'bg-[#b5a48b] text-white' : 'text-gray-400'}`}>
+                Lohnabrechnungen
+              </button>
+              <button onClick={() => { setLohnBereich('zeit'); fetchZeitnachweis(); }}
+                className={`flex-1 py-3.5 rounded-[1.2rem] font-black uppercase text-[11px] transition-all active:scale-95 ${lohnBereich === 'zeit' ? 'bg-[#b5a48b] text-white' : 'text-gray-400'}`}>
+                Zeitnachweis
+              </button>
+            </div>
+
+            {lohnBereich === 'abrechnung' && (lohnLoading ? (
               <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
             ) : lohnListe.length === 0 ? (
               <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnung verfügbar.</div>
@@ -1508,6 +1584,71 @@ export default function App() {
                   </div>
                 </div>
               ))
+            ))}
+
+            {lohnBereich === 'zeit' && (
+              <div className="animate-in fade-in">
+                {/* Monatswahl: aktueller Monat | Vormonat */}
+                <div className="flex gap-2 mb-3">
+                  <button onClick={() => setZeitMonat('aktuell')}
+                    className={`px-4 py-2.5 rounded-xl font-black uppercase text-[11px] border transition-all active:scale-95 ${zeitMonat === 'aktuell' ? 'bg-[#F1EFE8] text-[#b5a48b] border-[#b5a48b]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                    Aktueller Monat
+                  </button>
+                  <button onClick={() => setZeitMonat('vormonat')}
+                    className={`px-4 py-2.5 rounded-xl font-black uppercase text-[11px] border transition-all active:scale-95 ${zeitMonat === 'vormonat' ? 'bg-[#F1EFE8] text-[#b5a48b] border-[#b5a48b]' : 'bg-white text-gray-400 border-gray-200'}`}>
+                    Vormonat
+                  </button>
+                </div>
+
+                {zeitLoading ? (
+                  <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
+                ) : zeitFehler ? (
+                  <div className="bg-white rounded-[2rem] p-5 text-center">
+                    <p className="text-gray-500 mb-3">{zeitFehler}</p>
+                    <button onClick={fetchZeitnachweis}
+                      className="bg-[#b5a48b] text-white px-5 py-3 rounded-xl font-black uppercase text-[11px] active:scale-95 transition-all">
+                      Erneut versuchen
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Kopf: Monat + Gesamtsumme */}
+                    <div className="bg-white rounded-[2rem] border border-gray-100 p-5 mb-2 flex items-center justify-between">
+                      <p className="font-black text-lg text-[#3A3A3A]">{zeitMonatLabel}</p>
+                      <p className="font-black text-lg text-[#0F6E56]">{stdMin(zeitSummeSec)} Std.</p>
+                    </div>
+
+                    {zeitTage.length === 0 ? (
+                      <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Für diesen Monat sind noch keine Zeiten erfasst.</div>
+                    ) : (
+                      zeitTage.map((tag) => (
+                        <div key={tag.datum} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
+                          <p className="text-[11px] font-black uppercase text-gray-400 mb-2">
+                            {new Date(`${tag.datum}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' })}
+                          </p>
+                          {tag.rows.map((t) => (
+                            <div key={t.id} className="flex items-center justify-between py-1.5 border-t border-gray-50 first:border-t-0">
+                              <p className="text-sm text-gray-600">
+                                {getValue(t, 'Von') && getValue(t, 'Bis')
+                                  ? `${getValue(t, 'Von')} – ${getValue(t, 'Bis')}`
+                                  : formatTime(getValue(t, 'Uhrzeit'))}
+                              </p>
+                              <p className="text-sm font-black text-[#3A3A3A]">{stdMin(getValue(t, 'Dauer_Ist'))} Std.</p>
+                            </div>
+                          ))}
+                        </div>
+                      ))
+                    )}
+
+                    {zeitStand && (
+                      <p className="text-[10px] text-gray-400 mt-3 px-2 leading-relaxed">
+                        Vorläufige Übersicht (Stand: {zeitStand.toLocaleDateString('de-DE')}, {zeitStand.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr).
+                        Enthält auch noch nicht geprüfte Zeiten. Verbindlich ist der monatliche Stundenzettel.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -1695,7 +1836,7 @@ export default function App() {
       )}
 
       {/* MITARBEITER-NAV */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn' } ].map((tab) => (
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn / Zeit' } ].map((tab) => (
         <button
             key={tab.id}
             onClick={() => {
