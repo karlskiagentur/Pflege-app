@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Einsatzkarte · Wunschlos Pflege</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  :root{--blau:#1d4ed8;--grau:#6b7280;--rand:#e5e7eb}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#111827;background:#f9fafb}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--rand)}
+  header h1{margin:0;font-size:16px}
+  header .info{color:var(--grau);font-size:13px;display:flex;align-items:center;gap:10px}
+  button{font:inherit;padding:6px 12px;border:0;border-radius:8px;background:var(--blau);color:#fff;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  .layout{display:flex;height:calc(100% - 49px)}
+  #map{flex:1;min-width:0}
+  aside{width:300px;background:#fff;border-left:1px solid var(--rand);overflow-y:auto}
+  .ma{display:block;width:100%;text-align:left;background:none;color:inherit;border:0;border-bottom:1px solid var(--rand);border-radius:0;padding:10px 14px;cursor:pointer}
+  .ma:hover{background:#f3f4f6}
+  .ma b{display:flex;align-items:center;gap:8px}
+  .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
+  .ma .txt{color:#4b5563}
+  .warn{margin:12px;padding:10px;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px}
+  .fehler{margin:12px;padding:10px;border-radius:10px;background:#fef2f2;color:#991b1b}
+  .leer{padding:14px;color:var(--grau)}
+  /* Sperrhinweis bei ungültigem Link */
+  #gesperrt{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#f9fafb;z-index:2000}
+  #gesperrt div{background:#fff;padding:22px;border-radius:14px;width:min(420px,92vw);box-shadow:0 10px 40px rgba(0,0,0,.15);text-align:center}
+  /* PKW-Marker */
+  .wl-auto-icon{background:none;border:0}
+  .wl-auto{position:relative;width:44px;height:60px}
+  .wl-auto-body{width:44px;height:44px;transition:transform .8s ease}
+  .wl-auto-label{position:absolute;left:50%;top:44px;transform:translateX(-50%);color:#fff;font-weight:600;font-size:11px;line-height:1;padding:3px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+  .leaflet-marker-icon.wl-auto-icon{transition:transform .8s linear}
+  @media (max-width:760px){.layout{flex-direction:column}aside{width:auto;max-height:40%;border-left:0;border-top:1px solid var(--rand)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🗺️ Einsatzkarte <span id="datum" style="font-weight:400;color:var(--grau)"></span></h1>
+  <div class="info">
+    <span id="stand"></span>
+    <button id="reload">Aktualisieren</button>
+  </div>
+</header>
+<div class="layout">
+  <div id="map"></div>
+  <aside id="liste"><div class="leer">Lade Tagesplan …</div></aside>
+</div>
+
+<div id="gesperrt">
+  <div>
+    <div style="font-weight:700;font-size:16px">Link ungültig</div>
+    <div style="color:var(--grau);margin-top:6px">Bitte die Einsatzkarte über den Button im Airtable-Interface „Wunschlos Büro" öffnen.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  // Schlüssel kommt ausschließlich aus dem Link des Airtable-Interface (?k=...).
+  const KEY = new URLSearchParams(location.search).get('k') || '';
+  const TICK_MS = 30000, RELOAD_MS = 10 * 60000;
+  const FALLBACK_CENTER = [48.62, 9.83];
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (min) => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.round(min % 60)).padStart(2, '0');
+  const jetztMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function bearing(a, b) {
+    const r = Math.PI / 180, f1 = a.lat * r, f2 = b.lat * r, dl = (b.lng - a.lng) * r;
+    const y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+  }
+
+  // Position eines Mitarbeiters zur Minute t – nur Einsätze mit Koordinaten zählen.
+  function positionFuer(ma, t) {
+    const es = ma.einsaetze.filter((e) => e.lat != null && e.lng != null);
+    if (!es.length) return null;
+    const erster = es[0], letzter = es[es.length - 1];
+    if (t < erster.start) return { lat: erster.lat, lng: erster.lng, heading: 0, phase: 'vor', naechster: erster, text: 'Erster Einsatz ' + fmt(erster.start) + ' Uhr · ' + erster.klient };
+    for (let i = 0; i < es.length; i++) {
+      const e = es[i], next = es[i + 1];
+      if (t >= e.start && t <= e.ende) return { lat: e.lat, lng: e.lng, heading: next ? bearing(e, next) : 0, phase: 'beim', aktueller: e, naechster: next, text: 'Beim Klienten · ' + e.klient + ' (bis ' + fmt(e.ende) + ' Uhr)' };
+      if (next && t > e.ende && t < next.start) {
+        const p = Math.min(1, Math.max(0, (t - e.ende) / Math.max(1, next.start - e.ende)));
+        return { lat: e.lat + (next.lat - e.lat) * p, lng: e.lng + (next.lng - e.lng) * p, heading: bearing(e, next), phase: 'fahrt', naechster: next, text: 'Unterwegs zu ' + next.klient + ' (' + fmt(next.start) + ' Uhr)' };
+      }
+    }
+    return { lat: letzter.lat, lng: letzter.lng, heading: 0, phase: 'nach', text: 'Feierabend · zuletzt bei ' + letzter.klient + ' bis ' + fmt(letzter.ende) + ' Uhr' };
+  }
+
+  // „Plastischer" PKW von oben, Front oben (0° = Norden).
+  function autoSvg(farbe, uid) {
+    return '<svg viewBox="0 0 64 64" width="44" height="44" xmlns="http://www.w3.org/2000/svg">'
+      + '<defs><linearGradient id="g' + uid + '" x1="0" y1="0" x2="1" y2="0">'
+      + '<stop offset="0" stop-color="#000" stop-opacity=".28"/><stop offset=".35" stop-color="#fff" stop-opacity=".45"/>'
+      + '<stop offset=".7" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".3"/></linearGradient></defs>'
+      + '<ellipse cx="34" cy="35" rx="15" ry="26" fill="#000" opacity=".22"/>'
+      + '<rect x="11" y="13" width="7" height="12" rx="2.5" fill="#1a1a1a"/><rect x="46" y="13" width="7" height="12" rx="2.5" fill="#1a1a1a"/>'
+      + '<rect x="11" y="40" width="7" height="12" rx="2.5" fill="#1a1a1a"/><rect x="46" y="40" width="7" height="12" rx="2.5" fill="#1a1a1a"/>'
+      + '<path d="M20 7 Q32 2 44 7 L47 22 L47 56 Q32 61 17 56 L17 22 Z" fill="' + farbe + '" stroke="#000" stroke-opacity=".25"/>'
+      + '<path d="M20 7 Q32 2 44 7 L47 22 L47 56 Q32 61 17 56 L17 22 Z" fill="url(#g' + uid + ')"/>'
+      + '<path d="M22 19 Q32 15 42 19 L43 27 L21 27 Z" fill="#bfe3ff" opacity=".9"/>'
+      + '<path d="M21 29 L43 29 L42 42 Q32 45 22 42 Z" fill="#111827" opacity=".85"/>'
+      + '<path d="M22 44 Q32 47 42 44 L42 49 Q32 51 22 49 Z" fill="#bfe3ff" opacity=".7"/>'
+      + '<circle cx="22" cy="8.5" r="2.3" fill="#fff8c2"/><circle cx="42" cy="8.5" r="2.3" fill="#fff8c2"/>'
+      + '<rect x="19" y="54" width="6" height="2.6" rx="1" fill="#ff3b30"/><rect x="39" y="54" width="6" height="2.6" rx="1" fill="#ff3b30"/>'
+      + '</svg>';
+  }
+
+  function autoIcon(ma, pos) {
+    const uid = ma.id.replace(/[^A-Za-z0-9]/g, '');
+    const fade = pos.phase === 'vor' || pos.phase === 'nach' ? 'opacity:.55;' : '';
+    const html = '<div class="wl-auto" style="' + fade + '"><div class="wl-auto-body" style="transform:rotate(' + pos.heading.toFixed(0) + 'deg)">'
+      + autoSvg(ma.farbe, uid) + '</div><div class="wl-auto-label" style="background:' + ma.farbe + '">' + esc(ma.name.split(' ')[0]) + '</div></div>';
+    return L.divIcon({ html, className: 'wl-auto-icon', iconSize: [44, 60], iconAnchor: [22, 22], popupAnchor: [0, -20] });
+  }
+
+  function popupHtml(ma, pos) {
+    const zeilen = ma.einsaetze.map((e) => {
+      const aktiv = pos.aktueller && pos.aktueller.id === e.id;
+      const ohne = e.lat == null ? ' <span style="color:#b91c1c">⚠ ohne Standort</span>' : '';
+      return '<div style="' + (aktiv ? 'font-weight:600' : '') + '">' + fmt(e.start) + '–' + fmt(e.ende) + ' · ' + esc(e.klient) + ohne + '</div>';
+    }).join('');
+    return '<div style="min-width:220px;font-size:13px;line-height:1.4"><div style="font-weight:700;font-size:15px;color:' + ma.farbe + '">'
+      + esc(ma.name) + (ma.fahrzeug ? ' · ' + esc(ma.fahrzeug) : '') + '</div><div style="margin:4px 0 8px">' + esc(pos.text)
+      + '</div><div style="border-top:1px solid #e5e7eb;padding-top:6px">' + zeilen + '</div></div>';
+  }
+
+  // --- Karte -----------------------------------------------------------
+  const map = L.map('map').setView(FALLBACK_CENTER, 12);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
+  }).addTo(map);
+
+  let daten = null, fitDone = false, route = null;
+  const marker = new Map();
+
+  function zeigeRoute(ma) {
+    if (route) { route.remove(); route = null; }
+    const pts = ma.einsaetze.filter((e) => e.lat != null).map((e) => [e.lat, e.lng]);
+    if (pts.length >= 2) route = L.polyline(pts, { color: ma.farbe, weight: 3, opacity: .6, dashArray: '6 8' }).addTo(map);
+  }
+
+  function springeZu(ma) {
+    const m = marker.get(ma.id); if (!m) return;
+    map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 14), { duration: .8 });
+    m.openPopup(); zeigeRoute(ma);
+  }
+
+  function render() {
+    if (!daten) return;
+    const t = jetztMin();
+    const positionen = daten.mitarbeiter.map((ma) => ({ ma, pos: positionFuer(ma, t) })).filter((x) => x.pos);
+    const seen = new Set();
+    for (const { ma, pos } of positionen) {
+      seen.add(ma.id);
+      let m = marker.get(ma.id);
+      if (!m) {
+        m = L.marker([pos.lat, pos.lng], { icon: autoIcon(ma, pos), zIndexOffset: 500 }).addTo(map);
+        m.on('click', () => zeigeRoute(ma));
+        marker.set(ma.id, m);
+      } else { m.setLatLng([pos.lat, pos.lng]); m.setIcon(autoIcon(ma, pos)); }
+      m.bindPopup(popupHtml(ma, pos), { maxWidth: 320 });
+    }
+    for (const [id, m] of marker) if (!seen.has(id)) { m.remove(); marker.delete(id); }
+
+    if (!fitDone) {
+      const pts = [];
+      daten.mitarbeiter.forEach((ma) => ma.einsaetze.forEach((e) => { if (e.lat != null) pts.push([e.lat, e.lng]); }));
+      if (pts.length) { map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14 }); fitDone = true; }
+    }
+
+    // Seitenleiste
+    const liste = $('liste'); liste.innerHTML = '';
+    if (!daten.mitarbeiter.length) liste.innerHTML = '<div class="leer">Heute sind keine Einsätze geplant.</div>';
+    for (const { ma, pos } of positionen) {
+      const b = document.createElement('button'); b.className = 'ma';
+      b.innerHTML = '<b><span class="dot" style="background:' + ma.farbe + '"></span>' + esc(ma.name)
+        + (ma.fahrzeug ? ' <span style="font-weight:400;color:#6b7280">· ' + esc(ma.fahrzeug) + '</span>' : '') + '</b><div class="txt">' + esc(pos.text) + '</div>';
+      b.onclick = () => springeZu(ma); liste.appendChild(b);
+    }
+    for (const ma of daten.mitarbeiter) if (!positionen.some((p) => p.ma.id === ma.id)) {
+      const d = document.createElement('div'); d.className = 'ma'; d.style.color = '#6b7280';
+      d.innerHTML = '<span class="dot" style="background:' + ma.farbe + ';margin-right:8px"></span>' + esc(ma.name) + ': Einsätze ohne Standort'; liste.appendChild(d);
+    }
+    if (daten.ohneStandort.length) {
+      const w = document.createElement('div'); w.className = 'warn';
+      w.innerHTML = '<b>⚠ Ohne Standort (' + daten.ohneStandort.length + ')</b><br>'
+        + daten.ohneStandort.map((o) => fmt(o.start) + ' · ' + esc(o.klient) + ' (' + esc(o.mitarbeiter) + ')' + (o.adresse ? '' : ' – keine Anschrift')).join('<br>')
+        + '<div style="margin-top:6px;font-size:12px">Anschrift auf der Seite „Klienten" prüfen; die Karte ergänzt den Standort automatisch.</div>';
+      liste.appendChild(w);
+    }
+  }
+
+  // --- Laden -------------------------------------------------------------
+  function sperren() { $('gesperrt').style.display = 'flex'; }
+
+  async function laden() {
+    if (!KEY) { sperren(); return; }
+    $('reload').disabled = true;
+    try {
+      const r = await fetch('/api/einsatz-karte', { headers: { 'X-Karte-Key': KEY }, cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { sperren(); return; }
+      if (!r.ok || j.status !== 'success') throw new Error(j.message || 'Karte konnte nicht geladen werden.');
+      daten = j;
+      $('datum').textContent = new Date(j.datum).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+      $('stand').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      render();
+    } catch (e) {
+      const f = document.createElement('div'); f.className = 'fehler'; f.textContent = e.message || 'Keine Verbindung. Bitte später erneut versuchen.';
+      $('liste').innerHTML = ''; $('liste').appendChild(f);
+      console.error('[karte]', e);
+    } finally { $('reload').disabled = false; }
+  }
+
+  $('reload').addEventListener('click', laden);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') laden(); });
+  window.addEventListener('error', (ev) => console.error('[karte]', ev.message));
+
+  setInterval(render, TICK_MS);
+  setInterval(laden, RELOAD_MS);
+  laden();
+})();
+</script>
+</body>
+</html>
