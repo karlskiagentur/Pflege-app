@@ -2,6 +2,8 @@
 // + einheitliches Fehler-Handling und Sofort-Alarmierung.
 // Stil wie die bestehenden /api-Funktionen (fetch gegen Airtable REST, Env AIRTABLE_*).
 
+import { timingSafeEqual } from 'node:crypto';
+
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_TOKEN = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
 
@@ -235,6 +237,20 @@ export async function requireMitarbeiter(req, res) {
     return null;
   }
   return rec;
+}
+
+// Zugriffsschutz der Einsatzkarte: gemeinsamer Schlüssel (KARTE_SECRET) im Header X-Karte-Key.
+// Zeitkonstanter Vergleich; bei Fehler 401 und false.
+export function requireKarteKey(req, res) {
+  const soll = String(process.env.KARTE_SECRET || '');
+  const ist = String((req.headers && (req.headers['x-karte-key'] || req.headers['X-Karte-Key'])) || '');
+  const ok = soll.length >= 16 && ist.length === soll.length
+    && timingSafeEqual(Buffer.from(ist), Buffer.from(soll));
+  if (!ok) {
+    res.status(401).json({ status: 'error', message: 'Karten-Schlüssel ungültig' });
+    return false;
+  }
+  return true;
 }
 
 function linkedId(val) {
