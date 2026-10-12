@@ -36,12 +36,26 @@ export default async function handler(req, res) {
     const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Aktiv');
     const aktive = personal.filter((p) => p.fields && p.fields.Aktiv);
 
+    // Nur wer in diesem Monat mindestens einen (nicht abgesagten) Einsatz im Dienstplan
+    // hat, bekommt einen Stundenzettel. Sonst entstünde für jeden aktiven Mitarbeiter,
+    // der (noch) nicht über den digitalen Dienstplan läuft, ein 0-Stunden-Zettel mit
+    // vorgedruckter PDL-Unterschrift. Einsätze OHNE erfasste Ist-Zeit zählen bewusst mit:
+    // deren Zettel zeigt dann "Keine Einsätze mit erfasster Ist-Zeit" und macht die
+    // Lücke sichtbar, statt sie zu verschweigen.
+    const monatKey = `${y}-${String(m).padStart(2, '0')}`; // passt zur Formel {Monat} (YYYY-MM)
+    const einsaetze = await fetchAll(
+      TABLES.BESUCHE,
+      `filterByFormula=${encodeURIComponent(`AND({Monat} = '${monatKey}', {Status} != 'Abgesagt')`)}&fields%5B%5D=Pfleger_ID`
+    );
+    const mitEinsatz = new Set(einsaetze.flatMap((b) => (b.fields && b.fields.Pfleger_ID) || []).map(String));
+    const zuErstellen = aktive.filter((p) => mitEinsatz.has(String(p.id)));
+
     // Doppel-Schutz: Mitarbeiter, die für diesen Monat schon eine Zeile haben, überspringen.
     const vorhanden = await fetchAll(ZETTEL, `filterByFormula=${encodeURIComponent(`{Monat_Auswahl} = '${esc(monatName)}'`)}`);
     const schonDa = new Set(vorhanden.flatMap((z) => (z.fields && z.fields.Mitarbeiter_ID) || []).map(String));
 
     let angelegt = 0;
-    for (const ma of aktive) {
+    for (const ma of zuErstellen) {
       if (schonDa.has(String(ma.id))) continue;
       await airtable(ZETTEL, {
         method: 'POST',
@@ -53,7 +67,10 @@ export default async function handler(req, res) {
       angelegt++;
     }
 
-    res.status(200).json({ status: 'ok', monat: monatName, aktive: aktive.length, angelegt });
+    res.status(200).json({
+      status: 'ok', monat: monatName, aktive: aktive.length,
+      mitEinsatz: zuErstellen.length, ohneEinsatz: aktive.length - zuErstellen.length, angelegt,
+    });
   } catch (e) {
     sendError(res, e, 'api/stundenzettel-monatslauf');
   }

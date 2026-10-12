@@ -232,7 +232,9 @@ export async function requireMitarbeiter(req, res) {
   const formula = encodeURIComponent(`{Session_Token} = '${esc(token)}'`);
   const data = await airtable(`${TABLES.PERSONAL}?filterByFormula=${formula}&maxRecords=1`);
   const rec = (data.records || [])[0];
-  if (!rec) {
+  // Ausgeschiedene/deaktivierte Mitarbeiter verlieren SOFORT jeden Zugriff - auch mit
+  // noch gültigem Session-Token (Zugangskontrolle/TOM). Leere Checkbox = Feld fehlt.
+  if (!rec || !(rec.fields && rec.fields.Aktiv)) {
     res.status(401).json({ status: 'error', message: 'Nicht autorisiert' });
     return null;
   }

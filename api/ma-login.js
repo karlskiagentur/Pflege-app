@@ -23,8 +23,9 @@ export default async function handler(req, res) {
 
     const f = rec.fields || {};
 
-    // Nur aktive Mitarbeiter
-    if (f.Aktiv === false) { res.status(401).json({ status: 'error', message: 'Login fehlgeschlagen' }); return; }
+    // Nur aktive Mitarbeiter. Airtable liefert eine NICHT angehakte Checkbox gar nicht
+    // mit (Feld fehlt statt false) - daher auf "nicht gesetzt" prüfen, nicht auf === false.
+    if (!f.Aktiv) { res.status(401).json({ status: 'error', message: 'Login fehlgeschlagen' }); return; }
 
     // Konto gesperrt?
     if (f.Locked_Until && new Date(f.Locked_Until).getTime() > Date.now()) {
