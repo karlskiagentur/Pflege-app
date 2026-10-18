@@ -169,6 +169,17 @@ const getFileName = (item: any, fieldName: string) => {
     return "";
 };
 
+// Weißes Logo im Kopfbereich: kommt von der Website des Pflegediensts. Ist die Website nicht
+// erreichbar oder ändert sich die Bildadresse, springt die App auf die mitgelieferte weiße
+// Logo-Variante um - und zeigt notfalls gar kein Bild statt eines kaputten Symbols.
+const LOGO_WEISS_URL = "https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png";
+const logoErsatz = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.dataset.ersatz) { img.style.visibility = 'hidden'; return; }
+    img.dataset.ersatz = '1';
+    img.src = '/logo-weiss.png';
+};
+
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -1411,7 +1422,7 @@ export default function App() {
     return (
     <div className="min-h-screen bg-white pb-32">
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
-        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
+        <img src={LOGO_WEISS_URL} onError={logoErsatz} alt="Logo" className="h-11" />
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
           <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
@@ -2447,7 +2458,7 @@ export default function App() {
       )}
 
       <header className={`py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm transition-all duration-300 ${showUpdateBanner ? 'mt-32' : ''}`}>
-        <img src="https://www.wunschlos-pflege.de/wp-content/uploads/2024/02/wunschlos-logo-white-400x96.png" alt="Logo" className="h-11" />
+        <img src={LOGO_WEISS_URL} onError={logoErsatz} alt="Logo" className="h-11" />
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
