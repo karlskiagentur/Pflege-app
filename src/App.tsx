@@ -496,6 +496,9 @@ export default function App() {
             localStorage.clear();
             setPatientId(null);
             setToken(null);
+            // Neustart leert garantiert alle Daten im Speicher (geteilte Geräte). Nur wenn die
+            // Sitzung wirklich entfernt ist - sonst droht eine Neustart-Schleife.
+            if (!localStorage.getItem('active_token')) window.location.reload();
             return;
         }
 
@@ -1053,6 +1056,13 @@ export default function App() {
     setMitarbeiterId(null);
     setMitarbeiterName('');
     setMitarbeiterToken(null);
+    // Geladene Daten verwerfen - meldet sich am selben Gerät jemand anderes an,
+    // darf er nichts vom vorherigen Konto sehen (Einsätze, Zeiten, Lohnunterlagen).
+    setMitarbeiterTermine([]);
+    setZeitTermine(null);
+    setLohnListe([]);
+    setUrlaubListe([]);
+    maLetzterAbrufRef.current = 0;
     setLoginError('Ihre Sitzung ist abgelaufen. Bitte erneut anmelden.');
   };
 
@@ -1405,7 +1415,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
           <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
         </div>
       </header>
 
@@ -2441,7 +2451,7 @@ export default function App() {
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-             <button onClick={() => { localStorage.clear(); setPatientId(null); setToken(null); }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+             <button onClick={() => { localStorage.clear(); setPatientId(null); setToken(null); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{getValue(patientData, 'Name')}</p>
         </div>
