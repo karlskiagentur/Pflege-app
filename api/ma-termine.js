@@ -1,4 +1,18 @@
-import { fetchAll, sendError, requireMitarbeiter, esc, handledPreflight, TABLES } from './_lib.js';
+import { fetchAll, sendError, reportError, requireMitarbeiter, esc, handledPreflight, TABLES } from './_lib.js';
+
+// Zeitfenster: Die Mitarbeiter-App zeigt nur heutige und künftige Einsätze sowie im
+// Zeitnachweis den aktuellen Monat und den Vormonat. Ältere Einsätze werden daher nicht
+// mehr übertragen - die Liste bleibt auch nach Jahren Dienstplan schnell.
+// 70 Tage decken den Vormonat immer vollständig ab (höchstens 62 Tage zurück) plus Puffer.
+// Einsätze ohne Datum werden sicherheitshalber immer mitgeliefert.
+export const FENSTER_TAGE = 70;
+
+export function fensterFormel(mitarbeiterId) {
+  const ab = `DATEADD(TODAY(), -${FENSTER_TAGE}, 'days')`;
+  return `AND(FIND('${esc(mitarbeiterId)}', ARRAYJOIN({Pfleger_ID})), OR(`
+    + `IF({Datum}, IS_AFTER({Datum}, ${ab}), 1), `
+    + `IF({Uhrzeit}, IS_AFTER({Uhrzeit}, ${ab}), 0)))`;
+}
 
 export default async function handler(req, res) {
   if (handledPreflight(req, res)) return;
@@ -11,8 +25,22 @@ export default async function handler(req, res) {
     if (!ma) return;
     const mitarbeiterId = ma.id;
 
-    const formula = `filterByFormula=${encodeURIComponent(`FIND('${esc(mitarbeiterId)}', ARRAYJOIN({Pfleger_ID}))`)}`;
-    const records = await fetchAll(TABLES.BESUCHE, formula);
+    const alleFormel = `filterByFormula=${encodeURIComponent(`FIND('${esc(mitarbeiterId)}', ARRAYJOIN({Pfleger_ID}))`)}`;
+    let records;
+    try {
+      records = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(fensterFormel(mitarbeiterId))}`);
+    } catch (e) {
+      // Sicherheitsnetz: Lehnt Airtable die Fenster-Formel ab, gilt die bisherige Abfrage
+      // ohne Zeitfenster (die App funktioniert weiter) - und der Betreiber wird alarmiert.
+      if (!e || e.status !== 422) throw e;
+      reportError('api/ma-termine', 'Zeitfenster-Formel abgelehnt - Abfrage ohne Zeitfenster', { status: e.status });
+      records = null;
+    }
+    // Leeres Ergebnis -> zur Sicherheit wie bisher ohne Zeitfenster abfragen
+    // (kostet nur bei Mitarbeitern ohne aktuelle Einsätze eine zweite, kleine Abfrage).
+    if (!records || records.length === 0) {
+      records = await fetchAll(TABLES.BESUCHE, alleFormel);
+    }
     // Rohes Record-Array wie zuvor mitarbeiter_termine (App sortiert selbst)
     res.status(200).json(records);
   } catch (e) {
