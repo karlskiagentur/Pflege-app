@@ -312,6 +312,8 @@ export default function App() {
   const [mitarbeiterTermine, setMitarbeiterTermine] = useState<any[]>([]);
   const [mitarbeiterLoading, setMitarbeiterLoading] = useState(false);
   const [mitarbeiterError, setMitarbeiterError] = useState<string | null>(null);
+  const maLaedtRef = useRef(false);             // Einsätze werden gerade geladen
+  const maLetzterAbrufRef = useRef<number>(0);  // Zeitpunkt des letzten erfolgreichen Ladens
   // Ist-Dauer-Erfassung durch den Pfleger (pro Termin)
   const [dauerInput, setDauerInput] = useState<Record<string, string>>({});
   const [dauerSaving, setDauerSaving] = useState<string | null>(null);
@@ -452,7 +454,9 @@ export default function App() {
   };
 
   // --- FETCH LOGIC ---
-  const fetchData = async (force = false, background = false) => {
+  // quiet = automatische Aktualisierung (z. B. beim Zurückkehren in die App): keine
+  // Fehlermeldung an den Klienten - die zuletzt geladenen Daten bleiben einfach sichtbar.
+  const fetchData = async (force = false, background = false, quiet = false) => {
     const authToken = token || localStorage.getItem('active_token');
     if (!authToken || authToken === "null") return;
 
@@ -466,17 +470,18 @@ export default function App() {
     
     isFetchingRef.current = true;
     if (!background) setLoading(true);
-    setErrorMsg(null);
+    if (!quiet) setErrorMsg(null);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000); 
 
     try {
         // Token im Authorization-Header statt in der URL (landet sonst in Logs/History).
+        // Reine Verbindungsfehler (Funkloch, Handy wacht gerade auf) werden markiert.
         const response = await fetch(`/api/app-data`, {
             signal: controller.signal,
             headers: { 'Authorization': `Bearer ${authToken}` }
-        });
+        }).catch((err) => { throw Object.assign(err, { netzwerk: true }); });
 
         if (!response.ok) throw new Error(`Server Fehler: ${response.status}`);
 
@@ -496,6 +501,7 @@ export default function App() {
 
         clearTimeout(timeoutId);
         lastFetchTimeRef.current = Date.now();
+        if (quiet) setErrorMsg(null); // Verbindung steht wieder -> alten Hinweis entfernen
 
         if (json.data) {
             if (json.data.patienten_daten) {
@@ -569,10 +575,11 @@ export default function App() {
 
     } catch (e: any) {
         if (e.name === 'AbortError') {
-            if (!background) setErrorMsg("Zeitüberschreitung – bitte Internetverbindung prüfen und erneut laden.");
+            if (!background && !quiet) setErrorMsg("Zeitüberschreitung – bitte Internetverbindung prüfen und erneut laden.");
         } else {
-            if (!background) setErrorMsg("Ladefehler. Bitte erneut versuchen.");
-            reportClientError('fetchData', e, { background });
+            if (!background && !quiet) setErrorMsg("Ladefehler. Bitte erneut versuchen.");
+            // Verbindungsaussetzer bei der automatischen Aktualisierung sind kein App-Fehler.
+            if (!(quiet && e && e.netzwerk)) reportClientError('fetchData', e, { background, quiet });
         }
     } finally {
         clearTimeout(timeoutId);
@@ -583,6 +590,33 @@ export default function App() {
 
   useEffect(() => {
       if (patientId) fetchData(false);
+  }, [patientId]);
+
+  // Beim Zurückkehren in die App (z. B. Tipp auf eine Push-Nachricht) leise aktualisieren.
+  // iOS und Android holen eine bereits geöffnete App nur in den Vordergrund, ohne sie neu
+  // zu laden - ohne diesen Schritt sähe der Klient bis zum nächsten Tab-Wechsel den alten
+  // Stand (z. B. ein gerade bereitgestelltes Dokument fehlt). Kein Polling: reagiert nur
+  // auf das Öffnen der App, höchstens alle 45 s. Kurze Verzögerung, weil das Netz nach dem
+  // Aufwachen des Handys (v. a. iOS) einen Moment braucht.
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
+  useEffect(() => {
+      if (!patientId) return;
+      let timer: number | undefined;
+      const beimZurueckkehren = () => {
+          if (document.visibilityState !== 'visible') return;
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => {
+              if (Date.now() - lastFetchTimeRef.current > 45000) fetchDataRef.current(true, false, true);
+          }, 800);
+      };
+      document.addEventListener('visibilitychange', beimZurueckkehren);
+      window.addEventListener('focus', beimZurueckkehren);
+      return () => {
+          document.removeEventListener('visibilitychange', beimZurueckkehren);
+          window.removeEventListener('focus', beimZurueckkehren);
+          window.clearTimeout(timer);
+      };
   }, [patientId]);
 
   // Geräte-Ausrichtung verfolgen (Signatur-Pad nur im Querformat)
@@ -1028,16 +1062,22 @@ export default function App() {
     'Authorization': `Bearer ${mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || ''}`,
   });
 
-  const fetchMitarbeiterTermine = async () => {
+  // quiet = automatische Aktualisierung beim Zurückkehren in die App: kein Lade-Kreisel
+  // statt der Liste und keine Fehlermeldung - die zuletzt geladenen Einsätze bleiben sichtbar.
+  const fetchMitarbeiterTermine = async (quiet = false) => {
     if (!mitarbeiterId) return;
-    setMitarbeiterLoading(true);
-    setMitarbeiterError(null);
+    if (quiet && maLaedtRef.current) return; // es läuft bereits eine Abfrage
+    maLaedtRef.current = true;
+    if (!quiet) {
+      setMitarbeiterLoading(true);
+      setMitarbeiterError(null);
+    }
     try {
       const res = await fetchWithTimeout('/api/ma-termine', {
         method: 'POST',
         headers: maAuth(),
         body: JSON.stringify({})
-      });
+      }).catch((err) => { throw Object.assign(err, { netzwerk: true }); });
       if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -1051,12 +1091,18 @@ export default function App() {
         return dA - dB;
       });
       setMitarbeiterTermine(liste);
+      maLetzterAbrufRef.current = Date.now();
+      if (quiet) setMitarbeiterError(null); // Verbindung steht wieder -> alten Hinweis entfernen
     } catch (err: any) {
-      console.error('Fehler beim Laden der Termine:', err);
-      setMitarbeiterError('Termine konnten nicht geladen werden. Bitte erneut versuchen.');
-      reportClientError('ma-termine', err, {});
+      if (!quiet) {
+        console.error('Fehler beim Laden der Termine:', err);
+        setMitarbeiterError('Termine konnten nicht geladen werden. Bitte erneut versuchen.');
+      }
+      // Verbindungsaussetzer bei der automatischen Aktualisierung sind kein App-Fehler.
+      if (!(quiet && err && (err.netzwerk || err.name === 'AbortError'))) reportClientError('ma-termine', err, { quiet });
     } finally {
-      setMitarbeiterLoading(false);
+      maLaedtRef.current = false;
+      if (!quiet) setMitarbeiterLoading(false);
     }
   };
 
@@ -1106,6 +1152,29 @@ export default function App() {
   useEffect(() => {
     if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine();
   }, [mitarbeiterId, mitarbeiterName]);
+
+  // Beim Zurückkehren in die App (z. B. Tipp auf „Neuer Einsatz") Einsätze leise
+  // aktualisieren - gleiche Regeln wie in der Klienten-App (kein Polling, max. alle 45 s).
+  const maAbrufRef = useRef(fetchMitarbeiterTermine);
+  maAbrufRef.current = fetchMitarbeiterTermine;
+  useEffect(() => {
+    if (!mitarbeiterId) return;
+    let timer: number | undefined;
+    const beimZurueckkehren = () => {
+      if (document.visibilityState !== 'visible') return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (Date.now() - maLetzterAbrufRef.current > 45000) maAbrufRef.current(true);
+      }, 800);
+    };
+    document.addEventListener('visibilitychange', beimZurueckkehren);
+    window.addEventListener('focus', beimZurueckkehren);
+    return () => {
+      document.removeEventListener('visibilitychange', beimZurueckkehren);
+      window.removeEventListener('focus', beimZurueckkehren);
+      window.clearTimeout(timer);
+    };
+  }, [mitarbeiterId]);
 
   useEffect(() => {
       if (!mitarbeiterId) return;
@@ -1236,6 +1305,9 @@ export default function App() {
     const morgen = new Date(heute);
     morgen.setDate(morgen.getDate() + 1);
 
+    // Erstes Laden nach dem Öffnen (noch keine Einsätze im Speicher).
+    const ersteLadungMa = mitarbeiterLoading && mitarbeiterTermine.length === 0;
+
     const termineHeute = mitarbeiterTermine.filter(t => {
       const d = new Date(getValue(t, 'Uhrzeit'));
       return d >= heute && d < morgen;
@@ -1357,9 +1429,14 @@ export default function App() {
 
             {/* TAGESPLAN-VORSCHAU */}
             <p className="text-[11px] font-black tracking-wide text-[#0F6E56] mb-2">
-              HEUTE · {termineHeute.length === 0 ? 'Heute keine Einsätze' : termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}
+              HEUTE · {ersteLadungMa ? 'wird geladen …' : termineHeute.length === 0 ? 'Heute keine Einsätze' : termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}
             </p>
-            {termineHeute.length === 0 ? (
+            {ersteLadungMa ? (
+              /* Erstes Laden nach dem Öffnen: nicht kurz „keine Einsätze" anzeigen */
+              <div className="bg-white rounded-2xl p-5 text-gray-400 text-center flex items-center justify-center gap-2">
+                <RefreshCw size={16} className="animate-spin text-[#b5a48b]" /> Einsätze werden geladen …
+              </div>
+            ) : termineHeute.length === 0 ? (
               <div className="bg-white rounded-2xl p-5 text-gray-400 italic text-center">Heute keine Einsätze geplant.</div>
             ) : (
               <div className="space-y-3">
@@ -2050,6 +2127,16 @@ export default function App() {
       return new Date(zeitVal) < today;
   });
 
+  // Erstes Laden nach dem Öffnen: klarer Hinweis statt einer leer wirkenden Startseite
+  // (sonst stünde kurz „Keine Aufgaben aktuell." und ein leerer Name da).
+  const renderErsteLadung = () => (
+    <div className="flex flex-col items-center justify-center text-center py-24 animate-in fade-in" role="status" aria-live="polite">
+        <RefreshCw size={36} className="animate-spin text-[#b5a48b]" />
+        <p className="mt-5 text-lg font-black text-[#3A3A3A]">Ihre Daten werden geladen …</p>
+        <p className="mt-1 text-sm text-gray-400">Einen Moment bitte.</p>
+    </div>
+  );
+
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
         {patientPushStatus === 'idle' && (
@@ -2310,13 +2397,16 @@ export default function App() {
     <div className="min-h-screen bg-white pb-32 text-left select-none font-sans text-[#3A3A3A]" onMouseMove={handleDrag} onTouchMove={handleDrag} onMouseUp={() => isDragging.current = false} onTouchEnd={() => isDragging.current = false}>
       
       {errorMsg && (
-          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl relative flex items-center gap-3 animate-in slide-in-from-top shadow-lg">
+          // Schwebt unter dem Kopfbereich (vorher überdeckte die Meldung durch "relative" die
+          // Knöpfe Aktualisieren/Abmelden) und bietet direkt "Erneut versuchen" an.
+          <div className="fixed top-24 left-4 right-4 z-50 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top shadow-lg">
               <AlertTriangle size={24} className="shrink-0"/>
-              <div>
+              <div className="flex-1 pr-4">
                   <strong className="font-bold">Verbindungsproblem</strong>
                   <span className="block text-xs mt-1">{errorMsg}</span>
+                  <button onClick={() => fetchData(true)} className="mt-2 bg-white/80 text-red-700 rounded-full px-4 py-2 text-xs font-black uppercase active:scale-95 transition-all">Erneut versuchen</button>
               </div>
-              <button onClick={() => setErrorMsg(null)} className="absolute top-2 right-2"><X size={16}/></button>
+              <button onClick={() => setErrorMsg(null)} className="absolute top-2 right-2" aria-label="Hinweis schließen"><X size={16}/></button>
           </div>
       )}
 
@@ -2358,10 +2448,12 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto px-6 pt-6">
+        {!patientData && loading ? renderErsteLadung() : (<>
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'planer' && renderPlaner()}
         {activeTab === 'hochladen' && renderHochladen()}
         {activeTab === 'urlaub' && renderUrlaub()}
+        </>)}
       </main>
       
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'dashboard', icon: LayoutDashboard, label: 'Home' }, { id: 'planer', icon: CalendarDays, label: 'Planer' }, { id: 'hochladen', icon: Upload, label: 'Upload' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' } ].map((t) => (
