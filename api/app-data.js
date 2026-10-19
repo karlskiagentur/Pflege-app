@@ -1,5 +1,33 @@
 import { airtable, fetchAll, sendError, esc, readToken, handledPreflight, TABLES } from './_lib.js';
 
+// Datensparsamkeit: Diese Felder braucht die Klienten-App nicht (keine Anzeige, keine Logik).
+// Sie bleiben in Airtable unverändert, werden aber nicht mehr an das Endgerät übertragen.
+// Bewusst eine Sperrliste statt einer Freigabeliste: Jedes Feld, das die App liest, bleibt
+// garantiert erhalten - auch wenn die App später neue Felder anzeigt.
+// Neues internes Feld in Airtable angelegt? -> hier ergänzen.
+export const INTERNE_FELDER = {
+  patient: [
+    'Login_Code', 'Session_Token', 'Failed_Attempts', 'Locked_Until', // Zugang & Sperre
+    'Push_Subscription', 'invite_qr', 'invite_requested',              // Systemfelder
+    'Geo_Lat', 'Geo_Lng', 'Geo_Adresse', 'Zuletzt_aktiv',               // interne Auswertung
+  ],
+  besuch: [
+    'Notiz_Intern', 'Hervorhebung', 'Plan_Tag_Key',                     // interne Dienstplanung
+    'Pfleger', 'Pfleger_ID', 'Pfleger_Ersatz',                           // interne Personal-IDs (Namen bleiben)
+    'Abweichung_Min', 'Ist_Stunden_Monat', 'Dauer_Ist_alt_ungenutzt',   // Arbeitszeit-/Abrechnungsdaten
+    'Push_senden', 'Meldungen',                                         // Push-Steuerung, interne Meldungen
+  ],
+  dokument: ['Drive_Link', 'Push_Gesendet', 'Push_senden'],
+};
+
+// Kopie des Records ohne die genannten Felder (Original bleibt unverändert).
+export function ohneFelder(record, felder) {
+  if (!record || !record.fields) return record;
+  const fields = { ...record.fields };
+  for (const f of felder) delete fields[f];
+  return { ...record, fields };
+}
+
 export default async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'GET') {
@@ -20,16 +48,16 @@ export default async function handler(req, res) {
 
     // "Zuletzt aktiv" pflegen (gedrosselt): so sieht der Pflegedienst, ob/wann der
     // Klient die App nutzt. Nur schreiben, wenn > 10 Min her (spart Schreibzugriffe).
-    try {
-      const last = patient.fields && patient.fields.Zuletzt_aktiv;
-      const stale = !last || (Date.now() - new Date(last).getTime() > 10 * 60 * 1000);
-      if (stale) {
-        await airtable(`${TABLES.PATIENTEN}/${patient.id}`, {
+    // Läuft PARALLEL zu den Datenabfragen statt davor - das spart beim App-Start eine
+    // komplette Airtable-Runde. Fehler sind unkritisch und dürfen den Load nie stören.
+    const last = patient.fields && patient.fields.Zuletzt_aktiv;
+    const stale = !last || (Date.now() - new Date(last).getTime() > 10 * 60 * 1000);
+    const aktivitaet = stale
+      ? airtable(`${TABLES.PATIENTEN}/${patient.id}`, {
           method: 'PATCH',
           body: JSON.stringify({ fields: { Zuletzt_aktiv: new Date().toISOString() } }),
-        });
-      }
-    } catch (_) { /* Aktivitäts-Zeitstempel ist unkritisch, darf den Load nie stören */ }
+        }).catch(() => { /* unkritisch */ })
+      : Promise.resolve();
 
     const byPatient = `filterByFormula=${encodeURIComponent(`FIND('${esc(patient.id)}', ARRAYJOIN({PatientID_live}))`)}`;
     const [besuche, tasks, dokumente, kontakte] = await Promise.all([
@@ -39,10 +67,18 @@ export default async function handler(req, res) {
       // FIX: Kontakte NUR des eingeloggten Patienten (vorher: alle Kontakte aller Patienten).
       fetchAll(TABLES.KONTAKTE, byPatient),
     ]);
+    // Vor der Antwort abschließen: Serverless-Funktionen werden nach der Antwort eingefroren.
+    await aktivitaet;
 
-    // Format exakt wie der bisherige Aggregator get_full_app_data
+    // Format exakt wie der bisherige Aggregator get_full_app_data (nur ohne interne Felder)
     res.status(200).json({
-      data: { patienten_daten: patient, kontakte, besuche, tasks, dokumente },
+      data: {
+        patienten_daten: ohneFelder(patient, INTERNE_FELDER.patient),
+        kontakte,
+        besuche: besuche.map((b) => ohneFelder(b, INTERNE_FELDER.besuch)),
+        tasks,
+        dokumente: dokumente.map((d) => ohneFelder(d, INTERNE_FELDER.dokument)),
+      },
     });
   } catch (e) {
     sendError(res, e, 'api/app-data');
