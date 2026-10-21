@@ -127,14 +127,14 @@ export function berechneZeitnachweis(besuche, opt = {}) {
     proTag.get(t.datum).push(t);
   }
   const tage = [];
-  const summen = { einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0, einsaetze: 0, ohneIst: 0 };
+  const summen = { sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0, einsaetze: 0, ohneIst: 0 };
 
   for (const datum of [...proTag.keys()].sort()) {
     const liste = proTag.get(datum).sort((a, b) =>
       (a.start === null) - (b.start === null) || (a.start || 0) - (b.start || 0) ||
       (a.planEnde || 0) - (b.planEnde || 0) || String(a.id).localeCompare(String(b.id)));
     const zeilen = [];
-    const tag = { datum, zeilen, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0 };
+    const tag = { datum, zeilen, sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0 };
     let ende = null; // Ende des vorherigen Termins auf der Zeitachse (Minuten)
 
     for (const t of liste) {
@@ -157,24 +157,34 @@ export function berechneZeitnachweis(besuche, opt = {}) {
         }
       }
 
+      const istEnde = beginn !== null ? beginn + min : null;
       zeilen.push({
         art: 'einsatz',
         id: t.id,
         // Angezeigt wird das geplante Zeitfenster laut Dienstplan
         von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
         bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
-        min,
+        sollMin: t.planMin, // geplante Dauer laut Zeitfenster (null = unbekannt)
+        istMin: t.istMin,   // erfasste Dauer im 15-Minuten-Takt (null = nicht erfasst)
+        min,                // angerechnet: Ist, ohne Erfassung die Soll-Zeit
         quelle,
+        // Zeitraum laut Ist auf der Zeitachse (Beginn laut Plan bzw. nach dem vorherigen
+        // Einsatz + angerechnete Dauer) - weicht er vom Zeitfenster ab, zeigt der Zettel ihn an.
+        istVon: beginn !== null ? uhr(beginn) : '',
+        istBis: istEnde !== null ? uhr(istEnde) : '',
+        zeitAbweichend: beginn !== null && (beginn !== t.start || istEnde !== t.planEnde),
         klient: t.klient,
         taetigkeit: t.taetigkeit,
       });
       tag.einsatzMin += min;
+      tag.sollMin += t.planMin || 0;
       summen.einsaetze++;
       if (quelle !== 'ist') summen.ohneIst++;
-      if (beginn !== null) ende = beginn + min;
+      if (istEnde !== null) ende = istEnde;
     }
 
     tag.bezahltMin = tag.einsatzMin + tag.anfahrtMin;
+    summen.sollMin += tag.sollMin;
     summen.einsatzMin += tag.einsatzMin;
     summen.anfahrtMin += tag.anfahrtMin;
     summen.pauseMin += tag.pauseMin;

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
-import handler, { pdfText, erstellePdf } from '../api/stundenzettel.js';
+import handler, { pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS } from '../api/stundenzettel.js';
 import { berechneZeitnachweis, berlin } from '../api/_zeitkonto.js';
 
 process.env.STUNDENZETTEL_SECRET = 'test-secret-1234567890';
@@ -127,4 +127,34 @@ test('viele Einsätze -> mehrere Seiten, Kopf je Seite', async () => {
   const bytes = await erstellePdf({ maName: 'Anna Beispiel', maNr: 90099, monat: d0.slice(0, 7), nachweis, final: true });
   const pdf = await PDFDocument.load(bytes);
   assert.ok(pdf.getPageCount() >= 2, `Seiten: ${pdf.getPageCount()}`);
+});
+
+test('Spalten: Soll und Ist getrennt, Zeitraum laut Ist bei Abweichung, Klient ganz rechts', () => {
+  const d = tag(-40);
+  const k = (name) => ({ Patient_Name: [name] });
+  const nachweis = berechneZeitnachweis([
+    besuch(d, '08:00', '08:30', { ...k('Klient A'), Dauer_Ist: 3600 }), // länger als geplant
+    besuch(d, '08:45', '09:15', { ...k('Klient B'), Dauer_Ist: 1800 }), // wie geplant, aber verschoben
+    besuch(d, '09:45', '10:00', k('Klient C')),                          // ohne Ist-Erfassung
+    besuch(d, '11:00', '11:30', { ...k('Klient D'), Dauer_Ist: 0 }),     // nicht angetroffen
+  ], { jetzt: Date.now() });
+  const t = nachweis.tage[0];
+  assert.deepEqual(tagesZeilen(t).map((z) => [z.art, z.fenster, z.soll, z.ist, z.fett, z.istFenster, z.klient]), [
+    ['einsatz', '08:00 – 08:30', '0:30', '1:00', true, '08:00 – 09:00', 'Klient A'],
+    ['einsatz', '08:45 – 09:15', '0:30', '0:30', false, '09:00 – 09:30', 'Klient B'],
+    ['anfahrt', '09:30 – 09:45', '', '0:15', false, '', 'Kunden-Anfahrt'],
+    ['einsatz', '09:45 – 10:00', '0:15', '0:15*', false, '', 'Klient C'],
+    ['pause', '10:00 – 11:00', '', '(1:00)', false, '', 'Pause (unbezahlt)'],
+    ['einsatz', '11:00 – 11:30', '0:30', '0:00', true, '', 'Klient D'],
+  ]);
+  assert.equal(tagesSummeText(t), 'Tagessumme · davon Anfahrt 0:15 · Pause 1:00 unbezahlt');
+  assert.equal(t.bezahltMin, 120); // 1:00 + 0:30 + 0:15* + 0:00 + Anfahrt 0:15
+  // Reihenfolge der Spalten: Datum | Zeitfenster | Soll | Ist | Klient (ganz rechts)
+  assert.ok(SPALTEN.datum < SPALTEN.fenster && SPALTEN.fenster < SPALTEN.sollR
+    && SPALTEN.sollR < SPALTEN.istR && SPALTEN.istR < SPALTEN.klient);
+});
+
+test('Erläuterung und Hinweis sind in der PDF-Schrift vollständig darstellbar', () => {
+  for (const satz of [HINWEIS, ...ERLAEUTERUNG]) assert.equal(pdfText(satz), satz);
+  assert.ok(ERLAEUTERUNG.length >= 4);
 });

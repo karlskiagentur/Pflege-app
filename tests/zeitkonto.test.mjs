@@ -32,6 +32,7 @@ test('Karls Testtag: Anfahrt (30 Min) bezahlt, Pause (45 Min) unbezahlt -> 2:30 
   assert.equal(hm(r.summen.bezahltMin), '2:30');
   assert.equal(hm(r.summen.pauseMin), '0:45');
   assert.equal(r.summen.ohneIst, 3);
+  assert.equal(hm(r.summen.sollMin), '2:00');
   // Tagessumme (steht im PDF): bezahlt ohne Pause
   assert.equal(hm(r.tage[0].bezahltMin), '2:30');
   assert.equal(hm(r.tage[0].pauseMin), '0:45');
@@ -97,6 +98,11 @@ test('Termin dauert länger: Anfahrt wird nicht doppelt bezahlt, Folgetermin ver
     'einsatz:08:00-08:30=1:00', 'einsatz:08:45-09:15=0:30*', 'anfahrt:09:30-09:45=0:15', 'einsatz:09:45-10:00=0:15*',
   ]);
   assert.equal(hm(r.summen.bezahltMin), '2:00'); // = 08:00 bis 10:00 durchgehend
+  // Zeitraum laut Ist: länger (gleicher Beginn), verschoben, wie geplant
+  const e = r.tage[0].zeilen.filter((z) => z.art === 'einsatz');
+  assert.deepEqual(e.map((z) => [z.istVon, z.istBis, z.zeitAbweichend]), [
+    ['08:00', '09:00', true], ['09:00', '09:30', true], ['09:45', '10:00', false],
+  ]);
 });
 
 test('Termin kürzer als geplant: längere Lücke wird zur Pause, wenn > 30 Min', () => {
@@ -178,4 +184,21 @@ test('Leere Eingabe -> leerer Nachweis ohne Fehler', () => {
   const r = berechneZeitnachweis([], { jetzt: ZEIT });
   assert.deepEqual(r.tage, []);
   assert.equal(r.summen.bezahltMin, 0);
+});
+
+test('Soll und Ist je Einsatz getrennt; Soll-Summe nur über gezählte Einsätze', () => {
+  const r = berechneZeitnachweis([
+    b('2026-10-20', '08:00', '08:30', { Dauer_Ist: 60 * 60 }), // Ist 1:00 statt Soll 0:30
+    b('2026-10-20', '09:00', '09:45'),                         // ohne Ist -> Soll angerechnet
+    b('2026-10-20', '10:00', '10:45', { Dauer_Ist: 0 }),       // erfasst 0 (nicht angetroffen)
+    b('2026-10-20', '11:00', '12:00', { Status: 'Abgesagt' }),  // zählt nicht, auch nicht im Soll
+    b('2026-10-24', '08:00', '09:00'),                          // Zukunft, zählt nicht
+  ], { jetzt: ZEIT });
+  const e = r.tage[0].zeilen.filter((z) => z.art === 'einsatz');
+  assert.deepEqual(e.map((z) => [z.sollMin, z.istMin, z.min, z.quelle]), [
+    [30, 60, 60, 'ist'], [45, null, 45, 'plan'], [45, 0, 0, 'ist'],
+  ]);
+  assert.equal(hm(r.tage[0].sollMin), '2:00');
+  assert.equal(hm(r.summen.sollMin), '2:00');
+  assert.equal(hm(r.summen.einsatzMin), '1:45'); // 1:00 + 0:45 + 0:00
 });
