@@ -1,24 +1,18 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
+import { berechneZeitnachweis, hm } from './_zeitkonto.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
 // Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
+// Rechenregeln (nur Vergangenes, Ist/Plan, Kunden-Anfahrt, Pausen): api/_zeitkonto.js
 
 const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
 const DATEI_FELD = 'Datei';          // Anhang-Feld (uploadAttachment akzeptiert Feldnamen)
 
 const BASE = process.env.AIRTABLE_BASE_ID || 'appI0GYyx7yq85YLH';
 const AT_TOKEN = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY;
-
-// Sekunden -> "h:mm". Minutengenau, nie auf Stunden gerundet.
-// Der Zettel liest die abrechenbare Ist-Zeit aus dem Formelfeld Ist_Stunden_Monat
-// (= Dauer_Ist auf 15-min gerundet), identisch zur Arbeitsstunden-Seite im Interface.
-const hmm = (sec) => {
-  const m = Math.round((Number(sec) || 0) / 60);
-  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
-};
 
 // Single-Select "Monat_Auswahl" ("August 2026") -> "YYYY-MM". Unbekannter
 // Name wirft -> der äußere Catch setzt Status "Fehler" + meldet (ohne Inhalte).
@@ -30,28 +24,157 @@ const parseMonatAuswahl = (s) => {
   return `${m[2]}-${String(idx + 1).padStart(2, '0')}`;
 };
 
-const berlinHM = (iso) =>
-  new Date(iso).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' });
-
-// "YYYY-MM-DD" -> "DD.MM.YYYY"; Fallback: Datum aus Uhrzeit (Berlin).
-const datumText = (f) => {
-  const d = String(f.Datum || '');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`;
-  if (f.Uhrzeit) return new Date(f.Uhrzeit).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
-  return '-';
+// Die PDF-Standardschrift kennt nur den Windows-1252-Zeichensatz. Namen mit anderen
+// Zeichen (z. B. ł, ğ, ő) würden das Erstellen abbrechen -> auf den Grundbuchstaben
+// zurückführen; nicht Darstellbares wird zu "?". Ein Name darf den Zettel nie verhindern.
+const WIN1252_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
+const ERSATZ = { 'ł': 'l', 'Ł': 'L', 'đ': 'd', 'Đ': 'D', 'ı': 'i', 'ħ': 'h', 'Ħ': 'H', 'ŧ': 't', 'Ŧ': 'T' };
+const darstellbar = (ch) => {
+  const c = ch.codePointAt(0);
+  return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) || WIN1252_EXTRA.has(ch);
 };
-
-// Zeitfenster: Von-Bis (Select-Strings) > Uhrzeit + Dauer_Soll > nur Start.
-const zeitfenster = (f) => {
-  if (f.Von && f.Bis) return `${f.Von} – ${f.Bis}`;
-  if (f.Uhrzeit) {
-    const start = berlinHM(f.Uhrzeit);
-    const soll = Number(f.Dauer_Soll) || 0;
-    if (soll > 0) return `${start} – ${berlinHM(new Date(new Date(f.Uhrzeit).getTime() + soll * 1000).toISOString())}`;
-    return start;
+export function pdfText(s) {
+  let out = '';
+  for (const ch of String(s === undefined || s === null ? '' : s)) {
+    if (darstellbar(ch)) { out += ch; continue; }
+    if (/\s/.test(ch)) { out += ' '; continue; }
+    if (ERSATZ[ch]) { out += ERSATZ[ch]; continue; }
+    const basis = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    out += basis && [...basis].every(darstellbar) ? basis : '?';
   }
-  return '-';
-};
+  return out;
+}
+
+const datumDe = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+const uhrDe = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+/**
+ * Rendert den Stundenzettel (A4 hoch). Rein, ohne Netz - auch für Tests/Vorschau.
+ * @param {{maName: string, maNr: string|number, monat: string, nachweis: object, final: boolean}} d
+ */
+export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
+  const monatLabel = new Date(`${monat}-01T12:00:00Z`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const kursiv = await pdf.embedFont(StandardFonts.HelveticaOblique);
+  const grau = rgb(0.45, 0.45, 0.45);
+  const hellgrau = rgb(0.6, 0.6, 0.6);
+  const schwarz = rgb(0.2, 0.2, 0.2);
+  const orange = rgb(0.7, 0.33, 0.08);
+  const A4 = [595.28, 841.89];
+  const M = 50;
+  const COL = { datum: M, fenster: 122, zeitR: 258, klient: 276 };
+  const KLIENT_MAX = A4[0] - M - COL.klient;
+
+  const text = (page, s, x, y, size, f, color) => page.drawText(pdfText(s), { x, y, size, font: f, color });
+  const rechts = (page, s, xR, y, size, f, color) => {
+    const t = pdfText(s);
+    page.drawText(t, { x: xR - f.widthOfTextAtSize(t, size), y, size, font: f, color });
+  };
+  const gekuerzt = (s, f, size, max) => {
+    let t = pdfText(s);
+    if (f.widthOfTextAtSize(t, size) <= max) return t;
+    while (t.length > 1 && f.widthOfTextAtSize(`${t}…`, size) > max) t = t.slice(0, -1);
+    return `${t.trimEnd()}…`;
+  };
+
+  let page;
+  let y;
+  const neueSeite = () => {
+    page = pdf.addPage(A4);
+    y = A4[1] - M;
+    text(page, 'Wunschlos Pflege – Stundennachweis', M, y, 16, bold, schwarz);
+    y -= 22;
+    text(page, `${maName}${maNr ? ` · Nr. ${maNr}` : ''} · ${monatLabel}`, M, y, 11, font, grau);
+    y -= 16;
+    const stand = `${datumDe(nachweis.jetzt.datum)}, ${uhrDe(nachweis.jetzt.min)} Uhr`;
+    if (final) {
+      text(page, `Erstellt am ${stand}`, M, y, 9, font, hellgrau);
+    } else {
+      text(page, `VORLÄUFIG · Stand ${stand} · enthält nur bereits vergangene Termine`, M, y, 9, bold, orange);
+    }
+    y -= 24;
+    text(page, 'Datum', COL.datum, y, 10, bold, schwarz);
+    text(page, 'Zeitfenster', COL.fenster, y, 10, bold, schwarz);
+    rechts(page, 'Zeit (h:mm)', COL.zeitR, y, 10, bold, schwarz);
+    text(page, 'Klient / Art', COL.klient, y, 10, bold, schwarz);
+    y -= 6;
+    page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
+    y -= 15;
+  };
+  neueSeite();
+  const platz = (benoetigt) => { if (y - benoetigt < M) { neueSeite(); return true; } return false; };
+
+  for (const tag of nachweis.tage) {
+    let datumZeigen = true;
+    for (const z of tag.zeilen) {
+      if (platz(14)) datumZeigen = true;
+      if (datumZeigen) { text(page, datumDe(tag.datum), COL.datum, y, 10, font, schwarz); datumZeigen = false; }
+      const fenster = z.von && z.bis ? `${z.von} – ${z.bis}` : (z.von || '–');
+      if (z.art === 'einsatz') {
+        text(page, fenster, COL.fenster, y, 10, font, schwarz);
+        rechts(page, `${hm(z.min)}${z.quelle === 'ist' ? '' : '*'}`, COL.zeitR, y, 10, font, schwarz);
+        page.drawText(gekuerzt(z.klient || '–', font, 10, KLIENT_MAX), { x: COL.klient, y, size: 10, font, color: schwarz });
+      } else if (z.art === 'anfahrt') {
+        text(page, fenster, COL.fenster, y, 10, kursiv, grau);
+        rechts(page, hm(z.min), COL.zeitR, y, 10, kursiv, grau);
+        text(page, 'Kunden-Anfahrt', COL.klient, y, 10, kursiv, grau);
+      } else {
+        text(page, fenster, COL.fenster, y, 10, kursiv, hellgrau);
+        rechts(page, `(${hm(z.min)})`, COL.zeitR, y, 10, kursiv, hellgrau);
+        text(page, 'Pause (unbezahlt)', COL.klient, y, 10, kursiv, hellgrau);
+      }
+      y -= 14;
+    }
+    if (tag.zeilen.length > 1) {
+      platz(14);
+      rechts(page, hm(tag.bezahltMin), COL.zeitR, y, 9, bold, grau);
+      text(page, `Tagessumme${tag.pauseMin ? ` · Pause ${hm(tag.pauseMin)} unbezahlt` : ''}`, COL.klient, y, 9, bold, grau);
+      y -= 14;
+    }
+    y -= 4; // Abstand zwischen Tagen
+  }
+  if (nachweis.tage.length === 0) {
+    text(page, 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
+    y -= 16;
+  }
+
+  // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Pflegedienstleitung.
+  const s = nachweis.summen;
+  const mitUnterschrift = final && s.einsaetze > 0;
+  platz(mitUnterschrift ? 230 : 110);
+  y -= 4;
+  page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
+  y -= 18;
+  const summenZeile = (label, wert, f, size, color) => {
+    text(page, label, M, y, size, f, color);
+    rechts(page, `${wert} Std.`, COL.zeitR + 40, y, size, f, color);
+    y -= size + 6;
+  };
+  summenZeile('Einsätze', hm(s.einsatzMin), font, 10, schwarz);
+  summenZeile('Kunden-Anfahrt', hm(s.anfahrtMin), font, 10, schwarz);
+  summenZeile(final ? 'Monatssumme (bezahlt)' : 'Zwischensumme (bezahlt)', hm(s.bezahltMin), bold, 12, schwarz);
+  summenZeile('Pausen (unbezahlt, nicht enthalten)', hm(s.pauseMin), font, 9, grau);
+  if (s.ohneIst > 0) {
+    text(page, `* keine Ist-Zeit erfasst – geplante Zeit laut Zeitfenster angesetzt (${s.ohneIst} ${s.ohneIst === 1 ? 'Einsatz' : 'Einsätze'})`, M, y, 8, font, grau);
+    y -= 12;
+  }
+
+  if (mitUnterschrift) {
+    y -= 26;
+    const sigPdl = await pdf.embedPng(Buffer.from(UNTERSCHRIFT_PDL_B64, 'base64'));
+    const blockR = A4[0] - M;
+    const lineX0 = blockR - 200, lineX1 = blockR;
+    const sigW = 180, sigH = sigW * (600 / 1200);   // seitenverhältnis-treu (1200x600)
+    const imgX = lineX0 + (200 - sigW) / 2;
+    page.drawImage(sigPdl, { x: imgX, y: y - sigH, width: sigW, height: sigH });
+    const lineY = y - sigH - 4;
+    page.drawLine({ start: { x: lineX0, y: lineY }, end: { x: lineX1, y: lineY }, thickness: 0.8, color: schwarz });
+    text(page, 'Pflegedienstleitung', lineX0, lineY - 14, 9, font, grau);
+  }
+  return pdf.save();
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ status: 'error', message: 'Nur POST' }); return; }
@@ -69,7 +192,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1) Stundenzettel-Zeile: Mitarbeiter-Link + Monat (Date) -> "YYYY-MM"
+    // 1) Stundenzettel-Zeile: Mitarbeiter-Link + Monat -> "YYYY-MM"
     const zettel = await airtable(`${ZETTEL}/${recordId}`);
     const zf = zettel.fields || {};
     const maId = Array.isArray(zf.Mitarbeiter) ? zf.Mitarbeiter[0] : null;
@@ -80,102 +203,33 @@ export default async function handler(req, res) {
       throw new Error('Stundenzettel-Zeile unvollständig (Mitarbeiter oder Monat fehlt)');
     }
 
-    // 2) Personal-Stammdaten (nur Name + Nummer, mehr braucht das PDF nicht)
+    // 2) Personal-Stammdaten (nur Name + Nummer)
     const personal = await airtable(`${TABLES.PERSONAL}/${maId}`);
     const pf = personal.fields || {};
     const maName = pf.Name || 'Mitarbeiter';
     const maNr = pf.Anmelde_ID || pf.Personal_Nr || '';
 
-    // 3) Besuche des Monats mit erfasster Ist-Zeit dieses Pflegers.
-    //    Feldnamen (Monat, Dauer_Ist, Pfleger_ID) sind gegen das Live-Schema
-    //    geprüft; fetchAll behandelt die 100er-Pagination.
-    const formula = `AND({Monat} = '${esc(monat)}', {Dauer_Ist}, FIND('${esc(maId)}', ARRAYJOIN({Pfleger_ID})))`;
+    // 3) ALLE Termine des Monats dieses Mitarbeiters (auch ohne erfasste Ist-Zeit) -
+    //    welche zählen, entscheidet der Rechenkern (nur Vergangenes, nichts Abgesagtes).
+    const formula = `AND({Monat} = '${esc(monat)}', FIND('${esc(maId)}', ARRAYJOIN({Pfleger_ID})))`;
     const besuche = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(formula)}`);
+    const nachweis = berechneZeitnachweis(besuche, { jetzt: Date.now() });
 
-    // Sortierung: Datum aufsteigend, dann Von bzw. Uhrzeit ("HH:mm" sortiert lexikografisch korrekt)
-    const rows = besuche
-      .map((r) => r.fields || {})
-      .sort((a, b) => {
-        const ka = `${a.Datum || ''} ${a.Von || (a.Uhrzeit ? berlinHM(a.Uhrzeit) : '')}`;
-        const kb = `${b.Datum || ''} ${b.Von || (b.Uhrzeit ? berlinHM(b.Uhrzeit) : '')}`;
-        return ka.localeCompare(kb);
-      });
+    // Fertig ist der Zettel erst, wenn der Monat vorbei ist; vorher "vorläufig".
+    const final = nachweis.jetzt.datum.slice(0, 7) > monat;
+    const bytes = await erstellePdf({ maName, maNr, monat, nachweis, final });
+    // Die finale Fassung trägt "_final" im Namen: Zettel der Vorversion hießen auch mitten
+    // im Monat "Stundenzettel_YYYY-MM.pdf" und dürfen nicht als fertig gelten (der
+    // Monatsabschluss erkennt fertige Zettel am Dateinamen).
+    const dateiname = final
+      ? `Stundenzettel_${monat}_final.pdf`
+      : `Stundenzettel_${monat}_vorlaeufig_${nachweis.jetzt.datum}.pdf`;
 
-    // Monatssumme aus der abrechenbaren (15-min-gerundeten) Ist-Zeit je Einsatz.
-    // Ist_Stunden_Monat = Formelfeld (Dauer_Ist auf 15-min gerundet) -> Summe in 15-min-Schritten.
-    const totalSec = rows.reduce((s, f) => s + (Number(f.Ist_Stunden_Monat) || 0), 0);
-
-    // 4) PDF (A4) - KEINE Klientennamen, nur Datum/Zeitfenster/Ist-Zeit
-    const monatLabel = new Date(`${monat}-01T12:00:00Z`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
-    const pdf = await PDFDocument.create();
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
-    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-    const sigPdl = await pdf.embedPng(Buffer.from(UNTERSCHRIFT_PDL_B64, 'base64'));
-    const grau = rgb(0.45, 0.45, 0.45);
-    const schwarz = rgb(0.2, 0.2, 0.2);
-    const A4 = [595.28, 841.89];
-    const M = 50;                      // Seitenrand
-    const COL = { datum: M, zeit: 200, ist: 420 };
-
-    let page = pdf.addPage(A4);
-    let y = A4[1] - M;
-
-    const kopf = () => {
-      page.drawText('Wunschlos Pflege – Stundennachweis', { x: M, y, size: 16, font: bold, color: schwarz });
-      y -= 22;
-      page.drawText(`${maName}${maNr ? ` · Nr. ${maNr}` : ''} · ${monatLabel}`, { x: M, y, size: 11, font, color: grau });
-      y -= 28;
-      page.drawText('Datum', { x: COL.datum, y, size: 10, font: bold, color: schwarz });
-      page.drawText('Zeitfenster', { x: COL.zeit, y, size: 10, font: bold, color: schwarz });
-      page.drawText('Ist-Zeit (h:mm)', { x: COL.ist, y, size: 10, font: bold, color: schwarz });
-      y -= 6;
-      page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
-      y -= 16;
-    };
-    kopf();
-
-    for (const f of rows) {
-      if (y < M + 40) { page = pdf.addPage(A4); y = A4[1] - M; kopf(); }
-      page.drawText(datumText(f), { x: COL.datum, y, size: 10, font, color: schwarz });
-      page.drawText(zeitfenster(f), { x: COL.zeit, y, size: 10, font, color: schwarz });
-      page.drawText(hmm(f.Ist_Stunden_Monat), { x: COL.ist, y, size: 10, font, color: schwarz });
-      y -= 16;
-    }
-    if (rows.length === 0) {
-      page.drawText('Keine Einsätze mit erfasster Ist-Zeit in diesem Monat.', { x: M, y, size: 10, font, color: grau });
-      y -= 16;
-    }
-
-    // Fußblock: Summe + EINE (rechte) Unterschrift der Pflegedienstleitung,
-    // vor-eingedruckt. Signatur sitzt über der Linie; braucht ~180pt.
-    if (y < M + 180) { page = pdf.addPage(A4); y = A4[1] - M; }
-    y -= 6;
-    page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
-    y -= 20;
-    page.drawText(`Monatssumme: ${hmm(totalSec)} Std.`, { x: M, y, size: 12, font: bold, color: schwarz });
-    y -= 40;
-    // Nur EIN Unterschriftsblock (Pflegedienstleitung), rechtsbündig am Seitenrand.
-    // Der Mitarbeiter ist bereits im Kopf benannt - keine linke Zeile mehr.
-    const blockR = A4[0] - M;                       // rechter Rand des Blocks
-    const lineX0 = blockR - 200, lineX1 = blockR;
-    const sigW = 180, sigH = sigW * (600 / 1200);   // seitenverhältnis-treu (1200x600)
-    const imgX = lineX0 + (200 - sigW) / 2;         // über der Linie zentriert
-    page.drawImage(sigPdl, { x: imgX, y: y - sigH, width: sigW, height: sigH });
-    const lineY = y - sigH - 4;
-    page.drawLine({ start: { x: lineX0, y: lineY }, end: { x: lineX1, y: lineY }, thickness: 0.8, color: schwarz });
-    page.drawText('Pflegedienstleitung', { x: lineX0, y: lineY - 14, size: 9, font, color: grau });
-
-    const bytes = await pdf.save();
-
-    // 5) PDF anhängen (uploadAttachment hängt an, bestehende Anhänge bleiben)
+    // 4) PDF anhängen (uploadAttachment hängt an, frühere Fassungen bleiben erhalten)
     const up = await fetch(`https://content.airtable.com/v0/${BASE}/${recordId}/${DATEI_FELD}/uploadAttachment`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${AT_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contentType: 'application/pdf',
-        filename: `Stundenzettel_${monat}.pdf`,
-        file: Buffer.from(bytes).toString('base64'),
-      }),
+      body: JSON.stringify({ contentType: 'application/pdf', filename: dateiname, file: Buffer.from(bytes).toString('base64') }),
     });
     if (!up.ok) {
       const e = new Error('Upload fehlgeschlagen');
@@ -184,12 +238,12 @@ export default async function handler(req, res) {
       throw e;
     }
 
-    // 6) Ergebnis in die Zeile schreiben: Summe + Titel + Status.
-    //    Monat (Date) auf den 1. des gewählten Monats setzen, falls leer oder
-    //    abweichend -> hält Sortierung/Titel konsistent, wenn nur Monat_Auswahl gesetzt war.
+    // 5) Ergebnis in die Zeile schreiben: Summe (bezahlt) + Titel + Status.
+    //    Monat (Date) auf den 1. des gewählten Monats setzen, falls leer oder abweichend.
+    const summe = hm(nachweis.summen.bezahltMin);
     const fields = {
-      Titel: `${maName} · ${monat}`,
-      Summe_Stunden: hmm(totalSec),
+      Titel: `${maName} · ${monat}${final ? '' : ' (vorläufig)'}`,
+      Summe_Stunden: summe,
       Status: 'Erstellt',
     };
     if (String(zf.Monat || '').slice(0, 10) !== `${monat}-01`) fields.Monat = `${monat}-01`;
@@ -198,7 +252,10 @@ export default async function handler(req, res) {
       body: JSON.stringify({ fields, typecast: true }),
     });
 
-    res.status(200).json({ status: 'success', einsaetze: rows.length, summe: hmm(totalSec) });
+    res.status(200).json({
+      status: 'success', einsaetze: nachweis.summen.einsaetze, summe, vorlaeufig: !final,
+      ohneIst: nachweis.summen.ohneIst, ausgelassen: nachweis.ausgelassen,
+    });
   } catch (e) {
     // Status -> Fehler (best effort), dann Standard-Fehlerpfad (Alarm-Mail,
     // keine Namen/Secrets in der Antwort oder im Fehlertext).

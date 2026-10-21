@@ -22,6 +22,7 @@ export function airtableAttrappe(beantworte) {
     const u = new URL(String(url));
     const eintrag = {
       url: u,
+      host: u.hostname,
       methode: (opts.method || 'GET').toUpperCase(),
       formel: u.searchParams.get('filterByFormula') || '',
       tabelle: u.pathname.split('/')[3] || '',
