@@ -237,6 +237,20 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
+// Geplante Dauer in Minuten (Vorbelegung der Ist-Zeit). Das Zeitfenster Von–Bis ist führend:
+// Dauer_Soll wird per Automation nachgeführt und kann nach einer Änderung des Zeitfensters
+// veraltet sein (z. B. 1:30 statt 0:15) - sonst würde eine falsche Zeit vorgeschlagen.
+const getPlanMinuten = (item: any): number => {
+  const zuMin = (s: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '').trim());
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const von = zuMin(getValue(item, 'Von'));
+  const bis = zuMin(getValue(item, 'Bis'));
+  if (von !== null && bis !== null && bis > von) return bis - von;
+  return Math.round((Number(getValue(item, 'Dauer_Soll') || getValue(item, 'Dauer')) || 0) / 60);
+};
+
 // Endzeit eines Termins, tolerant gegen Altdaten. Priorität:
 // 1. Feld "Bis" (String "HH:mm") 2. Uhrzeit + Dauer_Soll (Sekunden)
 // 3. Feld "Ende" 4. leer -> Karte zeigt nur die Startzeit.
@@ -1829,7 +1843,7 @@ export default function App() {
                     <div className="border-t border-gray-100 px-6 py-4">
                       {(() => {
                         const istMin = Math.round((Number(getValue(t, 'Dauer_Ist')) || 0) / 60);
-                        const planMin = Math.round((Number(getValue(t, 'Dauer_Soll') || getValue(t, 'Dauer')) || 0) / 60);
+                        const planMin = getPlanMinuten(t);
                         // Gesperrt, sobald bestätigt (Dauer_Ist ODER Erledigt_Am gesetzt) - Korrekturen nur übers Büro.
                         const locked = istMin > 0 || !!getValue(t, 'Erledigt_Am');
                         if (locked) {
