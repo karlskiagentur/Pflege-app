@@ -1,4 +1,4 @@
-import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendError, esc, cronErlaubt, TABLES } from './_lib.js';
 
 // Vercel-Cron (täglich): am 1. eines Monats wird der VORMONAT abgeschlossen. Erst dann liegen
 // alle Termine des Monats in der Vergangenheit (Regel: auf dem Stundenzettel zählt nur
@@ -21,12 +21,8 @@ function berlinHeute() {
 }
 
 export default async function handler(req, res) {
-  // Auth: Vercel-Cron schickt "Authorization: Bearer <CRON_SECRET>" (wenn CRON_SECRET
-  // gesetzt ist). Fehlt das Secret oder passt es nicht -> ablehnen (fail closed).
-  const secret = process.env.CRON_SECRET;
-  if (!secret || String(req.headers.authorization || '') !== `Bearer ${secret}`) {
-    res.status(401).json({ status: 'error' }); return;
-  }
+  // Auth: nur Vercel-Cron mit CRON_SECRET (fehlt das Secret in Vercel -> Alarm), siehe _lib.js.
+  if (!cronErlaubt(req, res, 'api/stundenzettel-monatslauf')) return;
   try {
     const { y, m, d } = berlinHeute();
     const force = req.query && req.query.force === '1'; // manueller Testlauf an einem anderen Tag

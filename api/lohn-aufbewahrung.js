@@ -1,16 +1,12 @@
-import { sendError, reportError } from './_lib.js';
+import { sendError, reportError, cronErlaubt } from './_lib.js';
 import { lohnAufbewahrung } from './_lohn.js';
 
 // Vercel-Cron (täglich, morgens): Aufbewahrung der Lohnabrechnungen - Erinnerung 7 Tage
 // vor der Löschung, Löschung der Datei nach 3 Monaten, verpasste Upload-Pushs nachholen.
 // Regeln und Ablauf: api/_lohn.js.
 export default async function handler(req, res) {
-  // Auth: Vercel-Cron schickt "Authorization: Bearer <CRON_SECRET>". Fehlt das Secret oder
-  // passt es nicht -> ablehnen (fail closed), wie api/stundenzettel-monatslauf.
-  const secret = process.env.CRON_SECRET;
-  if (!secret || String(req.headers.authorization || '') !== `Bearer ${secret}`) {
-    res.status(401).json({ status: 'error' }); return;
-  }
+  // Auth: nur Vercel-Cron mit CRON_SECRET (fehlt das Secret in Vercel -> Alarm), siehe _lib.js.
+  if (!cronErlaubt(req, res, 'api/lohn-aufbewahrung')) return;
   try {
     const ergebnis = await lohnAufbewahrung(Date.now());
     if (ergebnis.fehler.length > 0) {
