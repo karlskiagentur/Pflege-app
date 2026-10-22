@@ -206,12 +206,23 @@ export default async function handler(req, res) {
       // Immer zusätzlich die direkt Betroffenen benachrichtigen (unabhängig von Zielgruppe)
       const betroffen = firstLink(f.Betroffener_Patient);
       if (betroffen) await addPatientSub(subs, betroffen);
-      for (const id of [].concat(f.Ausfall_Mitarbeiter || [], f.Ersatz_Mitarbeiter || [])) {
-        await addPersonalSub(subs, id);
+      // Ausfall/Ersatz: Push an die verknüpften Mitarbeiter; ihr Name im Text kommt aus dem
+      // Datensatz (Kurzform "Vorname N."), die alten Textfelder sind nur noch Rückfall.
+      const namen = { ausfall: [], ersatz: [] };
+      for (const [art, ids] of [['ausfall', f.Ausfall_Mitarbeiter], ['ersatz', f.Ersatz_Mitarbeiter]]) {
+        for (const id of [].concat(ids || [])) {
+          const p = await loadRec(TABLES.PERSONAL, id);
+          addSub(subs, p);
+          const name = p && p.fields && p.fields.Name;
+          if (name) namen[art].push(String(name).trim());
+        }
       }
 
       if (txt(f.Typ) === 'Ausfall') {
-        message = `Mitarbeiter/in ${txt(f.Mitarbeiter_Ausfall)} fällt aus, deshalb kommt Mitarbeiter/in ${txt(f.Mitarbeiter_Ersatz)}`;
+        const ausfall = namen.ausfall.join(', ') || txt(f.Mitarbeiter_Ausfall).trim();
+        const ersatz = namen.ersatz.join(', ') || txt(f.Mitarbeiter_Ersatz).trim();
+        const wer = ausfall ? `Mitarbeiter/in ${ausfall}` : 'Ein/e Mitarbeiter/in';
+        message = ersatz ? `${wer} fällt aus, deshalb kommt Mitarbeiter/in ${ersatz}` : `${wer} fällt aus.`;
       } else {
         message = txt(f.Nachricht);
       }

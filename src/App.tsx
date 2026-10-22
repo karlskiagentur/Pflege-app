@@ -1140,6 +1140,16 @@ export default function App() {
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
       }
       const data = await res.json();
+      // Anzeigename aktuell halten (z. B. nach Kürzung auf "Vorname N." im Büro).
+      const kopfName = res.headers.get('X-Mitarbeiter-Name');
+      if (kopfName) {
+        let neuerName = '';
+        try { neuerName = decodeURIComponent(kopfName).trim(); } catch { neuerName = ''; }
+        if (neuerName && neuerName !== mitarbeiterName) {
+          try { localStorage.setItem('active_mitarbeiter_name', neuerName); } catch { /* Speicher gesperrt: nur Anzeige */ }
+          setMitarbeiterName(neuerName);
+        }
+      }
       const liste = Array.isArray(data) ? data : [];
       liste.sort((a: any, b: any) => {
         const dA = new Date(getValue(a, 'Uhrzeit')).getTime() || 0;
