@@ -1,6 +1,7 @@
 {
   "crons": [
-    { "path": "/api/stundenzettel-monatslauf", "schedule": "0 3 * * *" }
+    { "path": "/api/stundenzettel-monatslauf", "schedule": "0 3 * * *" },
+    { "path": "/api/lohn-aufbewahrung", "schedule": "0 7 * * *" }
   ],
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/" }

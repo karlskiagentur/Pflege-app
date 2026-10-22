@@ -237,6 +237,15 @@ const formatTime = (raw: any) => {
       return val;
   } catch { return "--:--"; }
 };
+// Hinweis zur Lohnabrechnung: Dateien stehen 3 Monate bereit und werden danach automatisch
+// gelöscht; ab 7 Tagen vorher (bald) wird der Hinweis hervorgehoben.
+const lohnHinweis = (l: any): string => {
+  if (!l || !l.loeschungAm) return '';
+  if (typeof l.tageBisLoeschung === 'number' && l.tageBisLoeschung <= 0) return 'Wird in Kürze automatisch gelöscht – bitte jetzt herunterladen';
+  if (l.bald) return `Wird am ${l.loeschungAm} gelöscht – bitte jetzt herunterladen`;
+  return `Bereitgestellt am ${l.bereitgestellt} · wird am ${l.loeschungAm} automatisch gelöscht`;
+};
+
 // Geplante Dauer in Minuten (Vorbelegung der Ist-Zeit). Das Zeitfenster Von–Bis ist führend:
 // Dauer_Soll wird per Automation nachgeführt und kann nach einer Änderung des Zeitfensters
 // veraltet sein (z. B. 1:30 statt 0:15) - sonst würde eine falsche Zeit vorgeschlagen.
@@ -805,19 +814,31 @@ export default function App() {
     setIsSending(false);
   };
 
+  // Datei-Adresse einer Lohnabrechnung: über ihre ID (der Server prüft, dass sie dem
+  // eingeloggten Mitarbeiter gehört und noch verfügbar ist) - die Airtable-URL bleibt intern.
+  const lohnDateiUrl = (lohn: any, ansicht: boolean): string => {
+    const authToken = mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || '';
+    if (lohn && lohn.lohnId) {
+      return `/api/lohn-download?lohnId=${encodeURIComponent(lohn.lohnId)}&nr=${encodeURIComponent(String(lohn.nr || 0))}${ansicht ? '&ansicht=1' : ''}&token=${encodeURIComponent(authToken)}`;
+    }
+    const fileName = (lohn && lohn.name) || `Lohnabrechnung_${(lohn && lohn.zeitraum) || ''}.pdf`;
+    return `/api/lohn-download?url=${encodeURIComponent((lohn && lohn.url) || '')}&name=${encodeURIComponent(fileName)}&token=${encodeURIComponent(authToken)}`;
+  };
+
   const handleLohnDownload = async (lohn: any) => {
     setLohnDownloading(true);
     try {
-        const fileName = lohn.name || `Lohnabrechnung_${lohn.zeitraum || ''}.pdf`;
-        const authToken = mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token') || '';
-        const proxyUrl = `/api/lohn-download?url=${encodeURIComponent(lohn.url)}&name=${encodeURIComponent(fileName)}&token=${encodeURIComponent(authToken)}`;
-        const response = await fetchWithTimeout(proxyUrl, {}, 30000);
+        const endung = (/\.[A-Za-z0-9]{2,4}$/.exec(String(lohn.name || '')) || ['.pdf'])[0];
+        const fileName = lohn.lohnId
+          ? `${String(lohn.titel || 'Lohnabrechnung').replace(/\s+/g, '_')}${lohn.anzahl > 1 ? `_${Number(lohn.nr || 0) + 1}` : ''}${endung}`
+          : (lohn.name || `Lohnabrechnung_${lohn.zeitraum || ''}.pdf`);
+        const response = await fetchWithTimeout(lohnDateiUrl(lohn, false), {}, 30000);
         if (!response.ok) {
             const text = await response.text().catch(() => '');
-            throw new Error(`Server antwortete mit ${response.status}: ${text}`);
+            throw new Error(response.status === 410 ? 'Diese Lohnabrechnung ist nicht mehr verfügbar.' : `Server antwortete mit ${response.status}: ${text}`);
         }
         const blob = await response.blob();
-        const file = new File([blob], fileName, { type: 'application/pdf' });
+        const file = new File([blob], fileName, { type: blob.type || 'application/pdf' });
 
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             await navigator.share({ files: [file], title: 'Lohnabrechnung' });
@@ -1677,25 +1698,33 @@ export default function App() {
 
             {lohnBereich === 'abrechnung' && (lohnLoading ? (
               <div className="flex justify-center py-10"><RefreshCw size={24} className="animate-spin text-[#b5a48b]" /></div>
-            ) : lohnListe.length === 0 ? (
-              <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnung verfügbar.</div>
             ) : (
-              lohnListe.map((l) => (
-                <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-bold text-gray-700">{l.monat}</p>
-                    {l.summe && <p className="text-xs text-gray-400 font-bold">{l.summe} Std.</p>}
-                  </div>
-                  <div className="flex gap-2">
-                    {l.lohnabrechnung && (
-                      <button onClick={() => { setSelectedLohn({ ...l.lohnabrechnung, titel: `Lohnabrechnung ${l.monat}` }); setActiveModal('lohn-choice'); }}
-                        className="flex-1 bg-[#b5a48b] text-white py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
-                        <Download size={14}/> Lohnabrechnung
-                      </button>
-                    )}
-                  </div>
+              <>
+                <div className="bg-[#F9F7F4] rounded-[1.5rem] px-4 py-3 mb-3 text-[11px] text-gray-500 leading-relaxed">
+                  Lohnabrechnungen stehen 3 Monate zum Herunterladen bereit und werden danach automatisch gelöscht. Bitte rechtzeitig auf dem Handy speichern.
                 </div>
-              ))
+                {lohnListe.length === 0 ? (
+                  <div className="bg-white rounded-[2rem] p-5 text-gray-400 italic text-center">Noch keine Lohnabrechnung verfügbar.</div>
+                ) : (
+                  lohnListe.map((l) => {
+                    const dateien: any[] = Array.isArray(l.dateien) ? l.dateien : [];
+                    return (
+                      <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
+                        <p className="text-sm font-bold text-gray-700">{l.titel}</p>
+                        <p className={`text-[11px] mt-0.5 mb-3 ${l.bald ? 'text-orange-600 font-bold' : 'text-gray-400'}`}>{lohnHinweis(l)}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {dateien.map((d) => (
+                            <button key={d.nr} onClick={() => { setSelectedLohn({ lohnId: l.id, nr: d.nr, name: d.name, anzahl: dateien.length, titel: l.titel }); setActiveModal('lohn-choice'); }}
+                              className="flex-1 bg-[#b5a48b] text-white py-3 rounded-xl font-black uppercase text-[11px] flex items-center justify-center gap-1.5 active:scale-95 transition-all">
+                              <Download size={14}/> {dateien.length > 1 ? `Datei ${d.nr + 1}` : 'Lohnabrechnung'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </>
             ))}
 
             {lohnBereich === 'zeit' && (
@@ -2033,7 +2062,7 @@ export default function App() {
             <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
             <h3 className="text-xl font-black mb-6 pr-10 flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {selectedLohn.titel || formatMonat(selectedLohn.zeitraum)}</h3>
             <div className="space-y-4">
-              <button onClick={() => { window.open(selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
+              <button onClick={() => { window.open(selectedLohn.lohnId ? lohnDateiUrl(selectedLohn, true) : selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
                 <Eye size={18}/> Vorschau
               </button>
               <button onClick={() => handleLohnDownload(selectedLohn)} disabled={lohnDownloading} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-all">

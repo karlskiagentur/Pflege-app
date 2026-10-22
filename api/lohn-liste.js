@@ -1,15 +1,10 @@
-import { airtable, sendError, requireMitarbeiter, esc, handledPreflight } from './_lib.js';
+import { fetchAll, sendError, requireMitarbeiter, esc, handledPreflight } from './_lib.js';
+import { LOHN, ARCHIVIERT, lohnFuerApp } from './_lohn.js';
 
-const ZETTEL = 'tblmlg9ZNrtwRxmXx'; // Tabelle "Stundenzettel" (ID statt Name -> umbenenn-fest)
-
-// Single-Select "Monat_Auswahl" ("August 2026") -> "YYYY-MM"; sonst leer.
-const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-const ymAusAuswahl = (s) => {
-  const m = /^([A-Za-zÄÖÜäöüß]+)\s+(\d{4})$/.exec(String(s || '').trim());
-  const i = m ? MONATE.indexOf(m[1]) : -1;
-  return i < 0 ? '' : `${m[2]}-${String(i + 1).padStart(2, '0')}`;
-};
-
+// Lohnabrechnungen des eingeloggten Mitarbeiters (Tabelle "Lohnabrechnung", vom Büro
+// über die Interface-Seite "Mitarbeiter (Lohnabrechnung)" hochgeladen).
+// Ausgeliefert werden nur Monat, Dateinamen und Fristen - keine Datei-URLs; die Datei
+// selbst gibt es nur über /api/lohn-download (mit erneuter Eigentümer-Prüfung).
 export default async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') {
@@ -20,33 +15,21 @@ export default async function handler(req, res) {
     const ma = await requireMitarbeiter(req, res);
     if (!ma) return;
 
-    // Filter über das Lookup-Feld Mitarbeiter_ID (== Personal-Record-ID),
-    // die ID kommt aus dem geprüften Token, nicht aus dem Body.
-    const formula = encodeURIComponent(`{Mitarbeiter_ID} = '${esc(ma.id)}'`);
-    const data = await airtable(`${ZETTEL}?filterByFormula=${formula}`);
+    // Filter über das Lookup-Feld Mitarbeiter_ID (== Personal-Record-ID). Die ID kommt aus
+    // dem geprüften Token, nicht aus dem Request (IDOR-Schutz).
+    const formel = `AND(FIND('${esc(ma.id)}', ARRAYJOIN({Mitarbeiter_ID})), {Status} != '${ARCHIVIERT}')`;
+    const records = await fetchAll(LOHN, `filterByFormula=${encodeURIComponent(formel)}`);
 
-    const liste = (data.records || [])
-      .map((r) => {
-        const f = r.fields || {};
-        // Monat bevorzugt aus Monat_Auswahl ("August 2026"), sonst aus dem Datumsfeld Monat -> "YYYY-MM".
-        const ym = ymAusAuswahl(f.Monat_Auswahl) ||
-          (/^\d{4}-\d{2}/.test(String(f.Monat || '')) ? String(f.Monat).slice(0, 7) : '');
-        const la = (f.Lohnabrechnung || [])[0] || null;  // Lohnabrechnung (Büro-Upload)
-        return {
-          id: r.id,
-          ym,
-          monat: /^\d{4}-\d{2}$/.test(ym) ? `${ym.slice(5, 7)}.${ym.slice(0, 4)}` : ym,
-          summe: f.Summe_Stunden || '',
-          lohnabrechnung: la ? { name: la.filename, url: la.url } : null,
-        };
-      })
-      // In der App erscheint eine Abrechnung NUR, wenn das Büro die Lohnabrechnung
-      // manuell hochgeladen hat. Der Stundenzettel (Feld Datei) wird nie gelesen/
-      // ausgeliefert - er bleibt PC/Airtable-intern.
-      .filter((z) => z.lohnabrechnung);
+    const jetzt = Date.now();
+    const liste = records
+      // zweite, exakte Prüfung am Link selbst (FIND ist nur der Vorfilter)
+      .filter((r) => Array.isArray(r.fields && r.fields.Mitarbeiter) && r.fields.Mitarbeiter.includes(ma.id))
+      .map((r) => lohnFuerApp(r, jetzt))
+      .filter(Boolean)
+      .sort((a, b) => b.sortierung.localeCompare(a.sortierung))
+      .map(({ sortierung, ...rest }) => rest);
 
-    liste.sort((a, b) => b.ym.localeCompare(a.ym));
-    res.status(200).json(liste.map(({ ym, ...rest }) => rest));
+    res.status(200).json(liste);
   } catch (e) {
     sendError(res, e, 'api/lohn-liste');
   }
