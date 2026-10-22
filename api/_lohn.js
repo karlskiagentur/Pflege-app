@@ -1,7 +1,8 @@
 // Lohnabrechnungen der Mitarbeiter (Tabelle "Lohnabrechnung").
 // Das Büro lädt je Mitarbeiter und Monat eine Datei hoch (Interface-Seite
 // "Mitarbeiter (Lohnabrechnung)"); sie erscheint sofort in der Mitarbeiter-App unter
-// "Lohn / Zeit", der Mitarbeiter bekommt einen Push.
+// "Lohn / Zeit", der Mitarbeiter bekommt einen Push. Den Monat wählt das Büro im
+// Auswahlfeld "Monat" ("Oktober 2026"); ältere Einträge nutzen noch das Datum "Zeitraum".
 //
 // Aufbewahrung (Vorgabe Pflegedienst, 22.10.2026):
 // 1. Die Datei steht 3 Monate ab dem Hochladen (Berliner Kalendertag) bereit.
@@ -77,6 +78,17 @@ export function monatName(zeitraum) {
   return m ? `${MONATE[Number(m[2]) - 1]} ${m[1]}` : '';
 }
 
+// Monat eines Eintrags: bevorzugt aus der Auswahl "Monat" ("Oktober 2026"), sonst aus dem
+// Datum "Zeitraum" (ältere Einträge). Ergebnis { name: 'Oktober 2026', ym: '2026-10' } oder
+// leere Werte, wenn keins von beiden passt.
+export function monatDesEintrags(f) {
+  const a = /^(\S+)\s+(\d{4})$/.exec(text(f && f.Monat).trim());
+  const i = a ? MONATE.indexOf(a[1]) : -1;
+  if (i >= 0) return { name: `${MONATE[i]} ${a[2]}`, ym: `${a[2]}-${String(i + 1).padStart(2, '0')}` };
+  const d = /^(\d{4})-(\d{2})/.exec(String((f && f.Zeitraum) || ''));
+  return d ? { name: monatName(f.Zeitraum), ym: `${d[1]}-${d[2]}` } : { name: '', ym: '' };
+}
+
 // --- Fachlicher Zustand eines Eintrags --------------------------------------------
 
 export function lohnZustand(rec, jetzt) {
@@ -96,11 +108,12 @@ export function lohnZustand(rec, jetzt) {
   const erinnert = erinnertAm && geplant && erinnertAm >= plusTage(geplant, -ERINNERUNG_TAGE) ? erinnertAm : null;
   const gepushtAm = f.Push_Gesendet_Am ? berlinDatum(f.Push_Gesendet_Am) : null;
   const loeschung = geplant && erinnert ? spaeter(geplant, plusTage(erinnert, ERINNERUNG_TAGE)) : geplant;
+  const monat = monatDesEintrags(f);
   return {
     id: rec && rec.id,
     mitarbeiterId: ersterLink(f.Mitarbeiter),
-    zeitraum: String(f.Zeitraum || ''),
-    monat: monatName(f.Zeitraum),
+    monatYm: monat.ym,
+    monat: monat.name,
     dateien,
     archiviert,
     hochgeladen,
@@ -127,7 +140,7 @@ export function lohnFuerApp(rec, jetzt) {
     loeschungAm: z.loeschung ? datumDe(z.loeschung) : '',
     tageBisLoeschung: tage,
     bald: tage !== null && tage <= ERINNERUNG_TAGE,
-    sortierung: `${z.zeitraum || z.hochgeladen || ''}|${z.hochgeladen || ''}`,
+    sortierung: `${z.monatYm || (z.hochgeladen || '').slice(0, 7)}|${z.hochgeladen || ''}`,
   };
 }
 
@@ -180,7 +193,7 @@ export async function lohnUploadPush(recordId, jetzt) {
  * Fehler einzelner Einträge brechen den Lauf nicht ab, sie werden gesammelt.
  */
 export async function lohnAufbewahrung(jetzt) {
-  const felder = ['Mitarbeiter', 'Zeitraum', 'Datei', 'Status', 'Hochgeladen_Am', 'Push_Gesendet_Am', 'Erinnerung_Gesendet_Am'];
+  const felder = ['Mitarbeiter', 'Monat', 'Zeitraum', 'Datei', 'Status', 'Hochgeladen_Am', 'Push_Gesendet_Am', 'Erinnerung_Gesendet_Am'];
   const records = await fetchAll(LOHN, felder.map((n) => `fields%5B%5D=${encodeURIComponent(n)}`).join('&'));
   const jetztIso = new Date(jetzt).toISOString();
   const ergebnis = { geprueft: 0, erinnert: 0, geloescht: 0, nachgeholt: 0, zustellung: [], fehler: [] };

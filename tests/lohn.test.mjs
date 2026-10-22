@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import webpush from 'web-push';
 import { airtableAttrappe, antwort, antwortObjekt, anfrage } from './_hilfen.mjs';
 import {
-  berlinDatum, plusMonate, plusTage, tageZwischen, monatName, lohnZustand, lohnFuerApp, lohnAufbewahrung,
+  berlinDatum, plusMonate, plusTage, tageZwischen, monatName, monatDesEintrags, lohnZustand, lohnFuerApp, lohnAufbewahrung,
 } from '../api/_lohn.js';
 import listeHandler from '../api/lohn-liste.js';
 import downloadHandler from '../api/lohn-download.js';
@@ -56,6 +56,17 @@ test('Datum: Berliner Kalendertag, Monatsende, Schaltjahr, Zeitumstellung', () =
   assert.equal(monatName('2026-10-31'), 'Oktober 2026');
   assert.equal(monatName('2026-03-01'), 'März 2026');
   assert.equal(monatName(''), '');
+});
+
+test('Monat: Auswahl „Oktober 2026“ hat Vorrang, Datum „Zeitraum“ ist der Rückfall', () => {
+  assert.deepEqual(monatDesEintrags({ Monat: 'März 2027' }), { name: 'März 2027', ym: '2027-03' });
+  assert.deepEqual(monatDesEintrags({ Monat: { name: 'Oktober 2026' }, Zeitraum: '2026-09-30' }), { name: 'Oktober 2026', ym: '2026-10' });
+  assert.deepEqual(monatDesEintrags({ Zeitraum: '2026-09-30' }), { name: 'September 2026', ym: '2026-09' });
+  assert.deepEqual(monatDesEintrags({ Monat: 'Unsinn', Zeitraum: '' }), { name: '', ym: '' });
+  assert.deepEqual(monatDesEintrags({}), { name: '', ym: '' });
+  const e = lohnFuerApp(lohn('recLohnTest000001', { Zeitraum: undefined, Monat: 'September 2026' }), '2026-10-23T10:00:00Z');
+  assert.equal(e.titel, 'Lohnabrechnung September 2026');
+  assert.equal(e.monat, 'September 2026');
 });
 
 test('Löschtermin: 3 Monate ab Hochladen, nie früher als 7 Tage nach der Erinnerung', () => {
@@ -113,6 +124,7 @@ test('lohn-liste: nur eigene, sichtbare Einträge, neueste zuerst, Filter aus de
         lohn('recLohnTest000001'),
         lohn('recLohnTest000003', { Mitarbeiter: [MA2] }), // fremder Eintrag trotz Vorfilter
         lohn('recLohnTest000004', { Datei: [] }),          // Datei bereits gelöscht
+        lohn('recLohnTest000006', { Zeitraum: undefined, Monat: 'November 2026' }), // Monat per Auswahl
       ] });
     }
     return antwort(404, {});
@@ -120,7 +132,8 @@ test('lohn-liste: nur eigene, sichtbare Einträge, neueste zuerst, Filter aus de
   const res = antwortObjekt();
   await listeHandler(anfrage({ method: 'POST', token: TOKEN }), res);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.map((l) => l.id), ['recLohnTest000001', 'recLohnTest000002']);
+  assert.deepEqual(res.body.map((l) => l.id), ['recLohnTest000006', 'recLohnTest000001', 'recLohnTest000002']);
+  assert.equal(res.body[0].titel, 'Lohnabrechnung November 2026');
   const formel = p.aufrufe.find((a) => a.tabelle === LOHN).formel;
   assert.ok(formel.includes(`FIND('${MA}', ARRAYJOIN({Mitarbeiter_ID}))`));
   assert.ok(formel.includes(`{Status} != 'Archiviert'`));
@@ -341,6 +354,16 @@ test('Tageslauf: Monatsende - Upload am 30.11. wird am 28.02. gelöscht, Erinner
   laufSzenario([rec]);
   assert.equal((await lohnAufbewahrung('2027-02-21T07:30:00Z')).erinnert, 1);
   assert.match(pushes[0].body, /28\.02\.2027/);
+});
+
+test('Tageslauf: Monat aus der Auswahl erscheint im Push (Feld wird mit abgefragt)', async () => {
+  pushes.length = 0;
+  const rec = lohn('recLohnAuf0000015', { Zeitraum: undefined, Monat: 'Dezember 2026', Hochgeladen_Am: '2027-01-14T10:00:00Z' });
+  const { p } = laufSzenario([rec]);
+  assert.equal((await lohnAufbewahrung('2027-01-15T07:30:00Z')).nachgeholt, 1);
+  assert.match(pushes[0].body, /Neue Lohnabrechnung für Dezember 2026/);
+  const abfrage = p.aufrufe.find((a) => a.tabelle === LOHN && a.methode === 'GET');
+  assert.ok(abfrage.url.searchParams.getAll('fields[]').includes('Monat'));
 });
 
 test('Tageslauf: Datei nach der Erinnerung ersetzt - neuer Push, eigene Erinnerung, keine Löschung ohne Vorwarnung', async () => {
