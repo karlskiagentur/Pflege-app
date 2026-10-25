@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 import { berechneZeitnachweis, hm } from './_zeitkonto.js';
+import { pdfText } from './_pdftext.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
@@ -24,26 +25,9 @@ const parseMonatAuswahl = (s) => {
   return `${m[2]}-${String(idx + 1).padStart(2, '0')}`;
 };
 
-// Die PDF-Standardschrift kennt nur den Windows-1252-Zeichensatz. Namen mit anderen
-// Zeichen (z. B. ł, ğ, ő) würden das Erstellen abbrechen -> auf den Grundbuchstaben
-// zurückführen; nicht Darstellbares wird zu "?". Ein Name darf den Zettel nie verhindern.
-const WIN1252_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
-const ERSATZ = { 'ł': 'l', 'Ł': 'L', 'đ': 'd', 'Đ': 'D', 'ı': 'i', 'ħ': 'h', 'Ħ': 'H', 'ŧ': 't', 'Ŧ': 'T' };
-const darstellbar = (ch) => {
-  const c = ch.codePointAt(0);
-  return (c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff) || WIN1252_EXTRA.has(ch);
-};
-export function pdfText(s) {
-  let out = '';
-  for (const ch of String(s === undefined || s === null ? '' : s)) {
-    if (darstellbar(ch)) { out += ch; continue; }
-    if (/\s/.test(ch)) { out += ' '; continue; }
-    if (ERSATZ[ch]) { out += ERSATZ[ch]; continue; }
-    const basis = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    out += basis && [...basis].every(darstellbar) ? basis : '?';
-  }
-  return out;
-}
+// Text für die PDF-Standardschrift (Windows-1252): gemeinsamer Helfer in _pdftext.js, auch vom
+// Dienstplan genutzt. Re-Export, damit bestehende Importe aus diesem Modul unverändert funktionieren.
+export { pdfText };
 
 const datumDe = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
 const uhrDe = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
