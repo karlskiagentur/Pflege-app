@@ -177,6 +177,28 @@ export function sendError(res, e, source = 'api') {
   res.status(500).json({ status: 'error', message: 'Interner Fehler. Bitte später erneut versuchen.' });
 }
 
+// --- Cron-Schutz ------------------------------------------------------------
+// Vercel-Cron schickt "Authorization: Bearer <CRON_SECRET>". Falscher oder fehlender
+// Header -> 401 (fail closed). Fehlt CRON_SECRET in Vercel ganz, scheitert JEDER geplante
+// Lauf - das wird gemeldet (höchstens einmal je Funktionsinstanz), statt still zu bleiben.
+let cronSecretFehltGemeldet = false;
+export function cronErlaubt(req, res, source) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    if (!cronSecretFehltGemeldet) {
+      cronSecretFehltGemeldet = true;
+      reportError(source, 'CRON_SECRET fehlt in Vercel (Settings > Environment Variables) - geplante Läufe werden abgewiesen');
+    }
+    res.status(500).json({ status: 'error' });
+    return false;
+  }
+  if (String((req.headers && req.headers.authorization) || '') !== `Bearer ${secret}`) {
+    res.status(401).json({ status: 'error' });
+    return false;
+  }
+  return true;
+}
+
 // --- Auth-Helfer ------------------------------------------------------------
 function bearer(req) {
   const h = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';

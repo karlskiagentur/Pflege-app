@@ -1,5 +1,6 @@
 import webpush from 'web-push';
-import { airtable, fetchAll, sendInfoCopy, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendInfoCopy, reportError, TABLES } from './_lib.js';
+import { lohnUploadPush } from './_lohn.js';
 
 // Gleiche VAPID/web-push-Konfiguration wie api/send-push (gleiche Env-Variablen)
 const VAPID_PUBLIC_KEY =
@@ -99,6 +100,13 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Lohnabrechnung hochgeladen -> Push an den Mitarbeiter (eigene Regeln in api/_lohn.js:
+    // nur einmal je Eintrag, nur frische Uploads, nur an den zugeordneten Mitarbeiter).
+    if (type === 'lohnabrechnung') {
+      res.status(200).json(await lohnUploadPush(recordId, Date.now()));
+      return;
+    }
+
     const subs = new Set();
     let message = '';
     let istMitteilung = false;
@@ -198,12 +206,23 @@ export default async function handler(req, res) {
       // Immer zusätzlich die direkt Betroffenen benachrichtigen (unabhängig von Zielgruppe)
       const betroffen = firstLink(f.Betroffener_Patient);
       if (betroffen) await addPatientSub(subs, betroffen);
-      for (const id of [].concat(f.Ausfall_Mitarbeiter || [], f.Ersatz_Mitarbeiter || [])) {
-        await addPersonalSub(subs, id);
+      // Ausfall/Ersatz: Push an die verknüpften Mitarbeiter; ihr Name im Text kommt aus dem
+      // Datensatz (Kurzform "Vorname N."), die alten Textfelder sind nur noch Rückfall.
+      const namen = { ausfall: [], ersatz: [] };
+      for (const [art, ids] of [['ausfall', f.Ausfall_Mitarbeiter], ['ersatz', f.Ersatz_Mitarbeiter]]) {
+        for (const id of [].concat(ids || [])) {
+          const p = await loadRec(TABLES.PERSONAL, id);
+          addSub(subs, p);
+          const name = p && p.fields && p.fields.Name;
+          if (name) namen[art].push(String(name).trim());
+        }
       }
 
       if (txt(f.Typ) === 'Ausfall') {
-        message = `Mitarbeiter/in ${txt(f.Mitarbeiter_Ausfall)} fällt aus, deshalb kommt Mitarbeiter/in ${txt(f.Mitarbeiter_Ersatz)}`;
+        const ausfall = namen.ausfall.join(', ') || txt(f.Mitarbeiter_Ausfall).trim();
+        const ersatz = namen.ersatz.join(', ') || txt(f.Mitarbeiter_Ersatz).trim();
+        const wer = ausfall ? `Mitarbeiter/in ${ausfall}` : 'Ein/e Mitarbeiter/in';
+        message = ersatz ? `${wer} fällt aus, deshalb kommt Mitarbeiter/in ${ersatz}` : `${wer} fällt aus.`;
       } else {
         message = txt(f.Nachricht);
       }
@@ -249,6 +268,7 @@ export default async function handler(req, res) {
   } catch (e) {
     // Nur echte technische Fehler landen hier (Airtable nicht erreichbar, Env fehlt, ...)
     console.error('push-event Fehler:', { type, recordId, message: String((e && e.message) || e) });
+    reportError('api/push-event', (e && e.message) || e, { type });
     res.status(500).json({ status: 'error', message: String((e && e.message) || e) });
   }
 }

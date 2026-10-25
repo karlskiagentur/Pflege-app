@@ -41,6 +41,9 @@ export default async function handler(req, res) {
     if (!records || records.length === 0) {
       records = await fetchAll(TABLES.BESUCHE, alleFormel);
     }
+    // Aktueller Anzeigename (z. B. nach Kürzung auf "Vorname N." im Büro) - die App
+    // übernimmt ihn, ohne dass sich der Mitarbeiter neu anmelden muss.
+    res.setHeader('X-Mitarbeiter-Name', encodeURIComponent(String((ma.fields && ma.fields.Name) || '')));
     // Rohes Record-Array wie zuvor mitarbeiter_termine (App sortiert selbst)
     res.status(200).json(records);
   } catch (e) {

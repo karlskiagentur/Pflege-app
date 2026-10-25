@@ -56,6 +56,7 @@ export function antwortObjekt() {
     headers: {},
     status(code) { this.statusCode = code; return this; },
     json(b) { this.body = b; return this; },
+    send(b) { this.body = b; return this; },
     setHeader(k, v) { this.headers[k] = v; },
     end() { return this; },
   };
