@@ -1,14 +1,16 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { airtable, fetchAll, reportError, TABLES } from './_lib.js';
 import {
-  PERSONAL_FELDER as PF, BESUCHE_FELDER, wochenBereich, dienstplanFormel, wochenplan,
-  erstelleDienstplanPdf, dateiname,
+  PERSONAL_FELDER as PF, BESUCHE_FELDER, wochenBereich, wocheZuDatum, datumGueltig, dienstplanFormel,
+  wochenplan, erstelleDienstplanPdf, dateiname,
 } from './_dienstplan.js';
 
 // Wochendienstplan eines Mitarbeiters als PDF - für den Druck im Büro.
 //
-// Aufruf über die Schaltfläche „Dienstplan drucken" (Tabelle Personal, Airtable-Interface):
-//   GET /api/dienstplan-pdf?ma=<Personal-Record-ID>&t=<Dienstplan_Schlüssel>[&woche=1]
+// Aufruf über die Schaltfläche „Dienstplan drucken" im Airtable-Interface:
+//   GET /api/dienstplan-pdf?ma=<Personal-Record-ID>&t=<Dienstplan_Schlüssel>[&datum=YYYY-MM-DD | &woche=1]
+// Ohne datum/woche: laufende Woche. datum = die Woche, in der dieses Datum liegt (Schaltfläche
+// in der Dienstplan-Zeile eines Einsatzes -> Woche dieses Einsatzes). woche=1 = Folgewoche.
 // Ohne gespeicherten Schlüssel schickt die Schaltfläche "&einrichten=1": Der Server erzeugt
 // dann einen zufälligen Schlüssel (192 Bit), speichert ihn am Mitarbeiter und bittet um einen
 // zweiten Klick. Der Schlüssel wird dabei NIE ausgeliefert - wer nur die Record-ID kennt,
@@ -63,7 +65,9 @@ export default async function handler(req, res) {
   const ma = param(req, 'ma');
   const schluessel = param(req, 't');
   const woche = param(req, 'woche') || '0';
-  if (!ID_MUSTER.test(ma) || (schluessel && !SCHLUESSEL_MUSTER.test(schluessel)) || !/^[01]$/.test(woche)) {
+  const datum = param(req, 'datum');
+  if (!ID_MUSTER.test(ma) || (schluessel && !SCHLUESSEL_MUSTER.test(schluessel)) || !/^[01]$/.test(woche)
+    || (datum && !datumGueltig(datum))) {
     hinweisSeite(res, 400, 'Link ungültig', 'Bitte den Dienstplan über die Schaltfläche „Dienstplan drucken“ im Airtable-Interface öffnen.');
     return;
   }
@@ -105,7 +109,7 @@ export default async function handler(req, res) {
 
     // 3) Woche und Einsätze genau zum Zeitpunkt des Klicks (nichts zwischengespeichert)
     const jetzt = Date.now();
-    const bereich = wochenBereich(jetzt, Number(woche));
+    const bereich = datum ? wocheZuDatum(datum) : wochenBereich(jetzt, Number(woche));
     const query = `filterByFormula=${encodeURIComponent(dienstplanFormel(rec.id, bereich))}&`
       + BESUCHE_FELDER.map((n) => `fields%5B%5D=${encodeURIComponent(n)}`).join('&');
     const besuche = await fetchAll(TABLES.BESUCHE, query);

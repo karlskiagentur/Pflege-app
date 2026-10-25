@@ -7,8 +7,9 @@ import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
 import handler from '../api/dienstplan-pdf.js';
 import {
   wochenBereich, dienstplanFormel, wochenplan, erstelleDienstplanPdf, dateiname, PERSONAL_FELDER as PF,
-  BESUCHE_FELDER, DRUCK_SKRIPT,
+  BESUCHE_FELDER, DRUCK_SKRIPT, datumGueltig, wocheZuDatum, DATUM_MAX_TAGE,
 } from '../api/_dienstplan.js';
+import { ohneDruckLinks, istDruckFeld } from '../api/_lib.js';
 
 const PERSONAL = 'tbl3pMfhOLYPsQ5jF';
 const BESUCHE = 'tblXJOSz4LaJCG10M';
@@ -295,4 +296,73 @@ test('Endpoint: Airtable-Fehler -> Hinweisseite ohne Daten, Alarm; Überlast -> 
   res = antwortObjekt();
   await ruhig(() => handler(anfrage({ ma: MA, t: SCHLUESSEL }), res));
   assert.equal(res.statusCode, 503);
+});
+
+// ---------------------------------------------------------------- Woche zu einem Datum (Dienstplan-Zeile)
+const isoIn = (tage) => new Date(Date.now() + tage * 86400000).toISOString().slice(0, 10);
+
+test('Datum: nur echte Kalendertage im erlaubten Abstand', () => {
+  const jetzt = Date.parse('2026-10-25T11:00:00Z');
+  assert.equal(datumGueltig('2026-11-05', jetzt), true);
+  assert.equal(datumGueltig('2026-02-28', jetzt), true);
+  assert.equal(datumGueltig('2026-02-30', jetzt), false);
+  assert.equal(datumGueltig('2026-1-5', jetzt), false);
+  assert.equal(datumGueltig('heute', jetzt), false);
+  assert.equal(datumGueltig('', jetzt), false);
+  assert.equal(datumGueltig('2020-01-01', jetzt), false); // zu weit weg
+  assert.ok(DATUM_MAX_TAGE >= 366);
+  const w = wocheZuDatum('2026-11-05');
+  assert.equal(w.montag, '2026-11-02');
+  assert.equal(w.sonntag, '2026-11-08');
+  assert.equal(w.kw, 45);
+});
+
+test('Endpoint: datum -> Woche dieses Datums', async () => {
+  const datum = isoIn(10);
+  const log = szenario({ personal: aktiv({ [PF.SCHLUESSEL]: SCHLUESSEL }) });
+  const res = antwortObjekt();
+  await handler(anfrage({ ma: MA, t: SCHLUESSEL, datum }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(log.besucheAbfragen[0].formel, dienstplanFormel(MA, wocheZuDatum(datum)));
+  assert.equal(res.headers['Content-Disposition'], `inline; filename="${dateiname('Anna B.', wocheZuDatum(datum))}"`);
+});
+
+test('Endpoint: ungültiges Datum -> 400 ohne Datenbankzugriff; Einrichten mit Datum klappt', async () => {
+  for (const datum of ['2026-02-30', 'morgen', '2020-01-01', isoIn(DATUM_MAX_TAGE + 5)]) {
+    const log = szenario({ personal: aktiv({ [PF.SCHLUESSEL]: SCHLUESSEL }) });
+    const res = antwortObjekt();
+    await handler(anfrage({ ma: MA, t: SCHLUESSEL, datum }), res);
+    assert.equal(res.statusCode, 400, datum);
+    assert.equal(log.personalAbfragen.length, 0);
+  }
+  const log = szenario({ personal: aktiv() });
+  const res = antwortObjekt();
+  await handler(anfrage({ ma: MA, einrichten: '1', datum: isoIn(3) }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(log.patches.length, 1);
+});
+
+// ---------------------------------------------------------------- Druck-Links nie an Apps
+test('Druck-Links: Felder mit Schlüssel oder Link werden entfernt, alles andere bleibt', () => {
+  const link = `https://pflege-app.example/api/dienstplan-pdf?ma=${MA}&t=${SCHLUESSEL}&datum=2026-10-27`;
+  const rec = {
+    id: 'recBesuchTest0001', createdTime: '2026-10-01T00:00:00.000Z',
+    fields: {
+      'Tätigkeit': 'Grundpflege', Patient_Name: ['Erika Musterfrau'], Pfleger_Name: ['Anna B.'],
+      Pfleger_Druck_Link: [link], Dienstplan_Druck_Link: link,
+      'Dienstplan drucken': { label: 'Wochenplan (PDF)', url: link },
+      'Dienstplan_Schlüssel (from Pfleger)': [SCHLUESSEL],
+      'Umbenannt_irgendwas': [link],
+      Notiz_Patient: 'Bitte klingeln',
+    },
+  };
+  const ohne = ohneDruckLinks(rec);
+  assert.deepEqual(Object.keys(ohne.fields).sort(), ['Notiz_Patient', 'Patient_Name', 'Pfleger_Name', 'Tätigkeit']);
+  assert.equal(JSON.stringify(ohne).includes(SCHLUESSEL), false);
+  assert.equal(ohne.id, rec.id);
+  assert.ok('Pfleger_Druck_Link' in rec.fields, 'Original darf nicht verändert werden');
+  for (const name of ['Tätigkeit', 'Uhrzeit', 'Pfleger_Name', 'Adresse_Klient', 'Notiz_Patient', 'Status', 'Push_senden', 'Dauer_Ist']) {
+    assert.equal(istDruckFeld(name, 'x'), false, name);
+  }
+  assert.equal(ohneDruckLinks(null), null);
 });

@@ -96,3 +96,14 @@ test('nur POST erlaubt', async () => {
   await handler(anfrage({ method: 'GET', token: TOKEN }), res);
   assert.equal(res.statusCode, 405);
 });
+
+test('Druck-Links des Büros (Schlüssel) gehen nie an die App', async () => {
+  const link = 'https://pflege-app.example/api/dienstplan-pdf?ma=recPflTest0000001&t=AbCdEfGhIjKlMnOpQrStUvWxYz012_-9&datum=2026-10-20';
+  const MIT_LINK = { id: 'recBesTest0000003', fields: { Datum: '2026-10-20', Pfleger_ID: [MA_ID], Pfleger_Druck_Link: [link], Dienstplan_Druck_Link: link, 'Dienstplan drucken': { label: 'Wochenplan (PDF)', url: link } } };
+  attrappe({ fenster: () => antwort(200, { records: [MIT_LINK] }) });
+  const res = antwortObjekt();
+  await handler(anfrage({ method: 'POST', token: TOKEN }), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, [{ id: 'recBesTest0000003', fields: { Datum: '2026-10-20', Pfleger_ID: [MA_ID] } }]);
+  assert.equal(JSON.stringify(res.body).includes('dienstplan-pdf'), false);
+});

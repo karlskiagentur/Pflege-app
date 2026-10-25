@@ -191,3 +191,23 @@ test('nur GET erlaubt', async () => {
   await handler(anfrage({ method: 'POST', token: TOKEN }), res);
   assert.equal(res.statusCode, 405);
 });
+
+test('Druck-Links des Büros (Schlüssel der Pflegekraft) gehen nie an Klienten', async () => {
+  const link = 'https://pflege-app.example/api/dienstplan-pdf?ma=recPflTest0000001&t=AbCdEfGhIjKlMnOpQrStUvWxYz012_-9&datum=2026-10-20';
+  const mitLink = { ...BESUCH, fields: { ...BESUCH.fields, Pfleger_Druck_Link: [link], Dienstplan_Druck_Link: link, 'Dienstplan drucken': { label: 'Wochenplan (PDF)', url: link }, 'Neuer Name ohne Sperrliste': [link] } };
+  airtableAttrappe(async (a) => {
+    if (a.tabelle === T.PATIENTEN && a.methode === 'GET') return antwort(200, { records: a.formel.includes(TOKEN) ? [patient(new Date().toISOString())] : [] });
+    if (a.tabelle === T.PATIENTEN) return antwort(200, { id: PID });
+    if (a.tabelle === T.BESUCHE) return antwort(200, { records: [mitLink] });
+    return antwort(200, { records: [] });
+  });
+  const res = antwortObjekt();
+  await handler(anfrage({ token: TOKEN }), res);
+  assert.equal(res.statusCode, 200);
+  const b = res.body.data.besuche[0].fields;
+  for (const f of ['Pfleger_Druck_Link', 'Dienstplan_Druck_Link', 'Dienstplan drucken', 'Neuer Name ohne Sperrliste']) {
+    assert.equal(f in b, false, `${f} darf nicht an den Klienten gehen`);
+  }
+  assert.equal(JSON.stringify(res.body).includes('dienstplan-pdf'), false);
+  assert.equal(b['Tätigkeit'], 'Grundpflege');
+});
