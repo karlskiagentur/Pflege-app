@@ -1,4 +1,4 @@
-import { fetchAll, sendError, reportError, requireMitarbeiter, esc, handledPreflight, TABLES } from './_lib.js';
+import { fetchAll, sendError, reportError, requireMitarbeiter, esc, handledPreflight, ohneDruckLinks, TABLES } from './_lib.js';
 
 // Zeitfenster: Die Mitarbeiter-App zeigt nur heutige und künftige Einsätze sowie im
 // Zeitnachweis den aktuellen Monat und den Vormonat. Ältere Einsätze werden daher nicht
@@ -44,8 +44,9 @@ export default async function handler(req, res) {
     // Aktueller Anzeigename (z. B. nach Kürzung auf "Vorname N." im Büro) - die App
     // übernimmt ihn, ohne dass sich der Mitarbeiter neu anmelden muss.
     res.setHeader('X-Mitarbeiter-Name', encodeURIComponent(String((ma.fields && ma.fields.Name) || '')));
-    // Rohes Record-Array wie zuvor mitarbeiter_termine (App sortiert selbst)
-    res.status(200).json(records);
+    // Rohes Record-Array wie zuvor mitarbeiter_termine (App sortiert selbst) - ohne die
+    // Druck-Links des Büros (enthalten Schlüssel, siehe ohneDruckLinks).
+    res.status(200).json(records.map(ohneDruckLinks));
   } catch (e) {
     sendError(res, e, 'api/ma-termine');
   }

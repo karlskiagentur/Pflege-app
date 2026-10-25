@@ -1,4 +1,4 @@
-import { airtable, fetchAll, sendError, esc, readToken, handledPreflight, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendError, esc, readToken, handledPreflight, ohneDruckLinks, TABLES } from './_lib.js';
 
 // Datensparsamkeit: Diese Felder braucht die Klienten-App nicht (keine Anzeige, keine Logik).
 // Sie bleiben in Airtable unverändert, werden aber nicht mehr an das Endgerät übertragen.
@@ -16,6 +16,7 @@ export const INTERNE_FELDER = {
     'Pfleger', 'Pfleger_ID', 'Pfleger_Ersatz',                           // interne Personal-IDs (Namen bleiben)
     'Abweichung_Min', 'Ist_Stunden_Monat', 'Dauer_Ist_alt_ungenutzt',   // Arbeitszeit-/Abrechnungsdaten
     'Push_senden', 'Meldungen',                                         // Push-Steuerung, interne Meldungen
+    'Pfleger_Druck_Link', 'Dienstplan_Druck_Link', 'Dienstplan drucken', // Druck-Links des Büros (Schlüssel!)
   ],
   dokument: ['Drive_Link', 'Push_Gesendet', 'Push_senden'],
 };
@@ -75,7 +76,8 @@ export default async function handler(req, res) {
       data: {
         patienten_daten: ohneFelder(patient, INTERNE_FELDER.patient),
         kontakte,
-        besuche: besuche.map((b) => ohneFelder(b, INTERNE_FELDER.besuch)),
+        // Sperrliste + Schutznetz für Druck-Links (auch unter anderem Feldnamen)
+        besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, INTERNE_FELDER.besuch))),
         tasks,
         dokumente: dokumente.map((d) => ohneFelder(d, INTERNE_FELDER.dokument)),
       },

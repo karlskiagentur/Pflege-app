@@ -55,6 +55,26 @@ export function wochenBereich(jetzt, woche = 0) {
   return { montag, sonntag: tage[6], tage, kw: Math.floor(tagImJahr / 7) + 1, jahr };
 }
 
+// Erlaubter Abstand eines Datums (Parameter "datum") zu heute: ein gutes Jahr in beide Richtungen.
+export const DATUM_MAX_TAGE = 400;
+
+/**
+ * true, wenn `iso` ein echtes Kalenderdatum YYYY-MM-DD ist (kein 30.02.) und höchstens
+ * DATUM_MAX_TAGE Tage von `jetzt` entfernt liegt.
+ */
+export function datumGueltig(iso, jetzt = Date.now()) {
+  const s = String(iso || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T12:00:00Z`);
+  if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== s) return false;
+  return Math.abs(t - new Date(jetzt).getTime()) <= DATUM_MAX_TAGE * TAG_MS;
+}
+
+/** Woche (Mo–So) zu einem Kalenderdatum YYYY-MM-DD. */
+export function wocheZuDatum(iso) {
+  return wochenBereich(Date.parse(`${iso}T12:00:00Z`), 0);
+}
+
 /**
  * Airtable-Formel: Einsätze des Mitarbeiters rund um die Woche (2 Tage Puffer je Seite; die
  * genaue Zuordnung zum Tag macht wochenplan() in Berliner Zeit). Auswahl über Pfleger_ID wie

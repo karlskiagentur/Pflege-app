@@ -263,6 +263,32 @@ export async function requireMitarbeiter(req, res) {
   return rec;
 }
 
+// --- Druck-Links des Dienstplans ----------------------------------------------
+// Felder mit dem Druck-Link (/api/dienstplan-pdf?...&t=<Schlüssel>) oder dem Schlüssel selbst
+// sind nur für das Büro-Interface bestimmt. Sie dürfen NIE an eine App gehen - sonst könnte
+// z. B. ein Klient über einen Einsatz den Wochenplan der Pflegekraft mit den Daten anderer
+// Klienten abrufen. Entfernt werden Felder mit passendem Namen (auch Airtable-Lookups wie
+// "… (from Pfleger)") UND jedes Feld, dessen Wert einen Druck-Link enthält.
+const DRUCK_FELD_NAME = /dienstplan[ _-]?(link|drucken|schl(ü|ue)ssel)|druck[ _-]?(link|schl(ü|ue)ssel)/i;
+const enthaeltDruckLink = (v) => {
+  if (typeof v === 'string') return v.includes('/api/dienstplan-pdf');
+  if (Array.isArray(v)) return v.some(enthaeltDruckLink);
+  if (v && typeof v === 'object') return Object.values(v).some(enthaeltDruckLink);
+  return false;
+};
+export function istDruckFeld(name, wert) {
+  return DRUCK_FELD_NAME.test(String(name)) || enthaeltDruckLink(wert);
+}
+// Kopie des Records ohne Druck-Felder (Original bleibt unverändert).
+export function ohneDruckLinks(record) {
+  if (!record || !record.fields) return record;
+  const fields = {};
+  for (const [name, wert] of Object.entries(record.fields)) {
+    if (!istDruckFeld(name, wert)) fields[name] = wert;
+  }
+  return { ...record, fields };
+}
+
 // Zugriffsschutz der Einsatzkarte: gemeinsamer Schlüssel (KARTE_SECRET) im Header X-Karte-Key.
 // Zeitkonstanter Vergleich; bei Fehler 401 und false.
 export function requireKarteKey(req, res) {
