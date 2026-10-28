@@ -145,6 +145,19 @@ test('Termin-Freigabe: Klient bekommt seinen Text, der Mitarbeiter einen eigenen
   assert.deepEqual(log.patches.map((p) => p.fields), [{ Push_senden: 'Gesendet' }]);
 });
 
+test('Sommerzeit: Klient und Mitarbeiter bekommen die deutsche Uhrzeit (UTC+2), auch bei der Absage', async () => {
+  pushes.length = 0;
+  const sommer = { Uhrzeit: '2026-07-01T06:30:00.000Z', Datum: '2026-07-01', Von: '08:30' };
+  welt({ besuch: einsatz({ ...sommer, Push_senden: 'Senden' }) });
+  await senden('besuch', 'recBesPushTest001');
+  assert.equal(pushes.find((p) => p.endpoint.endsWith('/pat')).body, 'Neuer Termin: "Grundpflege" am 01.07.2026, 08:30');
+  assert.equal(pushes.find((p) => p.endpoint.endsWith('/ma1')).body, 'Grundpflege bei Erika Musterfrau am Mi, 01.07. um 08:30 Uhr.');
+  pushes.length = 0;
+  welt({ besuch: einsatz({ ...sommer, Status: 'Abgesagt' }) });
+  await senden('absage', 'recBesPushTest001');
+  assert.equal(pushes[0].body, 'Grundpflege bei Erika Musterfrau am Mi, 01.07. um 08:30 Uhr wurde abgesagt.');
+});
+
 test('Termin-Freigabe bei bereits abgesagtem Termin: nur der Klient (Mitarbeiter hat die Absage schon)', async () => {
   pushes.length = 0;
   welt({ besuch: einsatz({ Push_senden: 'Senden', Status: 'Abgesagt' }) });
@@ -152,14 +165,34 @@ test('Termin-Freigabe bei bereits abgesagtem Termin: nur der Klient (Mitarbeiter
   assert.deepEqual(pushes.map((p) => p.endpoint.split('/').pop()), ['pat']);
 });
 
-// --- Terminanfragen nur an die Leitung -------------------------------------------------------
-test('Terminanfrage: Push nur an aktive Mitarbeiter mit Rolle "Leitung"', async () => {
+// --- Klienten-Anfragen: E-Mail ans Büro (eigene Automation), Push nur bei Änderungswunsch ----
+test('Änderungswunsch: Push an den Mitarbeiter des Termins (deutsche Zeit, Ziel Tagesplan), Sperre zuerst', async () => {
   pushes.length = 0;
-  const log = welt({ anfrage: { id: 'recAnfPushTest001', fields: { Art: 'Neue Anfrage' } } });
+  const log = welt({
+    anfrage: { id: 'recAnfPushTest001', fields: { Art: 'Terminänderung', Betroffener_Termin: ['recBesPushTest001'] } },
+    besuch: einsatz({ Status: 'Änderungswunsch' }),
+  });
   const res = await senden('terminanfrage', 'recAnfPushTest001');
   assert.equal(res.body.status, 'ok');
-  assert.deepEqual(pushes.map((p) => p.endpoint.split('/').pop()), ['ma2']);
+  assert.deepEqual(pushes.map((p) => p.endpoint.split('/').pop()), ['ma1']); // nur der Mitarbeiter des Termins
+  assert.equal(pushes[0].title, 'Änderungswunsch');
+  assert.equal(pushes[0].body, 'Grundpflege bei Erika Musterfrau am Di, 03.11. um 08:00 Uhr: Der Klient wünscht eine Änderung. Das Büro klärt den neuen Termin.');
+  assert.equal(pushes[0].ziel, 'plan');
   assert.deepEqual(log.patches.map((p) => p.fields), [{ Buero_benachrichtigt: true }]);
+  assert.deepEqual(ablauf, [`patch:${T.TERMINANFRAGEN}`, 'push']);
+});
+
+test('Neue Terminanfrage: kein Push (nur E-Mail ans Büro); bereits gemeldet -> nichts; ohne Termin -> nichts', async () => {
+  pushes.length = 0;
+  let log = welt({ anfrage: { id: 'recAnfPushTest001', fields: { Art: 'Neue Anfrage' } } });
+  assert.equal((await senden('terminanfrage', 'recAnfPushTest001')).body.grund, 'Neue Terminanfrage: nur E-Mail ans Büro');
+  assert.deepEqual(log.patches.map((p) => p.fields), [{ Buero_benachrichtigt: true }]);
+  log = welt({ anfrage: { id: 'recAnfPushTest001', fields: { Art: 'Terminänderung', Betroffener_Termin: ['recBesPushTest001'], Buero_benachrichtigt: true } }, besuch: einsatz() });
+  assert.equal((await senden('terminanfrage', 'recAnfPushTest001')).body.grund, 'Bereits benachrichtigt');
+  assert.equal(log.patches.length, 0);
+  welt({ anfrage: { id: 'recAnfPushTest001', fields: { Art: 'Terminänderung' } } });
+  assert.equal((await senden('terminanfrage', 'recAnfPushTest001')).body.grund, 'Kein betroffener Termin');
+  assert.equal(pushes.length, 0);
 });
 
 // --- Mitteilungen --------------------------------------------------------------------------

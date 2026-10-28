@@ -9,7 +9,7 @@ import { MITTEILUNGEN, zielgruppeNormal, mitteilungText } from './_mitteilungen.
 //   absage         Termin abgesagt (Status "Abgesagt")         -> eingeplanter Mitarbeiter
 //   dokument       Dokument freigegeben                         -> Klient
 //   mitteilung     Mitteilung auf "Senden"                      -> laut Zielgruppe + Verknüpfte
-//   terminanfrage  neue Anfrage eines Klienten                  -> Mitarbeiter mit Rolle "Leitung"
+//   terminanfrage  Anfrage eines Klienten (E-Mail ans Büro)     -> bei Änderungswunsch: Mitarbeiter des Termins
 //   lohnabrechnung Lohnabrechnung hochgeladen                   -> der Mitarbeiter (api/_lohn.js)
 // Jeder Push trägt ein Ziel (siehe api/_push.js): ein Tipp darauf öffnet in der App genau die
 // Ansicht, in der der Inhalt steht. Inhalte kommen immer aus dem Datensatz, nie aus dem
@@ -238,26 +238,30 @@ export default async function handler(req, res) {
       infoKopie = { typ: 'Dokument', empfaenger: 'Klient' };
 
     } else if (type === 'terminanfrage') {
-      // Klient -> Pflegedienst: neue Terminanfrage/-änderung aus der App. Empfänger: nur
-      // aktive Mitarbeiter mit Rolle "Leitung" (Büro/PDL) - Pflegekräfte können in ihrer
-      // App nichts damit anfangen. Das Büro bekommt zusätzlich die E-Mail-Automation.
-      // Doppel-Schutz über das Feld Buero_benachrichtigt (wird vor dem Versand gesetzt).
+      // Klient -> Pflegedienst (Vorgabe Karl 28.10.): JEDE Anfrage geht als E-Mail an
+      // app@wunschlos-pflege.de (eigene Automation „E-Mail: Terminanfrage (Klient)“).
+      // Zusätzlich bekommt bei einem ÄNDERUNGSWUNSCH zu einem bestehenden Termin der
+      // Mitarbeiter dieses Termins einen Push (Klient, Termin, Datum, Uhrzeit); in seiner App
+      // ist der Termin als „Änderungswunsch“ markiert. Neue Terminwünsche haben noch keinen
+      // Mitarbeiter -> nur E-Mail. Doppel-Schutz: Buero_benachrichtigt (vor dem Versand gesetzt).
       const rec = await loadRec(TABLES.TERMINANFRAGEN, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Anfrage nicht gefunden' }); return; }
       const f = rec.fields || {};
       if (f.Buero_benachrichtigt) { res.status(200).json({ status: 'skipped', grund: 'Bereits benachrichtigt' }); return; }
-      // Marker sofort setzen (unabhängig davon, ob gerade jemand ein Abo hat),
-      // damit die Anfrage nicht bei jedem Automationslauf erneut geprüft wird.
       await airtable(`${TABLES.TERMINANFRAGEN}/${recordId}`, {
         method: 'PATCH', body: JSON.stringify({ fields: { Buero_benachrichtigt: true } }),
       });
-      message = txt(f.Art) === 'Terminänderung'
-        ? 'Terminänderungs-Wunsch eines Klienten eingegangen - bitte im Büro prüfen.'
-        : 'Neue Termin-Anfrage eines Klienten eingegangen - bitte im Büro prüfen.';
-      const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Push_Subscription&fields%5B%5D=Aktiv&fields%5B%5D=Rolle');
-      const nutzlast = pushNutzlast(TITLE, message);
-      personal.filter((p) => aktiv(p) && txt(p.fields.Rolle) === 'Leitung').forEach((p) => hinzufuegen(empfaenger, p, nutzlast));
-      leerGrund = 'Keine Leitung mit Push-Abo (E-Mail ans Büro läuft separat)';
+      if (txt(f.Art) !== 'Terminänderung') {
+        res.status(200).json({ status: 'skipped', grund: 'Neue Terminanfrage: nur E-Mail ans Büro' }); return;
+      }
+      const besuch = await loadRec(TABLES.BESUCHE, firstLink(f.Betroffener_Termin));
+      if (!besuch) { res.status(200).json({ status: 'skipped', grund: 'Kein betroffener Termin' }); return; }
+      const bf = besuch.fields || {};
+      const wann = einsatzZeitText(bf);
+      message = `${einsatzBei(bf)}${wann ? ` ${wann}` : ''}: Der Klient wünscht eine Änderung. Das Büro klärt den neuen Termin.`;
+      const nutzlast = pushNutzlast('Änderungswunsch', message, 'plan');
+      for (const p of await einsatzMitarbeiter(bf)) hinzufuegen(empfaenger, p, nutzlast);
+      leerGrund = 'Kein Push-Abo beim Mitarbeiter des Termins (E-Mail ans Büro läuft)';
 
     } else if (type === 'mitteilung') {
       const rec = await loadRec(MITTEILUNGEN, recordId);
