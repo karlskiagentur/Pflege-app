@@ -49,7 +49,7 @@ test('ohne/mit falschem Secret -> 401, keine Airtable-Zugriffe', async () => {
   assert.equal(p.aufrufe.length, 0);
 });
 
-test('abgeschlossener Monat: Anfahrt + Pause, Summe 2:30, finaler Zettel', async () => {
+test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), Summe 3:00, finaler Zettel', async () => {
   // Ein Tag im Vormonat (sicher vollständig vergangen)
   const h = berlin(Date.now()).datum;
   const vormonat = new Date(`${h.slice(0, 7)}-01T12:00:00Z`); vormonat.setUTCDate(0);
@@ -62,14 +62,15 @@ test('abgeschlossener Monat: Anfahrt + Pause, Summe 2:30, finaler Zettel', async
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-  assert.equal(res.body.summe, '2:30');
+  // Einsätze 2:00 + Anfahrt 0:30 (Lücke 30 Min) + 0:30 (Lücke 45 Min: 0:15 Pause + 0:30 Anfahrt)
+  assert.equal(res.body.summe, '3:00');
   assert.equal(res.body.vorlaeufig, false);
   assert.equal(res.body.einsaetze, 3);
   assert.equal(log.upload.filename, `Stundenzettel_${d.slice(0, 7)}_final.pdf`);
   const pdf = await PDFDocument.load(Buffer.from(log.upload.file, 'base64'));
   assert.equal(pdf.getPageCount(), 1);
   const f = log.patches.at(-1);
-  assert.equal(f.Summe_Stunden, '2:30');
+  assert.equal(f.Summe_Stunden, '3:00');
   assert.equal(f.Status, 'Erstellt');
   assert.ok(!/vorläufig/.test(f.Titel));
 });
@@ -144,11 +145,12 @@ test('Spalten: Soll und Ist getrennt, Zeitraum laut Ist bei Abweichung, Klient g
     ['einsatz', '08:45 – 09:15', '0:30', '0:30', false, '09:00 – 09:30', 'Klient B'],
     ['anfahrt', '09:30 – 09:45', '', '0:15', false, '', 'Kunden-Anfahrt'],
     ['einsatz', '09:45 – 10:00', '0:15', '0:15*', false, '', 'Klient C'],
-    ['pause', '10:00 – 11:00', '', '(1:00)', false, '', 'Pause (unbezahlt)'],
+    ['pause', '10:00 – 10:30', '', '(0:30)', false, '', 'Pause (unbezahlt)'],
+    ['anfahrt', '10:30 – 11:00', '', '0:30', false, '', 'Kunden-Anfahrt'],
     ['einsatz', '11:00 – 11:30', '0:30', '0:00', true, '', 'Klient D'],
   ]);
-  assert.equal(tagesSummeText(t), 'Tagessumme · davon Anfahrt 0:15 · Pause 1:00 unbezahlt');
-  assert.equal(t.bezahltMin, 120); // 1:00 + 0:30 + 0:15* + 0:00 + Anfahrt 0:15
+  assert.equal(tagesSummeText(t), 'Tagessumme · davon Anfahrt 0:45 · Pause 0:30 unbezahlt');
+  assert.equal(t.bezahltMin, 150); // 1:00 + 0:30 + 0:15* + 0:00 + Anfahrt 0:15 + 0:30
   // Reihenfolge der Spalten: Datum | Zeitfenster | Soll | Ist | Klient (ganz rechts)
   assert.ok(SPALTEN.datum < SPALTEN.fenster && SPALTEN.fenster < SPALTEN.sollR
     && SPALTEN.sollR < SPALTEN.istR && SPALTEN.istR < SPALTEN.klient);
@@ -157,4 +159,7 @@ test('Spalten: Soll und Ist getrennt, Zeitraum laut Ist bei Abweichung, Klient g
 test('Erläuterung und Hinweis sind in der PDF-Schrift vollständig darstellbar', () => {
   for (const satz of [HINWEIS, ...ERLAEUTERUNG]) assert.equal(pdfText(satz), satz);
   assert.ok(ERLAEUTERUNG.length >= 4);
+  // Regel seit 28.10.2026: auch bei längerer Lücke 30 Min Anfahrt, nur der Rest ist Pause
+  assert.ok(ERLAEUTERUNG.some((s) => /Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause/.test(s)));
+  assert.ok(!ERLAEUTERUNG.some((s) => /Mehr als 30 Minuten sind eine Pause/.test(s)));
 });
