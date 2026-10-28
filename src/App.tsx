@@ -14,6 +14,34 @@ const mapsUrl = (adresse: string) =>
   `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
+import {
+  zielAusAdresse, istPushZiel, ladeJson, speichereJson, einsatzStand, einsatzMarken, neueSchluessel,
+  gesehenErgaenzen, datumMs, anzeigeZeit, type PushZiel, type EinsatzMarke,
+} from './neuigkeiten';
+
+// Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
+const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
+const TAG_MS = 24 * 60 * 60 * 1000;
+const VOLL_ABSTAND_MS = 10 * 60 * 1000;   // Mitteilungen/Lohn höchstens alle 10 Min. mitladen
+// Was auf dem Gerät als gesehen gemerkt wird (nur IDs/Prüfwerte, siehe neuigkeiten.ts).
+type MaGesehen = { termine: Record<string, string> | null; mitteilungen: string[] | null; lohn: string[] | null };
+const MA_GESEHEN_LEER: MaGesehen = { termine: null, mitteilungen: null, lohn: null };
+const maGesehenSchluessel = (id: string) => `wl_ma_gesehen_${id}`;
+const patGesehenSchluessel = (id: string) => `wl_pat_gesehen_${id}`;
+function maGesehenLaden(id: string | null): MaGesehen {
+  if (!id) return MA_GESEHEN_LEER;
+  const g = ladeJson<any>(maGesehenSchluessel(id), null);
+  return {
+    termine: g && g.termine && typeof g.termine === 'object' && !Array.isArray(g.termine) ? g.termine : null,
+    mitteilungen: g && Array.isArray(g.mitteilungen) ? g.mitteilungen : null,
+    lohn: g && Array.isArray(g.lohn) ? g.lohn : null,
+  };
+}
+const heuteBeginn = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const maTabFuerZiel = (z: PushZiel | null): 'uebersicht' | 'tagesplan' | 'lohn' | null =>
+  z === 'plan' ? 'tagesplan' : z === 'lohn' ? 'lohn' : z === 'nachrichten' ? 'uebersicht' : null;
+const patTabFuerZiel = (z: PushZiel | null): string | null =>
+  z === 'termine' ? 'planer' : z === 'dokumente' ? 'hochladen' : z === 'nachrichten' ? 'dashboard' : null;
 
 // Alle Patienten-Schreibpfade laufen jetzt über /api (Vercel) statt n8n.
 // (n8n wird dadurch für die App überflüssig.)
@@ -353,7 +381,13 @@ export default function App() {
   const [dauerSaving, setDauerSaving] = useState<string | null>(null);
   const [dauerConfirm, setDauerConfirm] = useState<{ besuchId: string; minuten: number } | null>(null);
   const [dauerHinweis, setDauerHinweis] = useState<Record<string, string>>({});
-  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>('uebersicht');
+  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>(() => maTabFuerZiel(START_ZIEL) || 'uebersicht');
+  // Neuigkeiten der Mitarbeiter-App: Mitteilungen + „gesehen“-Stand (NEU-Markierungen)
+  const [maMitteilungen, setMaMitteilungen] = useState<any[]>([]);
+  const [maGesehen, setMaGesehen] = useState<MaGesehen>(() => maGesehenLaden(localStorage.getItem('active_mitarbeiter_id')));
+  const [maMitteilungenAlle, setMaMitteilungenAlle] = useState(false);
+  const maLetzterVollRef = useRef<number>(0);   // letztes Laden inkl. Mitteilungen/Lohn
+  const maVollNachholenRef = useRef(false);     // während eines Ladevorgangs angefordert
   const [meldungTermin, setMeldungTermin] = useState<any|null>(null);
   const [meldungTyp, setMeldungTyp] = useState<string>('');
   const [meldungNotiz, setMeldungNotiz] = useState('');
@@ -377,7 +411,17 @@ export default function App() {
   const [mitarbeiterPushStatus, setMitarbeiterPushStatus] = useState<'idle'|'subscribed'|'loading'|'denied'>('idle');
   const [mitarbeiterPushMsg, setMitarbeiterPushMsg] = useState<string>('');
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => patTabFuerZiel(START_ZIEL) || 'dashboard');
+  // Mitteilungen des Pflegedienstes in der Klienten-App (+ „gesehen“-Stand auf dem Gerät)
+  const [patMitteilungen, setPatMitteilungen] = useState<any[]>([]);
+  const [patGesehen, setPatGesehen] = useState<string[] | null>(() => {
+    const id = localStorage.getItem('active_patient_id');
+    const g = id ? ladeJson<any>(patGesehenSchluessel(id), null) : null;
+    return Array.isArray(g) ? g : null;
+  });
+  const [patFruehereZeigen, setPatFruehereZeigen] = useState(false);
+  const patMitteilungenStandRef = useRef<number>(0);
+  const patMitteilungenErzwingenRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
@@ -512,7 +556,10 @@ export default function App() {
     try {
         // Token im Authorization-Header statt in der URL (landet sonst in Logs/History).
         // Reine Verbindungsfehler (Funkloch, Handy wacht gerade auf) werden markiert.
-        const response = await fetch(`/api/app-data`, {
+        // Mitteilungen nur beim Start, nach einem Push oder höchstens alle 10 Min. mitladen.
+        const mitMitteilungen = patMitteilungenErzwingenRef.current || !patMitteilungenStandRef.current
+            || Date.now() - patMitteilungenStandRef.current > VOLL_ABSTAND_MS;
+        const response = await fetch(`/api/app-data${mitMitteilungen ? '?mitteilungen=1' : ''}`, {
             signal: controller.signal,
             headers: { 'Authorization': `Bearer ${authToken}` }
         }).catch((err) => { throw Object.assign(err, { netzwerk: true }); });
@@ -562,6 +609,21 @@ export default function App() {
                 Datum: getValue(d, 'Datum') || getValue(d, 'Erstellt'),
                 Bezahlt: getValue(d, 'Bezahlt') === 'true' || getValue(d, 'Bezahlt') === 'Bezahlt' || d.fields?.Bezahlt === true
             })));
+
+            // Mitteilungen des Pflegedienstes (nur wenn mitgeliefert - sonst Stand behalten)
+            if (Array.isArray(json.data.mitteilungen)) {
+                const liste = json.data.mitteilungen;
+                setPatMitteilungen(liste);
+                patMitteilungenStandRef.current = Date.now();
+                patMitteilungenErzwingenRef.current = false;
+                // Erste Nutzung auf diesem Gerät: Stand übernehmen (nur frische bleiben neu)
+                setPatGesehen((prev) => {
+                    if (prev !== null) return prev;
+                    const basis = liste.filter((m: any) => Date.now() - datumMs(m.datum) >= 3 * TAG_MS).map((m: any) => m.key);
+                    if (patientId) speichereJson(patGesehenSchluessel(patientId), basis);
+                    return basis;
+                });
+            }
 
             const bData = json.data.besuche || [];
             const mappedBesuche = bData.map((b: any) => {
@@ -1120,9 +1182,14 @@ export default function App() {
 
   // quiet = automatische Aktualisierung beim Zurückkehren in die App: kein Lade-Kreisel
   // statt der Liste und keine Fehlermeldung - die zuletzt geladenen Einsätze bleiben sichtbar.
-  const fetchMitarbeiterTermine = async (quiet = false) => {
+  // voll = zusätzlich Mitteilungen + Lohnabrechnungen (App-Start, Tipp auf einen Push,
+  // Rückkehr nach >10 Min., Aktualisieren-Knopf) - sonst nur die Einsätze (spart Abfragen).
+  const fetchMitarbeiterTermine = async (quiet = false, voll = false) => {
     if (!mitarbeiterId) return;
-    if (quiet && maLaedtRef.current) return; // es läuft bereits eine Abfrage
+    if (quiet && maLaedtRef.current) { // es läuft bereits eine Abfrage
+      if (voll) maVollNachholenRef.current = true; // Neuigkeiten danach nachholen
+      return;
+    }
     maLaedtRef.current = true;
     if (!quiet) {
       setMitarbeiterLoading(true);
@@ -1132,7 +1199,7 @@ export default function App() {
       const res = await fetchWithTimeout('/api/ma-termine', {
         method: 'POST',
         headers: maAuth(),
-        body: JSON.stringify({})
+        body: JSON.stringify({ format: 2, neuigkeiten: voll })
       }).catch((err) => { throw Object.assign(err, { netzwerk: true }); });
       if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (!res.ok) {
@@ -1150,7 +1217,8 @@ export default function App() {
           setMitarbeiterName(neuerName);
         }
       }
-      const liste = Array.isArray(data) ? data : [];
+      // Format 2: { termine, mitteilungen?, lohn? } - ein Array (ältere Server) geht weiter.
+      const liste = Array.isArray(data) ? data : (data && Array.isArray(data.termine) ? data.termine : []);
       liste.sort((a: any, b: any) => {
         const dA = new Date(getValue(a, 'Uhrzeit')).getTime() || 0;
         const dB = new Date(getValue(b, 'Uhrzeit')).getTime() || 0;
@@ -1158,6 +1226,20 @@ export default function App() {
       });
       setMitarbeiterTermine(liste);
       maLetzterAbrufRef.current = Date.now();
+      // Erste Nutzung auf diesem Gerät: heutigen Stand übernehmen (keine NEU-Flut)
+      setMaGesehen((prev) => (prev.termine !== null ? prev : maGesehenSpeichern({ ...prev, termine: einsatzStand(liste, heuteBeginn()) })));
+      if (voll && data && !Array.isArray(data)) {
+        maLetzterVollRef.current = Date.now();
+        if (Array.isArray(data.mitteilungen)) {
+          const neu: any[] = data.mitteilungen;
+          setMaMitteilungen(neu);
+          // Erste Nutzung: nur Mitteilungen der letzten 3 Tage gelten als neu
+          setMaGesehen((prev) => (prev.mitteilungen !== null ? prev : maGesehenSpeichern({
+            ...prev, mitteilungen: neu.filter((m) => Date.now() - datumMs(m.datum) >= 3 * TAG_MS).map((m) => m.key),
+          })));
+        }
+        if (Array.isArray(data.lohn)) lohnUebernehmen(data.lohn);
+      }
       if (quiet) setMitarbeiterError(null); // Verbindung steht wieder -> alten Hinweis entfernen
     } catch (err: any) {
       if (!quiet) {
@@ -1169,8 +1251,53 @@ export default function App() {
     } finally {
       maLaedtRef.current = false;
       if (!quiet) setMitarbeiterLoading(false);
+      if (maVollNachholenRef.current) {
+        maVollNachholenRef.current = false;
+        window.setTimeout(() => maAbrufRef.current(true, true), 0);
+      }
     }
   };
+
+  // „Gesehen“-Stand der Mitarbeiter-App speichern (nur IDs/Prüfwerte, je Mitarbeiter).
+  function maGesehenSpeichern(neu: MaGesehen): MaGesehen {
+    if (mitarbeiterId) speichereJson(maGesehenSchluessel(mitarbeiterId), neu);
+    return neu;
+  }
+  // Lohnabrechnungen übernehmen; erste Nutzung: nur die der letzten 14 Tage gelten als neu.
+  function lohnUebernehmen(liste: any[]) {
+    setLohnListe(liste);
+    setMaGesehen((prev) => (prev.lohn !== null ? prev : maGesehenSpeichern({
+      ...prev, lohn: liste.filter((l) => Date.now() - datumMs(l.bereitgestellt) >= 14 * TAG_MS).map((l) => l.id),
+    })));
+  }
+  // Was in einer Ansicht angezeigt wurde, gilt beim Verlassen als gesehen (NEU verschwindet).
+  const maGesehenMerken = (tab: string) => {
+    setMaGesehen((prev) => {
+      if (tab === 'tagesplan' && maLetzterAbrufRef.current > 0) {
+        return maGesehenSpeichern({ ...prev, termine: einsatzStand(mitarbeiterTermine, heuteBeginn()) });
+      }
+      if (tab === 'uebersicht' && maMitteilungen.length > 0) {
+        return maGesehenSpeichern({ ...prev, mitteilungen: gesehenErgaenzen(prev.mitteilungen, maMitteilungen.map((m) => m.key)) });
+      }
+      if (tab === 'lohn' && lohnListe.length > 0) {
+        return maGesehenSpeichern({ ...prev, lohn: gesehenErgaenzen(prev.lohn, lohnListe.map((l) => l.id)) });
+      }
+      return prev;
+    });
+  };
+  const maGesehenMerkenRef = useRef<() => void>(() => {});
+  maGesehenMerkenRef.current = () => maGesehenMerken(mitarbeiterTab);
+  const maVorherigerTabRef = useRef(mitarbeiterTab);
+  useEffect(() => {
+    if (maVorherigerTabRef.current !== mitarbeiterTab) maGesehenMerken(maVorherigerTabRef.current);
+    maVorherigerTabRef.current = mitarbeiterTab;
+  }, [mitarbeiterTab]);
+  // Anderer Mitarbeiter angemeldet: dessen gemerkten Stand laden, Neuigkeiten neu holen.
+  useEffect(() => {
+    setMaGesehen(maGesehenLaden(mitarbeiterId));
+    setMaMitteilungen([]);
+    maLetzterVollRef.current = 0;
+  }, [mitarbeiterId]);
 
   // Schritt 1: Eingabe validieren und Bestätigungs-Modal öffnen (danach ist die Zeit unveränderbar).
   const saveIstDauer = (besuchId: string, minutenStr: string) => {
@@ -1216,21 +1343,80 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine();
+    if (mitarbeiterId && mitarbeiterName) fetchMitarbeiterTermine(false, Date.now() - maLetzterVollRef.current > 60000);
   }, [mitarbeiterId, mitarbeiterName]);
 
   // Beim Zurückkehren in die App (z. B. Tipp auf „Neuer Einsatz") Einsätze leise
   // aktualisieren - gleiche Regeln wie in der Klienten-App (kein Polling, max. alle 45 s).
   const maAbrufRef = useRef(fetchMitarbeiterTermine);
   maAbrufRef.current = fetchMitarbeiterTermine;
+
+  // Adresse nach dem Start aufräumen (/?ziel=… wird nur einmal ausgewertet).
+  useEffect(() => {
+    if (!START_ZIEL) return;
+    try { window.history.replaceState(null, '', window.location.pathname); } catch { /* nur Kosmetik */ }
+  }, []);
+
+  // Service Worker meldet: Push angekommen (App offen) bzw. Push angetippt (App war schon
+  // offen) -> passende Ansicht öffnen und Neuigkeiten sofort laden.
+  const pushNachrichtRef = useRef<(typ: string, ziel: PushZiel | null) => void>(() => {});
+  pushNachrichtRef.current = (typ, ziel) => {
+    if (mitarbeiterId) {
+      if (typ === 'push-klick') {
+        const tab = maTabFuerZiel(ziel);
+        if (tab) { setMitarbeiterTab(tab); if (tab === 'lohn') setLohnBereich('abrechnung'); }
+      }
+      fetchMitarbeiterTermine(true, true);
+    } else if (patientId) {
+      patMitteilungenErzwingenRef.current = true;
+      if (typ === 'push-klick') {
+        const tab = patTabFuerZiel(ziel);
+        if (tab) setActiveTab(tab);
+        fetchData(true, false, true);
+      } else {
+        fetchData(true, true);
+      }
+    }
+  };
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const beiNachricht = (e: MessageEvent) => {
+      const d = (e && e.data) || {};
+      if (d.typ !== 'push-klick' && d.typ !== 'push-eingang') return;
+      pushNachrichtRef.current(d.typ, istPushZiel(d.ziel) ? d.ziel : null);
+    };
+    try { navigator.serviceWorker.addEventListener('message', beiNachricht); } catch { return; }
+    return () => { try { navigator.serviceWorker.removeEventListener('message', beiNachricht); } catch { /* egal */ } };
+  }, []);
+
+  // Klienten-App: Mitteilungen als gelesen merken (Knopf „Verstanden“).
+  const patMitteilungenGelesen = () => {
+    setPatGesehen((prev) => {
+      const neu = gesehenErgaenzen(prev, patMitteilungen.map((m) => m.key));
+      if (patientId) speichereJson(patGesehenSchluessel(patientId), neu);
+      return neu;
+    });
+  };
+  // Anderer Klient angemeldet: dessen gemerkten Stand laden.
+  useEffect(() => {
+    const g = patientId ? ladeJson<any>(patGesehenSchluessel(patientId), null) : null;
+    setPatGesehen(Array.isArray(g) ? g : null);
+    setPatMitteilungen([]);
+    patMitteilungenStandRef.current = 0;
+  }, [patientId]);
   useEffect(() => {
     if (!mitarbeiterId) return;
     let timer: number | undefined;
     const beimZurueckkehren = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') {
+        // App geht in den Hintergrund: was gerade angezeigt war, gilt als gesehen.
+        maGesehenMerkenRef.current();
+        return;
+      }
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        if (Date.now() - maLetzterAbrufRef.current > 45000) maAbrufRef.current(true);
+        const voll = Date.now() - maLetzterVollRef.current > VOLL_ABSTAND_MS;
+        if (voll || Date.now() - maLetzterAbrufRef.current > 45000) maAbrufRef.current(true, voll);
       }, 800);
     };
     document.addEventListener('visibilitychange', beimZurueckkehren);
@@ -1331,7 +1517,7 @@ export default function App() {
         throw new Error(`Server antwortete mit ${res.status}: ${text}`);
       }
       const data = await res.json();
-      setLohnListe(Array.isArray(data) ? data : []);
+      lohnUebernehmen(Array.isArray(data) ? data : []);
     } catch (err: any) {
       console.error('Fehler beim Laden der Lohnliste:', err);
       alert('Fehler beim Laden der Lohnabrechnungen: ' + err.message);
@@ -1384,6 +1570,27 @@ export default function App() {
     });
 
     const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
+
+    // --- NEU-Markierungen (seit dem letzten Blick geändert; Stand liegt auf dem Gerät) ---
+    const planMarken = einsatzMarken(mitarbeiterTermine, maGesehen.termine, heute.getTime());
+    const planNeuAnzahl = Object.keys(planMarken).length;
+    const neueMitteilungKeys = neueSchluessel(maMitteilungen, (m: any) => m.key, maGesehen.mitteilungen,
+      (m: any) => Date.now() - datumMs(m.datum) < 3 * TAG_MS);
+    const neueMitteilungen = maMitteilungen.filter((m) => neueMitteilungKeys.has(m.key));
+    const lohnNeuIds = neueSchluessel(lohnListe, (l: any) => l.id, maGesehen.lohn,
+      (l: any) => Date.now() - datumMs(l.bereitgestellt) < 14 * TAG_MS);
+    const lohnNeu = lohnListe.filter((l) => lohnNeuIds.has(l.id));
+    const markeText: Record<EinsatzMarke, string> = { neu: 'Neu', geaendert: 'Geändert', abgesagt: 'Abgesagt' };
+    const markePill = (m?: EinsatzMarke) => (m ? (
+      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${m === 'abgesagt' ? 'bg-[#B5483C] text-white' : 'bg-[#E8890C] text-white'}`}>{markeText[m]}</span>
+    ) : null);
+    // Reiter wechseln; Einsätze nur nachladen, wenn der Stand älter als 45 s ist.
+    const maZuReiter = (tab: 'uebersicht' | 'tagesplan' | 'urlaub' | 'lohn') => {
+      setMitarbeiterTab(tab);
+      if (Date.now() - maLetzterAbrufRef.current > 45000) fetchMitarbeiterTermine(true);
+      if (tab === 'urlaub') fetchUrlaubListe();
+      else if (tab === 'lohn') { setLohnBereich('abrechnung'); fetchLohnListe(); }
+    };
 
     // --- Zeitnachweis (Lohn / Zeit): erfasste Zeiten des gewählten Monats ---
     const zeitRef = new Date();
@@ -1470,7 +1677,7 @@ export default function App() {
         <img src={LOGO_WEISS_URL} onError={logoErsatz} alt="Logo" className="h-11" />
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
-          <button onClick={() => fetchMitarbeiterTermine()} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
+          <button onClick={() => fetchMitarbeiterTermine(false, true)} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
           <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
         </div>
       </header>
@@ -1480,7 +1687,7 @@ export default function App() {
         {mitarbeiterError && (
           <div className="mb-4 bg-[#F8E8E6] border border-[#E5B8B2] text-[#B5483C] rounded-2xl p-4 flex items-center justify-between gap-3">
             <span className="text-sm font-bold">{mitarbeiterError}</span>
-            <button onClick={() => fetchMitarbeiterTermine()} className="text-xs font-black uppercase bg-white/70 rounded-full px-3 py-2 shrink-0">Erneut</button>
+            <button onClick={() => fetchMitarbeiterTermine(false, true)} className="text-xs font-black uppercase bg-white/70 rounded-full px-3 py-2 shrink-0">Erneut</button>
           </div>
         )}
         {/* TAB: START / NOTFALL */}
@@ -1492,6 +1699,32 @@ export default function App() {
               <h2 className="text-3xl font-black text-[#3A3A3A]">Übersicht</h2>
               <p className="text-xs text-gray-400 mt-1">Hallo {mitarbeiterName}, dein Tag im Blick.</p>
             </div>
+
+            {/* NEU FÜR DICH: alles, was seit dem letzten Blick dazugekommen ist (auch ohne Push) */}
+            {(neueMitteilungen.length > 0 || planNeuAnzahl > 0 || lohnNeu.length > 0) && (
+              <div className="mb-6 bg-[#FFF4E5] border-2 border-[#F5C27A] rounded-[2rem] p-5">
+                <p className="text-[11px] font-black tracking-wide text-[#9A5B00] mb-3 flex items-center gap-2"><Bell size={14}/> NEU FÜR DICH</p>
+                {neueMitteilungen.map((m) => (
+                  <div key={m.key} className="bg-white rounded-2xl p-4 mb-2">
+                    <p className="text-sm font-black text-[#3A3A3A]">{m.titel}</p>
+                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-line leading-relaxed">{m.text}</p>
+                    <p className="text-[10px] text-gray-400 mt-2">{anzeigeZeit(m.datum)}</p>
+                  </div>
+                ))}
+                {planNeuAnzahl > 0 && (
+                  <button onClick={() => maZuReiter('tagesplan')} className="w-full bg-white rounded-2xl p-4 mb-2 flex items-center justify-between gap-3 text-left active:scale-[0.98] transition-all">
+                    <span className="text-sm font-black text-[#3A3A3A] flex items-center gap-2"><CalendarDays size={16} className="text-[#b5a48b]"/>{planNeuAnzahl === 1 ? '1 Änderung in deinem Plan' : `${planNeuAnzahl} Änderungen in deinem Plan`}</span>
+                    <ChevronRight size={16} className="text-gray-400 shrink-0"/>
+                  </button>
+                )}
+                {lohnNeu.map((l) => (
+                  <button key={l.id} onClick={() => maZuReiter('lohn')} className="w-full bg-white rounded-2xl p-4 mb-2 flex items-center justify-between gap-3 text-left active:scale-[0.98] transition-all">
+                    <span className="text-sm font-black text-[#3A3A3A] flex items-center gap-2"><Euro size={16} className="text-[#b5a48b]"/>{l.titel} ist da</span>
+                    <ChevronRight size={16} className="text-gray-400 shrink-0"/>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* TAGESPLAN-VORSCHAU */}
             <p className="text-[11px] font-black tracking-wide text-[#0F6E56] mb-2">
@@ -1528,18 +1761,45 @@ export default function App() {
                           </a>
                         )}
                       </div>
-                      <span className={`text-[10px] font-black uppercase shrink-0 ${tile.labelCls}`}>{tile.label}</span>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {markePill(planMarken[t.id])}
+                        <span className={`text-[10px] font-black uppercase ${tile.labelCls}`}>{tile.label}</span>
+                      </div>
                     </div>
                   );
                 })}
               </div>
             )}
             <button
-              onClick={() => { setMitarbeiterTab('tagesplan'); fetchMitarbeiterTermine(); }}
+              onClick={() => maZuReiter('tagesplan')}
               className="w-full text-[#b5a48b] font-black uppercase text-[11px] flex items-center justify-center gap-2 py-3 mt-3"
             >
               <CalendarDays size={14}/> Vollständigen Tagesplan öffnen <ChevronRight size={14}/>
             </button>
+
+            {/* MITTEILUNGEN des Pflegedienstes (30 Tage) - auch für alle ohne Push */}
+            {maMitteilungen.length > 0 && (
+              <div className="mt-8">
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-300 text-center">Mitteilungen</p>
+                <div className="mt-3 space-y-2">
+                  {(maMitteilungenAlle ? maMitteilungen : maMitteilungen.slice(0, 3)).map((m) => (
+                    <div key={m.key} className="bg-white rounded-2xl border border-gray-100 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-black text-[#3A3A3A]">{m.titel}</p>
+                        {neueMitteilungKeys.has(m.key) && <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#E8890C] text-white shrink-0">Neu</span>}
+                      </div>
+                      <p className="text-sm text-gray-600 mt-1 whitespace-pre-line leading-relaxed">{m.text}</p>
+                      <p className="text-[10px] text-gray-400 mt-2">{anzeigeZeit(m.datum)}</p>
+                    </div>
+                  ))}
+                </div>
+                {maMitteilungen.length > 3 && (
+                  <button onClick={() => setMaMitteilungenAlle(!maMitteilungenAlle)} className="w-full text-[#b5a48b] font-black uppercase text-[11px] py-3">
+                    {maMitteilungenAlle ? 'Weniger anzeigen' : `Alle ${maMitteilungen.length} anzeigen`}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* NOTRUFE */}
             <div className="mt-8">
@@ -1719,8 +1979,11 @@ export default function App() {
                   lohnListe.map((l) => {
                     const dateien: any[] = Array.isArray(l.dateien) ? l.dateien : [];
                     return (
-                      <div key={l.id} className="bg-white rounded-[2rem] border border-gray-100 p-4 mb-2">
-                        <p className="text-sm font-bold text-gray-700">{l.titel}</p>
+                      <div key={l.id} className={`bg-white rounded-[2rem] p-4 mb-2 ${lohnNeuIds.has(l.id) ? 'border-2 border-[#F5C27A]' : 'border border-gray-100'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-bold text-gray-700">{l.titel}</p>
+                          {lohnNeuIds.has(l.id) && <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#E8890C] text-white shrink-0">Neu</span>}
+                        </div>
                         <p className={`text-[11px] mt-0.5 mb-3 ${l.bald ? 'text-orange-600 font-bold' : 'text-gray-400'}`}>{lohnHinweis(l)}</p>
                         <div className="flex flex-wrap gap-2">
                           {dateien.map((d) => (
@@ -1837,8 +2100,12 @@ export default function App() {
                     : isAbgesagt
                       ? 'bg-[#F8E8E6] border border-[#E5B8B2] border-l-4 border-l-[#B5483C]'
                       : 'bg-[#FAF5EE] border border-[#E8DCC8] border-l-4 border-l-[#b5a48b]';
+                const marke = planMarken[t.id];
                 return (
-                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses}`}>
+                  <div key={t.id} className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden ${cardClasses} ${marke ? 'ring-4 ring-[#F5C27A]' : ''}`}>
+                    {marke && (
+                      <div className="px-6 pt-4 -mb-3 flex justify-end">{markePill(marke)}</div>
+                    )}
                     <div className="p-6 flex items-center gap-3">
                       {/* LINKS: Zeitspanne von - bis (ohne Endzeit: nur Start) */}
                       <div className="text-center min-w-[56px]">
@@ -1935,8 +2202,9 @@ export default function App() {
                 {termineZukunft.map((t) => {
                   const datumOben = new Date(getValue(t, 'Uhrzeit')).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
                   const badge = getStatusBadge(t);
+                  const marke = planMarken[t.id];
                   return (
-                    <div key={t.id} className="bg-[#F9F7F4] border border-gray-100 rounded-[1.5rem] p-4 mb-2 opacity-75">
+                    <div key={t.id} className={`rounded-[1.5rem] p-4 mb-2 ${marke ? 'bg-white border-2 border-[#F5C27A]' : 'bg-[#F9F7F4] border border-gray-100 opacity-75'}`}>
                       <div className="flex items-center gap-3">
                         {/* LINKS: Datum + Uhrzeit */}
                         <div className="text-center min-w-[52px]">
@@ -1948,8 +2216,11 @@ export default function App() {
                           <p className="text-sm font-bold text-gray-600">{getValueOr(t, 'Tätigkeit', 'Unterstützung')}</p>
                           <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
                         </div>
-                        {/* RECHTS: Status-Label */}
-                        <p style={{ color: badge.color }} className="text-[9px] font-black uppercase tracking-wider text-right max-w-[80px] leading-tight">{badge.text}</p>
+                        {/* RECHTS: Markierung + Status-Label */}
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          {markePill(marke)}
+                          <p style={{ color: badge.color }} className="text-[9px] font-black uppercase tracking-wider text-right max-w-[80px] leading-tight">{badge.text}</p>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1990,16 +2261,16 @@ export default function App() {
       <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn / Zeit' } ].map((tab) => (
         <button
             key={tab.id}
-            onClick={() => {
-                setMitarbeiterTab(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn');
-                fetchMitarbeiterTermine();
-                if (tab.id === 'urlaub') fetchUrlaubListe();
-                else if (tab.id === 'lohn') fetchLohnListe();
-            }}
+            onClick={() => maZuReiter(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn')}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
                 <tab.icon size={22} strokeWidth={mitarbeiterTab === tab.id ? 3 : 2} />
+                {/* ROTER PUNKT: dort gibt es etwas Neues */}
+                {((tab.id === 'tagesplan' && planNeuAnzahl > 0) || (tab.id === 'lohn' && lohnNeu.length > 0)
+                  || (tab.id === 'uebersicht' && neueMitteilungen.length > 0)) && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-in zoom-in" />
+                )}
             </div>
             <span className="text-[9px] font-black uppercase">{tab.label}</span>
         </button>
@@ -2169,6 +2440,12 @@ export default function App() {
   const sichtbareDokumente = documents.filter(d =>
     !(unbox(d.Richtung) === 'Vom Pflegedienst' && unbox(d.Vom_Patienten_Bestaetigt_Am))
   );
+  // Mitteilungen des Pflegedienstes: neu = noch nicht mit „Verstanden“ bestätigt
+  const patNeuKeys = neueSchluessel(patMitteilungen, (m: any) => m.key, patGesehen,
+    (m: any) => Date.now() - datumMs(m.datum) < 3 * TAG_MS);
+  const patNeueMitteilungen = patMitteilungen.filter((m) => patNeuKeys.has(m.key));
+  const patFruehereMitteilungen = patMitteilungen.filter((m) => !patNeuKeys.has(m.key));
+
   // Berechne ungelesene Dokumente (serverbasiert, geräteübergreifend) - einheitliche Definition
   const unseenDocs = sichtbareDokumente.filter(d =>
     (unbox(getValue(d, 'Typ')) === 'Rechnung' || unbox(getValue(d, 'Typ')) === 'Leistungsnachweis') &&
@@ -2213,6 +2490,27 @@ export default function App() {
 
   const renderDashboard = () => (
     <div className="space-y-8 animate-in fade-in">
+        {/* NACHRICHT VOM PFLEGEDIENST (Mitteilung/Ausfall) - bleibt, bis „Verstanden“ getippt ist */}
+        {patNeueMitteilungen.length > 0 && (
+            <div className="bg-[#FFF4E5] border-2 border-[#F5C27A] rounded-[2rem] p-6 shadow-sm">
+                <div className="flex items-center gap-3 mb-4 text-[#9A5B00]">
+                    <div className="bg-white p-2.5 rounded-full"><Bell size={22} /></div>
+                    <span className="font-black text-lg">{patNeueMitteilungen.length === 1 ? 'Nachricht vom Pflegedienst' : 'Nachrichten vom Pflegedienst'}</span>
+                </div>
+                <div className="space-y-3">
+                    {patNeueMitteilungen.map((m) => (
+                        <div key={m.key} className="bg-white rounded-2xl p-4">
+                            <p className="font-black text-[#3A3A3A]">{m.titel}</p>
+                            <p className="text-base text-gray-700 mt-1 whitespace-pre-line leading-relaxed">{m.text}</p>
+                            <p className="text-xs text-gray-400 mt-2">{anzeigeZeit(m.datum)}</p>
+                        </div>
+                    ))}
+                </div>
+                <button onClick={patMitteilungenGelesen} className="w-full mt-4 bg-[#b5a48b] text-white py-4 rounded-2xl font-black uppercase text-sm tracking-wide shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+                    <Check size={18} strokeWidth={3} /> Verstanden
+                </button>
+            </div>
+        )}
         {patientPushStatus === 'idle' && (
             <div className="bg-[#F9F7F4] rounded-2xl p-4 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
@@ -2299,6 +2597,26 @@ export default function App() {
                 </div>
                 <p className="text-xs text-[#3f7a3f]/80 mt-2">Falls Benachrichtigungen nicht mehr ankommen, hier erneuern.</p>
                 <button onClick={() => pushErneuern(token)} className="mt-2 text-xs font-black uppercase text-[#3f7a3f] border border-[#5B9E5B]/40 rounded-full px-4 py-2 active:scale-95 transition-all">Erneuern</button>
+            </div>
+        )}
+        {/* FRÜHERE NACHRICHTEN (30 Tage) zum Nachlesen */}
+        {patFruehereMitteilungen.length > 0 && (
+            <div>
+                <button onClick={() => setPatFruehereZeigen(!patFruehereZeigen)} className="w-full text-[#b5a48b] font-black uppercase text-xs flex items-center justify-center gap-2 py-2">
+                    <Bell size={14} /> {patFruehereZeigen ? 'Frühere Nachrichten ausblenden' : `Frühere Nachrichten (${patFruehereMitteilungen.length})`}
+                    {patFruehereZeigen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {patFruehereZeigen && (
+                    <div className="space-y-2 mt-2">
+                        {patFruehereMitteilungen.map((m) => (
+                            <div key={m.key} className="bg-[#F9F7F4] rounded-2xl p-4">
+                                <p className="font-black text-[#3A3A3A] text-sm">{m.titel}</p>
+                                <p className="text-sm text-gray-600 mt-1 whitespace-pre-line leading-relaxed">{m.text}</p>
+                                <p className="text-xs text-gray-400 mt-2">{anzeigeZeit(m.datum)}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         )}
     </div>
@@ -2541,6 +2859,9 @@ export default function App() {
                 
                 {/* ROTER PUNKT (Nur ungelesene) */}
                 {t.id === 'hochladen' && unseenDocsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-in zoom-in" />
+                )}
+                {t.id === 'dashboard' && patNeueMitteilungen.length > 0 && (
                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-in zoom-in" />
                 )}
             </div>

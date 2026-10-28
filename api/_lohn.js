@@ -20,7 +20,7 @@
 // Routen: lohn-liste (App-Liste), lohn-download (Datei), push-event type "lohnabrechnung"
 // (Push beim Hochladen, ausgelöst von der Airtable-Automation), lohn-aufbewahrung (Cron).
 
-import { airtable, fetchAll, TABLES } from './_lib.js';
+import { airtable, fetchAll, esc, TABLES } from './_lib.js';
 import { pushAnMitarbeiter } from './_push.js';
 
 export const LOHN = 'tblMoak6mpdJtTM8S';   // Tabelle "Lohnabrechnung" (ID -> umbenenn-fest)
@@ -144,6 +144,24 @@ export function lohnFuerApp(rec, jetzt) {
   };
 }
 
+/**
+ * Lohnabrechnungen EINES Mitarbeiters für die App (neueste zuerst), wie /api/lohn-liste.
+ * maId kommt immer aus dem geprüften Session-Token, nie aus dem Request (IDOR-Schutz).
+ * Ausgeliefert werden nur Monat, Dateinamen und Fristen - keine Datei-URLs.
+ */
+export async function lohnListeFuer(maId, jetzt) {
+  // Vorfilter über das Lookup-Feld Mitarbeiter_ID (== Personal-Record-ID) ...
+  const formel = `AND(FIND('${esc(maId)}', ARRAYJOIN({Mitarbeiter_ID})), {Status} != '${ARCHIVIERT}')`;
+  const records = await fetchAll(LOHN, `filterByFormula=${encodeURIComponent(formel)}`);
+  return records
+    // ... und zweite, exakte Prüfung am Link selbst (FIND ist nur der Vorfilter)
+    .filter((r) => Array.isArray(r.fields && r.fields.Mitarbeiter) && r.fields.Mitarbeiter.includes(maId))
+    .map((r) => lohnFuerApp(r, jetzt))
+    .filter(Boolean)
+    .sort((a, b) => b.sortierung.localeCompare(a.sortierung))
+    .map(({ sortierung, ...rest }) => rest);
+}
+
 const uploadText = (z) =>
   `Neue Lohnabrechnung${z.monat ? ` für ${z.monat}` : ''} verfügbar – jetzt in der App unter „Lohn / Zeit“ ansehen.`;
 const erinnerungText = (z, loeschAm) =>
@@ -183,7 +201,7 @@ export async function lohnUploadPush(recordId, jetzt) {
   await patch(recordId, { Push_Gesendet_Am: new Date(jetzt).toISOString() });
   const personal = await ladeOderNull(`${TABLES.PERSONAL}/${z.mitarbeiterId}`);
   if (!personal) return { status: 'skipped', grund: 'Mitarbeiter nicht gefunden' };
-  const r = await pushAnMitarbeiter(personal, TITEL, uploadText(z));
+  const r = await pushAnMitarbeiter(personal, TITEL, uploadText(z), 'lohn');
   return r.gesendet ? { status: 'ok', gesendet: 1 } : { status: 'skipped', grund: r.grund, code: r.code };
 }
 
@@ -205,7 +223,7 @@ export async function lohnAufbewahrung(jetzt) {
   };
   const pushen = async (z, textFuerPush) => {
     const p = z.mitarbeiterId ? await personal(z.mitarbeiterId) : null;
-    const r = p ? await pushAnMitarbeiter(p, TITEL, textFuerPush) : { gesendet: false, grund: 'Kein Mitarbeiter' };
+    const r = p ? await pushAnMitarbeiter(p, TITEL, textFuerPush, 'lohn') : { gesendet: false, grund: 'Kein Mitarbeiter' };
     if (!r.gesendet) ergebnis.zustellung.push({ id: z.id, grund: r.grund, code: r.code });
   };
 

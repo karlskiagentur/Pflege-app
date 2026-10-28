@@ -64,6 +64,20 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+// Ziele, die ein Tipp auf einen Push öffnet (gleiche Liste wie api/_push.js / App).
+const PUSH_ZIELE = ['plan', 'lohn', 'nachrichten', 'termine', 'dokumente'];
+const zielOk = (z) => (typeof z === 'string' && PUSH_ZIELE.includes(z) ? z : '');
+
+// Offene App-Fenster benachrichtigen (z. B. damit die App sofort neu lädt und „NEU“ zeigt).
+async function fensterBenachrichtigen(nachricht) {
+  try {
+    const liste = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of liste) {
+      try { c.postMessage(nachricht); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -71,32 +85,40 @@ self.addEventListener('push', (event) => {
   } catch (e) {
     data = {};
   }
+  const ziel = zielOk(data.ziel);
 
   event.waitUntil((async () => {
     await self.registration.showNotification(data.title || 'Wunschlos Pflege', {
       body: data.body || 'Neue Information',
       icon: '/icon.png',
-      badge: '/icon.png'
+      badge: '/icon.png',
+      data: { ziel }
     });
     // App-Icon-Badge (iOS 16.4+ PWA / Android) - randfall-sicher
     if (self.navigator.setAppBadge) {
       try { await self.navigator.setAppBadge(data.badge || 1); } catch (e) {}
     }
+    // Ist die App gerade offen, lädt sie die Neuigkeiten sofort nach.
+    await fensterBenachrichtigen({ typ: 'push-eingang', ziel });
   })());
 });
 
+// Tipp auf die Benachrichtigung: App öffnen bzw. nach vorne holen - und zwar genau die
+// Ansicht, in der der Inhalt steht (Tagesplan, Lohn, Mitteilungen, Termine, Dokumente).
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const ziel = zielOk(event.notification.data && event.notification.data.ziel);
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if ('focus' in client) {
+          try { client.postMessage({ typ: 'push-klick', ziel }); } catch (e) {}
           return client.focus();
         }
       }
       if (clients.openWindow) {
-        return clients.openWindow('/');
+        return clients.openWindow(ziel ? '/?ziel=' + ziel : '/');
       }
     })
   );
