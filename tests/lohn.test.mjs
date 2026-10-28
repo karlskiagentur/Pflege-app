@@ -232,6 +232,7 @@ test('Push beim Hochladen: einmal, an den zugeordneten Mitarbeiter, mit Monat', 
   assert.deepEqual(res.body, { status: 'ok', gesendet: 1 });
   assert.equal(pushes.length, 1);
   assert.match(pushes[0].body, /Neue Lohnabrechnung für Oktober 2026 verfügbar/);
+  assert.equal(pushes[0].ziel, 'lohn'); // Tipp auf den Push öffnet „Lohn / Zeit“
   assert.equal(log.patches.length, 1);
   assert.equal(log.patches[0].tabelle, LOHN);
   assert.ok(log.patches[0].fields.Push_Gesendet_Am);
@@ -341,6 +342,7 @@ test('Tageslauf: Erinnerung 7 Tage vorher, Löschung, Archiv, Nachholen - und Fe
   // Push-Texte: pünktliche und verspätete Erinnerung nennen das jeweils richtige Datum
   assert.equal(pushes.length, 3);
   assert.match(pushes[0].body, /Oktober 2026 wird am 22\.01\.2027 automatisch gelöscht/);
+  assert.ok(pushes.every((p) => p.ziel === 'lohn'));
   assert.match(pushes[1].body, /wird am 22\.01\.2027 automatisch gelöscht/); // 15.01. geplant, Erinnerung erst heute -> +7
   assert.match(pushes[2].body, /Neue Lohnabrechnung für Dezember 2026/);
   assert.equal(log.personalAbrufe, 2); // je Mitarbeiter nur einmal geladen

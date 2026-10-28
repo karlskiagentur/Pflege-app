@@ -1,4 +1,5 @@
-import { airtable, fetchAll, sendError, esc, readToken, handledPreflight, ohneDruckLinks, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendError, reportError, esc, readToken, handledPreflight, ohneDruckLinks, TABLES } from './_lib.js';
+import { mitteilungenFuer } from './_mitteilungen.js';
 
 // Datensparsamkeit: Diese Felder braucht die Klienten-App nicht (keine Anzeige, keine Logik).
 // Sie bleiben in Airtable unverändert, werden aber nicht mehr an das Endgerät übertragen.
@@ -17,6 +18,7 @@ export const INTERNE_FELDER = {
     'Abweichung_Min', 'Ist_Stunden_Monat', 'Dauer_Ist_alt_ungenutzt',   // Arbeitszeit-/Abrechnungsdaten
     'Push_senden', 'Meldungen',                                         // Push-Steuerung, interne Meldungen
     'Pfleger_Druck_Link', 'Dienstplan_Druck_Link', 'Dienstplan drucken', // Druck-Links des Büros (Schlüssel!)
+    'Push_Absage_MA_Am',                                                // Push-Sperre (intern)
   ],
   dokument: ['Drive_Link', 'Push_Gesendet', 'Push_senden'],
 };
@@ -61,12 +63,22 @@ export default async function handler(req, res) {
       : Promise.resolve();
 
     const byPatient = `filterByFormula=${encodeURIComponent(`FIND('${esc(patient.id)}', ARRAYJOIN({PatientID_live}))`)}`;
-    const [besuche, tasks, dokumente, kontakte] = await Promise.all([
+    // Mitteilungen des Pflegedienstes nur auf Wunsch der App (?mitteilungen=1: App-Start,
+    // Tipp auf einen Push, Rückkehr nach >10 Min.) - spart Abfragen bei jedem Nachladen.
+    // Ein Fehler dort darf die übrigen Daten nie verhindern (Alarm, Feld bleibt weg).
+    const mitMitteilungen = String((req.query && req.query.mitteilungen) || '') === '1';
+    const [besuche, tasks, dokumente, kontakte, mitteilungen] = await Promise.all([
       fetchAll(TABLES.BESUCHE, byPatient),
       fetchAll(TABLES.AUFGABEN, byPatient),
       fetchAll(TABLES.DOKUMENTE, byPatient),
       // FIX: Kontakte NUR des eingeloggten Patienten (vorher: alle Kontakte aller Patienten).
       fetchAll(TABLES.KONTAKTE, byPatient),
+      mitMitteilungen
+        ? mitteilungenFuer('patient', patient.id).catch((e) => {
+          reportError('api/app-data', `Mitteilungen nicht geladen: ${(e && e.message) || e}`, { status: e && e.status });
+          return null;
+        })
+        : Promise.resolve(null),
     ]);
     // Vor der Antwort abschließen: Serverless-Funktionen werden nach der Antwort eingefroren.
     await aktivitaet;
@@ -80,6 +92,7 @@ export default async function handler(req, res) {
         besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, INTERNE_FELDER.besuch))),
         tasks,
         dokumente: dokumente.map((d) => ohneFelder(d, INTERNE_FELDER.dokument)),
+        ...(mitteilungen ? { mitteilungen } : {}),
       },
     });
   } catch (e) {

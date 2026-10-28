@@ -1,4 +1,10 @@
 import webpush from 'web-push';
+import { pushNutzlast } from './_push.js';
+
+// ALT-Weg der Automationen "Push an Pfleger bei Stornierung" und "… bei neuem Termin"
+// (Text kommt aus der Automation). Wird abgelöst durch /api/push-event (type "absage"),
+// das Text und Uhrzeit selbst aus dem Einsatz bildet. Bis dahin öffnet ein Tipp auf
+// diese Pushs in der App den Tagesplan.
 
 const VAPID_PUBLIC = 'BGsTbCfunMpxOpMNTuMy9S5ERDA1yUi3mYhWa5zkBOXrcCnDxLSaYt4ixweedP7zhP4sOUG3--ZrjssD0W2daFo';
 webpush.setVapidDetails(
@@ -46,7 +52,7 @@ export default async function handler(req, res) {
     try { subscription = JSON.parse(abo); }
     catch { res.status(200).json({ status: 'skipped', grund: 'Abo ungültig' }); return; }
 
-    const payload = JSON.stringify({ title: titel || 'Wunschlos Pflege', body: nachricht });
+    const payload = pushNutzlast(titel || 'Wunschlos Pflege', nachricht, 'plan');
     try {
       await webpush.sendNotification(subscription, payload);
     } catch (err) {

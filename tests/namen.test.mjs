@@ -15,15 +15,16 @@ const { default: pushEvent } = await import('../api/push-event.js');
 const MITTEILUNGEN = 'tblQYvzkhvBnDyXdv', PERSONAL = 'tbl3pMfhOLYPsQ5jF', BESUCHE = 'tblXJOSz4LaJCG10M';
 const abo = (n) => JSON.stringify({ endpoint: `https://push.example.invalid/${n}`, keys: { p256dh: 'p', auth: 'a' } });
 const personal = {
-  recMaNamenTest001: { id: 'recMaNamenTest001', fields: { Name: 'Erika M.', Push_Subscription: abo(1) } },
-  recMaNamenTest002: { id: 'recMaNamenTest002', fields: { Name: 'Jürgen Ö.', Push_Subscription: abo(2) } },
+  recMaNamenTest001: { id: 'recMaNamenTest001', fields: { Name: 'Erika M.', Aktiv: true, Push_Subscription: abo(1) } },
+  recMaNamenTest002: { id: 'recMaNamenTest002', fields: { Name: 'Jürgen Ö.', Aktiv: true, Push_Subscription: abo(2) } },
 };
 
 function mitteilung(fields) {
   airtableAttrappe(async (a) => {
     const id = a.url.pathname.split('/')[4];
     if (a.methode === 'PATCH') return antwort(200, {});
-    if (a.tabelle === MITTEILUNGEN) return antwort(200, { id, fields });
+    // Versendet wird nur, was das Büro auf "Senden" gestellt hat (Status-Sperre)
+    if (a.tabelle === MITTEILUNGEN) return antwort(200, { id, fields: { Status: 'Senden', ...fields } });
     if (a.tabelle === PERSONAL) return personal[id] ? antwort(200, personal[id]) : antwort(404, {});
     return antwort(404, {});
   });
@@ -54,7 +55,7 @@ test('Ausfall-Mitteilung: ohne Verknüpfung Rückfall auf das Textfeld, ohne Ers
   // Zielgruppe "Alle Mitarbeiter": Abos kommen aus der Personal-Liste
   airtableAttrappe(async (a) => {
     if (a.methode === 'PATCH') return antwort(200, {});
-    if (a.tabelle === MITTEILUNGEN) return antwort(200, { id: 'recMitteilung0001', fields: { Typ: 'Ausfall', Zielgruppe: 'Alle Mitarbeiter', Mitarbeiter_Ausfall: 'Erika M.' } });
+    if (a.tabelle === MITTEILUNGEN) return antwort(200, { id: 'recMitteilung0001', fields: { Status: 'Senden', Typ: 'Ausfall', Zielgruppe: 'Alle Mitarbeiter', Mitarbeiter_Ausfall: 'Erika M.' } });
     if (a.tabelle === PERSONAL) return antwort(200, { records: [personal.recMaNamenTest001] });
     return antwort(404, {});
   });

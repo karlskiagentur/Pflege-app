@@ -1,6 +1,19 @@
 import webpush from 'web-push';
 import { airtable, fetchAll, sendInfoCopy, reportError, TABLES } from './_lib.js';
 import { lohnUploadPush } from './_lohn.js';
+import { pushNutzlast, einsatzZeitText } from './_push.js';
+import { MITTEILUNGEN, zielgruppeNormal, mitteilungText } from './_mitteilungen.js';
+
+// Push-Ereignisse aus den Airtable-Automationen: { type, recordId }.
+//   besuch         Termin freigegeben (Push_senden = "Senden") -> Klient + eingeplanter Mitarbeiter
+//   absage         Termin abgesagt (Status "Abgesagt")         -> eingeplanter Mitarbeiter
+//   dokument       Dokument freigegeben                         -> Klient
+//   mitteilung     Mitteilung auf "Senden"                      -> laut Zielgruppe + Verknüpfte
+//   terminanfrage  neue Anfrage eines Klienten                  -> Mitarbeiter mit Rolle "Leitung"
+//   lohnabrechnung Lohnabrechnung hochgeladen                   -> der Mitarbeiter (api/_lohn.js)
+// Jeder Push trägt ein Ziel (siehe api/_push.js): ein Tipp darauf öffnet in der App genau die
+// Ansicht, in der der Inhalt steht. Inhalte kommen immer aus dem Datensatz, nie aus dem
+// Aufruf - und jeder Typ hat eine eigene Sperre gegen wiederholtes Auslösen.
 
 // Gleiche VAPID/web-push-Konfiguration wie api/send-push (gleiche Env-Variablen)
 const VAPID_PUBLIC_KEY =
@@ -11,15 +24,19 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
-const MITTEILUNGEN = 'tblQYvzkhvBnDyXdv';
 const TITLE = 'Wunschlos Pflege';
+export const ABSAGE_SPERRE_MS = 10 * 60 * 1000; // höchstens ein Absage-Push je Einsatz in 10 Min.
 
 // Lookup-/Link-Felder tolerant auslesen
 const firstLink = (v) => (Array.isArray(v) ? v[0] : v);
 const val = (v) => (Array.isArray(v) ? (v[0] ?? '') : (v ?? ''));
-const txt = (v) => String(val(v));
+const txt = (v) => {
+  const x = val(v);
+  return String(x && typeof x === 'object' && 'name' in x ? x.name : x);
+};
+const linkIds = (v) => [...new Set((Array.isArray(v) ? v : v ? [v] : []).map(String).filter(Boolean))];
 
-// de-DE Datum + Uhrzeit (deutsche Zeitzone, damit die Uhrzeit stimmt)
+// de-DE Datum + Uhrzeit (deutsche Zeitzone, damit die Uhrzeit stimmt) - Klienten-Texte
 function fmt(v) {
   const raw = val(v);
   if (!raw) return '';
@@ -43,30 +60,28 @@ async function loadRec(table, id) {
   }
 }
 
-// Push_Subscription eines Records (falls vorhanden) in das Set aufnehmen (dedupliziert)
-function addSub(set, rec) {
+// Empfänger: Abo (JSON-Text) -> Push-Inhalt. Dasselbe Abo bekommt nur EINEN Push.
+function aboVon(rec) {
   const abo = rec && rec.fields && rec.fields.Push_Subscription;
-  if (abo) set.add(typeof abo === 'string' ? abo : JSON.stringify(abo));
+  if (!abo) return '';
+  return typeof abo === 'string' ? abo : JSON.stringify(abo);
 }
-
-async function addPatientSub(set, patientId) {
-  addSub(set, await loadRec(TABLES.PATIENTEN, patientId));
+function hinzufuegen(empfaenger, rec, nutzlast) {
+  const abo = aboVon(rec);
+  if (abo && !empfaenger.has(abo)) empfaenger.set(abo, nutzlast);
 }
-async function addPersonalSub(set, personalId) {
-  addSub(set, await loadRec(TABLES.PERSONAL, personalId));
-}
+const aktiv = (rec) => !!(rec && rec.fields && rec.fields.Aktiv);
 
 // Endpoint gekürzt fürs Log (letzte ~12 Zeichen genügen zur Unterscheidung)
 const kurzEndpoint = (sub) => {
   try { const e = JSON.parse(sub).endpoint || ''; return '...' + e.slice(-12); } catch { return '?'; }
 };
 
-// Versendet an alle Abos, sammelt je Abo ein Detail-Ergebnis (fürs Airtable-Log)
-async function sendToAll(subs, message) {
-  const payload = JSON.stringify({ title: TITLE, body: message });
+// Versendet an alle Empfänger, sammelt je Abo ein Detail-Ergebnis (fürs Airtable-Log)
+async function sendToAll(empfaenger) {
   let gesendet = 0, fehlgeschlagen = 0;
   const details = [];
-  for (const s of subs) {
+  for (const [s, payload] of empfaenger) {
     const endpointKurz = kurzEndpoint(s);
     try {
       const r = await webpush.sendNotification(JSON.parse(s), payload);
@@ -77,7 +92,7 @@ async function sendToAll(subs, message) {
       const code = err && err.statusCode;
       const eintrag = { endpointKurz, code: code || 'ERR' };
       if (code === 404 || code === 410) {
-        eintrag.hinweis = 'Abo abgelaufen - Klient muss Benachrichtigungen in der App neu aktivieren';
+        eintrag.hinweis = 'Abo abgelaufen - Benachrichtigungen in der App neu aktivieren';
       } else {
         eintrag.fehler = String((err && err.message) || err);
       }
@@ -86,6 +101,34 @@ async function sendToAll(subs, message) {
     }
   }
   return { gesendet, fehlgeschlagen, details };
+}
+
+// Klartext eines Einsatzes für Mitarbeiter: "Grundpflege bei Frau M."
+function einsatzBei(f) {
+  const taetigkeit = txt(f['Tätigkeit']).trim() || 'Einsatz';
+  const klient = txt(f.Patient_Name).trim();
+  return klient ? `${taetigkeit} bei ${klient}` : taetigkeit;
+}
+
+/** Push-Texte für den eingeplanten Mitarbeiter (deutsche Zeit, mit Datum). */
+export function mitarbeiterEinsatzText(anlass, fields) {
+  const f = fields || {};
+  const was = einsatzBei(f);
+  const wann = einsatzZeitText(f);
+  const mitZeit = wann ? `${was} ${wann}` : was;
+  if (anlass === 'Abgesagt') return { titel: 'Einsatz abgesagt', text: `${mitZeit} wurde abgesagt.` };
+  if (anlass === 'Geändert') return { titel: 'Einsatz geändert', text: wann ? `${was} ist jetzt ${wann}.` : `${was} wurde geändert.` };
+  return { titel: 'Neuer Einsatz', text: `${mitZeit}.` };
+}
+
+// Mitarbeiter eines Einsatzes (eingeplant + ggf. Vertretung), nur aktive, ohne Doppelte.
+async function einsatzMitarbeiter(f) {
+  const liste = [];
+  for (const id of linkIds([...linkIds(f.Pfleger), ...linkIds(f.Pfleger_Ersatz)])) {
+    const p = await loadRec(TABLES.PERSONAL, id);
+    if (aktiv(p)) liste.push(p);
+  }
+  return liste;
 }
 
 export default async function handler(req, res) {
@@ -98,6 +141,9 @@ export default async function handler(req, res) {
   if (!type || !recordId) {
     res.status(200).json({ status: 'skipped', grund: 'Ungültiger Aufruf' }); return;
   }
+  if (!/^rec[A-Za-z0-9]{14}$/.test(String(recordId))) {
+    res.status(200).json({ status: 'skipped', grund: 'Ungültige ID' }); return;
+  }
 
   try {
     // Lohnabrechnung hochgeladen -> Push an den Mitarbeiter (eigene Regeln in api/_lohn.js:
@@ -107,11 +153,11 @@ export default async function handler(req, res) {
       return;
     }
 
-    const subs = new Set();
+    const empfaenger = new Map();
     let message = '';
-    let istMitteilung = false;
     let infoKopie = null; // { typ, empfaenger } -> Info-Kopie ans Büro (nur besuch/dokument/mitteilung)
     let gateTable = null; // Besuche/Dokumente: Push nur nach bewusster Freigabe (Push_senden='Senden')
+    let leerGrund = 'Kein Push-Abo (als Gesendet markiert)';
 
     if (type === 'besuch') {
       const rec = await loadRec(TABLES.BESUCHE, recordId);
@@ -139,13 +185,44 @@ export default async function handler(req, res) {
       } else {
         message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
       }
-      await addPatientSub(subs, patientIds[0]);
-      // Zusätzlich den dem Besuch zugeteilten Mitarbeiter benachrichtigen.
-      // Zustellungen sind unabhängig (sendToAll behandelt jedes Abo einzeln).
-      const pflegerId = firstLink(f.Pfleger) || firstLink(f.Pfleger_ID);
-      const vorSize = subs.size;
-      if (pflegerId) await addPersonalSub(subs, pflegerId);
-      infoKopie = { typ: 'Termin', empfaenger: subs.size > vorSize ? 'Klient + zugeteilter Mitarbeiter' : 'Klient' };
+      hinzufuegen(empfaenger, await loadRec(TABLES.PATIENTEN, patientIds[0]), pushNutzlast(TITLE, message, 'termine'));
+      // Zusätzlich die Mitarbeiter des Einsatzes - mit eigenem Text (Einsatz, Klient,
+      // Datum, Uhrzeit). Ist der Termin bereits "Abgesagt", hat sie die Automation
+      // "Push an Pfleger bei Stornierung" schon informiert (kein zweiter Push).
+      const vorher = empfaenger.size;
+      if (status !== 'Abgesagt') {
+        const ma = mitarbeiterEinsatzText(anlass, f);
+        const nutzlast = pushNutzlast(ma.titel, ma.text, 'plan');
+        for (const p of await einsatzMitarbeiter(f)) hinzufuegen(empfaenger, p, nutzlast);
+      }
+      infoKopie = { typ: 'Termin', empfaenger: empfaenger.size > vorher ? 'Klient + zugeteilter Mitarbeiter' : 'Klient' };
+
+    } else if (type === 'absage') {
+      // Termin auf "Abgesagt" -> Push an die Mitarbeiter des Einsatzes (Automation
+      // "Push an Pfleger bei Stornierung"). Sperre: höchstens ein Push je Einsatz in 10 Minuten.
+      const rec = await loadRec(TABLES.BESUCHE, recordId);
+      if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Besuch nicht gefunden' }); return; }
+      const f = rec.fields || {};
+      if (txt(f.Status) !== 'Abgesagt') { res.status(200).json({ status: 'skipped', grund: 'Termin nicht abgesagt' }); return; }
+      const zuletzt = Date.parse(txt(f.Push_Absage_MA_Am));
+      if (Number.isFinite(zuletzt) && Date.now() - zuletzt < ABSAGE_SPERRE_MS) {
+        res.status(200).json({ status: 'skipped', grund: 'Bereits benachrichtigt' }); return;
+      }
+      // Sperre zuerst setzen (verhindert Doppel-Pushs bei zeitgleichen Auslösungen). Fehlt
+      // das Feld, geht der Push trotzdem raus - der Betreiber wird alarmiert.
+      try {
+        await airtable(`${TABLES.BESUCHE}/${recordId}`, {
+          method: 'PATCH', body: JSON.stringify({ fields: { Push_Absage_MA_Am: new Date().toISOString() } }),
+        });
+      } catch (e) {
+        if (!e || e.status !== 422) throw e;
+        reportError('api/push-event', 'Besuche: Feld Push_Absage_MA_Am fehlt - Absage-Push ohne Sperre', { status: e.status });
+      }
+      const ma = mitarbeiterEinsatzText('Abgesagt', f);
+      message = ma.text;
+      const nutzlast = pushNutzlast(ma.titel, ma.text, 'plan');
+      for (const p of await einsatzMitarbeiter(f)) hinzufuegen(empfaenger, p, nutzlast);
+      leerGrund = 'Kein Push-Abo';
 
     } else if (type === 'dokument') {
       const rec = await loadRec(TABLES.DOKUMENTE, recordId);
@@ -157,99 +234,110 @@ export default async function handler(req, res) {
       const patientIds = f.Patient || [];
       if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
       message = `Neue(r) ${txt(f.Typ)} für Sie verfügbar - jetzt in der App ansehen.`;
-      await addPatientSub(subs, patientIds[0]);
+      hinzufuegen(empfaenger, await loadRec(TABLES.PATIENTEN, patientIds[0]), pushNutzlast(TITLE, message, 'dokumente'));
       infoKopie = { typ: 'Dokument', empfaenger: 'Klient' };
 
     } else if (type === 'terminanfrage') {
-      // Klient -> Pflegedienst: neue Terminanfrage/-änderung aus der App.
-      // Empfänger: alle aktiven Mitarbeiter mit Push-Abo. Doppel-Schutz über
-      // das Feld Buero_benachrichtigt (wird nach dem Versand gesetzt).
+      // Klient -> Pflegedienst: neue Terminanfrage/-änderung aus der App. Empfänger: nur
+      // aktive Mitarbeiter mit Rolle "Leitung" (Büro/PDL) - Pflegekräfte können in ihrer
+      // App nichts damit anfangen. Das Büro bekommt zusätzlich die E-Mail-Automation.
+      // Doppel-Schutz über das Feld Buero_benachrichtigt (wird vor dem Versand gesetzt).
       const rec = await loadRec(TABLES.TERMINANFRAGEN, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Anfrage nicht gefunden' }); return; }
       const f = rec.fields || {};
       if (f.Buero_benachrichtigt) { res.status(200).json({ status: 'skipped', grund: 'Bereits benachrichtigt' }); return; }
-      gateTable = null; // eigener Marker statt Push_senden (s.u.)
-      const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Push_Subscription&fields%5B%5D=Aktiv');
-      personal.filter((p) => p.fields && p.fields.Aktiv).forEach((p) => addSub(subs, p));
-      message = txt(f.Art) === 'Terminänderung'
-        ? 'Terminänderungs-Wunsch eines Klienten eingegangen - bitte im Büro prüfen.'
-        : 'Neue Termin-Anfrage eines Klienten eingegangen - bitte im Büro prüfen.';
       // Marker sofort setzen (unabhängig davon, ob gerade jemand ein Abo hat),
       // damit die Anfrage nicht bei jedem Automationslauf erneut geprüft wird.
       await airtable(`${TABLES.TERMINANFRAGEN}/${recordId}`, {
         method: 'PATCH', body: JSON.stringify({ fields: { Buero_benachrichtigt: true } }),
       });
+      message = txt(f.Art) === 'Terminänderung'
+        ? 'Terminänderungs-Wunsch eines Klienten eingegangen - bitte im Büro prüfen.'
+        : 'Neue Termin-Anfrage eines Klienten eingegangen - bitte im Büro prüfen.';
+      const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Push_Subscription&fields%5B%5D=Aktiv&fields%5B%5D=Rolle');
+      const nutzlast = pushNutzlast(TITLE, message);
+      personal.filter((p) => aktiv(p) && txt(p.fields.Rolle) === 'Leitung').forEach((p) => hinzufuegen(empfaenger, p, nutzlast));
+      leerGrund = 'Keine Leitung mit Push-Abo (E-Mail ans Büro läuft separat)';
 
     } else if (type === 'mitteilung') {
-      istMitteilung = true;
       const rec = await loadRec(MITTEILUNGEN, recordId);
       if (!rec) { res.status(200).json({ status: 'skipped', grund: 'Mitteilung nicht gefunden' }); return; }
       const f = rec.fields || {};
-      // Alt-Optionen der Zielgruppe tolerant auf die gültigen abbilden
-      // ("Error darf nie entstehen": eine falsch gewählte Alt-Option darf den
-      // Versand nicht ins Leere laufen lassen).
-      const zielRoh = txt(f.Zielgruppe);
-      const ziel = zielRoh === 'Patienten' ? 'Alle Patienten'
-        : zielRoh === 'Mitarbeiter' ? 'Alle Mitarbeiter'
-        : zielRoh === 'Alle (Broadcast)' ? 'Alle gesamt'
-        : zielRoh;
+      // Nur auf "Senden" (bewusste Freigabe im Büro); danach steht sie auf "Gesendet" -
+      // ein erneuter Aufruf verschickt nichts. Erneut senden = Status wieder auf "Senden".
+      if (txt(f.Status) !== 'Senden') { res.status(200).json({ status: 'skipped', grund: 'Nicht zum Senden freigegeben' }); return; }
+      const ziel = zielgruppeNormal(f.Zielgruppe);
 
-      if (ziel === 'Alle Patienten' || ziel === 'Alle gesamt') {
-        const patienten = await fetchAll(TABLES.PATIENTEN, "fields%5B%5D=Push_Subscription");
-        patienten.forEach((p) => addSub(subs, p));
-      }
-      if (ziel === 'Alle Mitarbeiter' || ziel === 'Alle gesamt') {
-        const personal = await fetchAll(TABLES.PERSONAL, "fields%5B%5D=Push_Subscription");
-        personal.forEach((p) => addSub(subs, p));
-      }
-
-      // Immer zusätzlich die direkt Betroffenen benachrichtigen (unabhängig von Zielgruppe)
-      const betroffen = firstLink(f.Betroffener_Patient);
-      if (betroffen) await addPatientSub(subs, betroffen);
-      // Ausfall/Ersatz: Push an die verknüpften Mitarbeiter; ihr Name im Text kommt aus dem
-      // Datensatz (Kurzform "Vorname N."), die alten Textfelder sind nur noch Rückfall.
+      // Empfänger einsammeln: Ausfall/Ersatz und betroffener Klient immer, dazu die Zielgruppe.
       const namen = { ausfall: [], ersatz: [] };
-      for (const [art, ids] of [['ausfall', f.Ausfall_Mitarbeiter], ['ersatz', f.Ersatz_Mitarbeiter]]) {
-        for (const id of [].concat(ids || [])) {
+      const personen = []; // Datensätze (Personal/Patienten), deren Abo den Push bekommt
+      for (const [art, liste] of [['ausfall', f.Ausfall_Mitarbeiter], ['ersatz', f.Ersatz_Mitarbeiter]]) {
+        for (const id of linkIds(liste)) {
           const p = await loadRec(TABLES.PERSONAL, id);
-          addSub(subs, p);
           const name = p && p.fields && p.fields.Name;
           if (name) namen[art].push(String(name).trim());
+          if (p) personen.push(p);
         }
       }
-
-      if (txt(f.Typ) === 'Ausfall') {
-        const ausfall = namen.ausfall.join(', ') || txt(f.Mitarbeiter_Ausfall).trim();
-        const ersatz = namen.ersatz.join(', ') || txt(f.Mitarbeiter_Ersatz).trim();
-        const wer = ausfall ? `Mitarbeiter/in ${ausfall}` : 'Ein/e Mitarbeiter/in';
-        message = ersatz ? `${wer} fällt aus, deshalb kommt Mitarbeiter/in ${ersatz}` : `${wer} fällt aus.`;
-      } else {
-        message = txt(f.Nachricht);
+      const betroffen = firstLink(f.Betroffener_Patient);
+      if (betroffen) {
+        const p = await loadRec(TABLES.PATIENTEN, betroffen);
+        if (p) personen.push(p);
       }
+      if (ziel === 'Alle Mitarbeiter' || ziel === 'Alle gesamt') {
+        (await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Push_Subscription&fields%5B%5D=Aktiv'))
+          .filter(aktiv).forEach((p) => personen.push(p));
+      }
+      if (ziel === 'Alle Patienten' || ziel === 'Alle gesamt') {
+        (await fetchAll(TABLES.PATIENTEN, 'fields%5B%5D=Push_Subscription')).forEach((p) => personen.push(p));
+      }
+      const hatPublikum = personen.length > 0
+        || ['Alle Mitarbeiter', 'Alle Patienten', 'Alle gesamt'].includes(ziel);
+      if (!hatPublikum) {
+        // Status NICHT auf "Gesendet": sonst hinge sie als versendet fest, obwohl niemand sie bekam.
+        res.status(200).json({ status: 'skipped', grund: 'Keine Empfänger' }); return;
+      }
+
+      message = mitteilungText(f, namen);
+      if (!message) message = txt(f.Titel).trim();
+      if (!message) { res.status(200).json({ status: 'skipped', grund: 'Kein Text' }); return; }
+
+      // ZUERST als gesendet ablegen (mit Text + Zeitpunkt): Wer auf den Push tippt, findet
+      // die Mitteilung sofort in der App. Fehlen die neuen Felder, wird nur der Status gesetzt.
+      try {
+        await airtable(`${MITTEILUNGEN}/${recordId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ fields: { Status: 'Gesendet', Gesendet_Am: new Date().toISOString(), Gesendeter_Text: message } }),
+        });
+      } catch (e) {
+        if (!e || e.status !== 422) throw e;
+        reportError('api/push-event', 'Mitteilungen: Felder Gesendet_Am/Gesendeter_Text fehlen - nur Status gesetzt', { status: e.status });
+        await airtable(`${MITTEILUNGEN}/${recordId}`, {
+          method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Gesendet' } }),
+        });
+      }
+
+      const nutzlast = pushNutzlast(txt(f.Titel).trim() || TITLE, message, 'nachrichten');
+      personen.forEach((p) => hinzufuegen(empfaenger, p, nutzlast));
       infoKopie = { typ: 'Mitteilung', empfaenger: ziel || 'Empfänger laut Zielgruppe' };
+      leerGrund = 'Kein Push-Abo (Mitteilung steht in der App)';
 
     } else {
       res.status(200).json({ status: 'skipped', grund: 'Unbekannter type' }); return;
     }
 
-    // Keine Empfänger -> skipped. Bei Mitteilung Status NICHT auf "Gesendet" setzen,
-    // damit sie nicht als versendet hängen bleibt.
-    if (subs.size === 0) {
+    // Keine Push-Empfänger -> skipped.
+    if (empfaenger.size === 0) {
       // Kein Empfaenger-Abo: Freigabe trotzdem als erledigt markieren, damit sie nicht
       // dauerhaft auf "Senden" haengen bleibt und nicht erneut ausloest.
       if (gateTable) {
         await airtable(`${gateTable}/${recordId}`, { method: 'PATCH', body: JSON.stringify({ fields: { Push_senden: 'Gesendet' } }) });
       }
-      res.status(200).json({ status: 'skipped', grund: istMitteilung ? 'Keine Empfänger' : 'Kein Push-Abo (als Gesendet markiert)' }); return;
+      res.status(200).json({ status: 'skipped', grund: leerGrund }); return;
     }
 
-    const { gesendet, fehlgeschlagen, details } = await sendToAll([...subs], message);
+    const { gesendet, fehlgeschlagen, details } = await sendToAll(empfaenger);
 
-    if (istMitteilung) {
-      await airtable(`${MITTEILUNGEN}/${recordId}`, {
-        method: 'PATCH', body: JSON.stringify({ fields: { Status: 'Gesendet' } }),
-      });
-    }
     // Besuche/Dokumente: Freigabe nach dem Versand automatisch auf "Gesendet" (verhindert
     // erneutes Ausloesen; der Mitarbeiter sieht, dass der Push raus ist).
     if (gateTable) {
