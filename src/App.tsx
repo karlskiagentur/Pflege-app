@@ -14,6 +14,7 @@ const mapsUrl = (adresse: string) =>
   `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
+import PdfVorschau from './PdfVorschau';
 import {
   zielAusAdresse, istPushZiel, ladeJson, speichereJson, einsatzStand, einsatzMarken, neueSchluessel,
   gesehenErgaenzen, datumMs, anzeigeZeit, type PushZiel, type EinsatzMarke,
@@ -447,6 +448,7 @@ export default function App() {
   const [showAllTasks, setShowAllTasks] = useState(false);
   const [activeModal, setActiveModal] = useState<'folder' | 'upload' | 'video' | 'ki-telefon' | 'new-appointment' | 'revoke-consent' | 'lohn-choice' | 'sign' | null>(null);
   const [selectedLohn, setSelectedLohn] = useState<any>(null);
+  const [lohnVorschau, setLohnVorschau] = useState<any>(null); // geöffnete Vorschau (PdfVorschau)
   const [signDoc, setSignDoc] = useState<any>(null);
   const [isSigning, setIsSigning] = useState(false);
   const [signaturStep, setSignaturStep] = useState<1 | 2>(1);
@@ -922,6 +924,35 @@ export default function App() {
         }
     }
     setLohnDownloading(false);
+  };
+
+  // Vorschau einer Lohnabrechnung IN der App (src/PdfVorschau.tsx) statt window.open: In der
+  // installierten App stand die PDF sonst ohne Browser-Leiste im App-Fenster - kein Weg zurück.
+  // Ein eigener Verlaufseintrag sorgt dafür, dass auch die Zurück-Geste/-Taste (Android) nur
+  // die Vorschau schließt und nicht die App verlässt.
+  const lohnVorschauNr = useRef(0); // je Öffnen neu - ein später Rückfall schließt nie die nächste
+  useEffect(() => {
+    const zurueck = () => setLohnVorschau(null);
+    window.addEventListener('popstate', zurueck);
+    return () => window.removeEventListener('popstate', zurueck);
+  }, []);
+  const oeffneLohnVorschau = (lohn: any) => {
+    lohnVorschauNr.current += 1;
+    setActiveModal(null);
+    setLohnVorschau({ ...lohn, vorschauNr: lohnVorschauNr.current });
+    try { window.history.pushState({ wlVorschau: true }, ''); } catch { /* dann schließt nur der Knopf */ }
+  };
+  const schliesseLohnVorschau = () => {
+    const nr = lohnVorschauNr.current;
+    let eigenerEintrag = false;
+    try { eigenerEintrag = !!(window.history.state && window.history.state.wlVorschau); } catch { /* ohne Verlauf */ }
+    if (eigenerEintrag) {
+      window.history.back(); // popstate schließt die Vorschau
+      // Rückfall, falls popstate ausbleibt - aber nur für genau diese Vorschau
+      window.setTimeout(() => setLohnVorschau((v: any) => (v && v.vorschauNr === nr ? null : v)), 400);
+    } else {
+      setLohnVorschau(null);
+    }
   };
 
   // Rechnung aufs Handy laden (Dateien-App via Web-Share, sonst Blob-Download)
@@ -2343,7 +2374,7 @@ export default function App() {
             <button onClick={() => setActiveModal(null)} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-full"><X size={20}/></button>
             <h3 className="text-xl font-black mb-6 pr-10 flex items-center gap-3"><Euro className="text-[#dccfbc]"/> {selectedLohn.titel || formatMonat(selectedLohn.zeitraum)}</h3>
             <div className="space-y-4">
-              <button onClick={() => { window.open(selectedLohn.lohnId ? lohnDateiUrl(selectedLohn, true) : selectedLohn.url, '_blank'); setActiveModal(null); }} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
+              <button onClick={() => oeffneLohnVorschau(selectedLohn)} className="w-full bg-[#F9F7F4] text-[#b5a48b] py-5 rounded-2xl font-black uppercase flex items-center justify-center gap-2 active:scale-95 transition-all">
                 <Eye size={18}/> Vorschau
               </button>
               <button onClick={() => handleLohnDownload(selectedLohn)} disabled={lohnDownloading} className="w-full bg-[#b5a48b] text-white py-5 rounded-2xl font-black uppercase shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-all">
@@ -2352,6 +2383,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* LOHN: VORSCHAU IN DER APP (immer mit „Zurück") */}
+      {lohnVorschau && (
+        <PdfVorschau
+          url={lohnDateiUrl(lohnVorschau, true)}
+          titel={lohnVorschau.titel || formatMonat(lohnVorschau.zeitraum) || 'Lohnabrechnung'}
+          onZurueck={schliesseLohnVorschau}
+          onHerunterladen={() => handleLohnDownload(lohnVorschau)}
+          laedtHerunter={lohnDownloading}
+        />
       )}
     </div>
     );
