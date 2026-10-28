@@ -9,14 +9,19 @@
 //    (Von–Bis); solche Zeilen werden gekennzeichnet.
 // 3. Liegen zwischen zwei Terminen desselben Tages höchstens 30 Minuten, ist das bezahlte
 //    "Kunden-Anfahrt" (eigene Zeile, zählt zur Summe). Liegen mehr als 30 Minuten dazwischen,
-//    ist das eine unbezahlte Pause (eigene Zeile, zählt NICHT zur Summe).
+//    werden trotzdem 30 Minuten als Kunden-Anfahrt bezahlt - die Fahrt zum nächsten Klienten
+//    fällt ja an; nur der Rest ist unbezahlte Pause (eigene Zeile, zählt NICHT zur Summe).
+//    Beispiel: Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt. (Vorgabe Karl 28.10.2026; vorher galt
+//    eine Lücke über 30 Minuten komplett als Pause.)
 // 4. Alle Zeiten liegen im 15-Minuten-Raster; die Monatssumme ist die exakte Addition.
 //
 // Zeitachse je Tag: Ein Termin beginnt zur geplanten Von-Zeit und dauert so lange wie seine
 // angerechnete Zeit. Dauert ein Termin länger, verschiebt sich der nächste entsprechend
 // (niemand ist an zwei Orten gleichzeitig) - so wird keine Minute doppelt gezählt.
 
-export const ANFAHRT_MAX_MIN = 30; // Lücke bis einschließlich 30 Min = bezahlte Kunden-Anfahrt
+// Bezahlte Kunden-Anfahrt je Lücke zwischen zwei Terminen: bis 30 Min die ganze Lücke,
+// bei längerer Lücke genau 30 Min (der Rest ist Pause).
+export const ANFAHRT_MAX_MIN = 30;
 const TAKT = 15;                    // Abrechnungstakt in Minuten
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -149,9 +154,20 @@ export function berechneZeitnachweis(besuche, opt = {}) {
           zeilen.push({ art: 'anfahrt', von: uhr(ende), bis: uhr(beginn), min: m });
           tag.anfahrtMin += m;
         } else if (luecke > ANFAHRT_MAX_MIN) {
-          const m = takt(luecke);
-          zeilen.push({ art: 'pause', von: uhr(ende), bis: uhr(beginn), min: m });
-          tag.pauseMin += m;
+          // Längere Lücke: 30 Min Kunden-Anfahrt sind trotzdem bezahlt, nur der Rest ist Pause.
+          // Auf der Zeitachse liegt die Anfahrt direkt vor dem nächsten Einsatz (Fahrt zum
+          // Klienten), die Pause davor. Gesamtlänge wie bisher im 15-Minuten-Takt; bleibt nach
+          // dem Runden keine Pause übrig (z. B. 35 Min), deckt die Anfahrt die ganze Lücke.
+          const gesamt = takt(luecke);
+          const anfahrt = Math.min(gesamt, ANFAHRT_MAX_MIN);
+          const pause = gesamt - anfahrt;
+          const anfahrtVon = pause > 0 ? beginn - anfahrt : ende;
+          if (pause > 0) {
+            zeilen.push({ art: 'pause', von: uhr(ende), bis: uhr(anfahrtVon), min: pause });
+            tag.pauseMin += pause;
+          }
+          zeilen.push({ art: 'anfahrt', von: uhr(anfahrtVon), bis: uhr(beginn), min: anfahrt });
+          tag.anfahrtMin += anfahrt;
         } else if (luecke < 0) {
           beginn = ende; // vorheriger Termin dauerte länger -> dieser beginnt danach
         }

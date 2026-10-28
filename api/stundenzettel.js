@@ -41,8 +41,8 @@ export const ERLAEUTERUNG = [
   'Zeitfenster und Soll: geplante Zeit laut Dienstplan. Das Zeitfenster bleibt so stehen, auch wenn ein Einsatz länger oder kürzer gedauert hat – es zeigt immer die Planung.',
   'Ist: die in der App unter „Tatsächliche Dauer“ erfasste Zeit im 15-Minuten-Takt (gerundet, z. B. 20 Min. = 0:15, 25 Min. = 0:30). Bezahlt wird die Ist-Zeit, nicht das Zeitfenster. Fett gedruckt = weicht von der Planung ab.',
   '„laut Ist“: der gerechnete Zeitraum, wenn er vom Zeitfenster abweicht – Beginn laut Plan (bzw. direkt nach dem vorherigen Einsatz, wenn dieser länger gedauert hat) plus Ist-Dauer.',
-  'Kunden-Anfahrt: höchstens 30 Minuten zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten – wird bezahlt. Mehr als 30 Minuten sind eine Pause: unbezahlt und separat ausgewiesen.',
-  'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; über 30 Minuten wird daraus eine Pause.',
+  'Kunden-Anfahrt: Die Zeit zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten wird bis 30 Minuten voll bezahlt. Ist die Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause – unbezahlt und separat ausgewiesen (z. B. Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt).',
+  'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; was über 30 Minuten hinausgeht, ist Pause.',
 ];
 
 /**
