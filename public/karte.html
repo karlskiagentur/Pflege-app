@@ -4,22 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<!-- OSM-Kachelserver verlangen einen Referer. Nur die Herkunft (Domain) wird gesendet, nie der Link mit Schlüssel. -->
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Einsatzkarte · Wunschlos Pflege</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<link rel="icon" href="/icon.png" type="image/png">
+<!-- Leaflet liegt lokal (public/vendor) – kein CDN, das von Firewall/Werbeblocker gesperrt werden kann. -->
+<link rel="stylesheet" href="/vendor/leaflet-1.9.4/leaflet.css">
+<script src="/vendor/leaflet-1.9.4/leaflet.js"></script>
 <style>
   :root{--blau:#1d4ed8;--grau:#6b7280;--rand:#e5e7eb}
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#111827;background:#f9fafb}
-  header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--rand)}
+  html,body{margin:0;height:100%;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111827;background:#f9fafb}
+  body{display:flex;flex-direction:column;min-height:100%}
+  header{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--rand)}
   header h1{margin:0;font-size:16px}
   header .info{color:var(--grau);font-size:13px;display:flex;align-items:center;gap:10px}
+  #stand.hinweis{color:#92400e}
   button{font:inherit;padding:6px 12px;border:0;border-radius:8px;background:var(--blau);color:#fff;cursor:pointer}
   button:disabled{opacity:.5;cursor:default}
-  .layout{display:flex;height:calc(100% - 49px)}
-  #map{flex:1;min-width:0}
+  .layout{flex:1 1 auto;display:flex;min-height:0;position:relative}
+  #map{flex:1;min-width:0;min-height:300px;background:#e5e7eb}
   aside{width:300px;background:#fff;border-left:1px solid var(--rand);overflow-y:auto}
   .ma{display:block;width:100%;text-align:left;background:none;color:inherit;border:0;border-bottom:1px solid var(--rand);border-radius:0;padding:10px 14px;cursor:pointer}
   .ma:hover{background:#f3f4f6}
@@ -27,17 +31,26 @@
   .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
   .ma .txt{color:#4b5563}
   .warn{margin:12px;padding:10px;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px}
-  .fehler{margin:12px;padding:10px;border-radius:10px;background:#fef2f2;color:#991b1b}
+  .info-box{margin:12px;padding:10px;border-radius:10px;background:#eff6ff;color:#1e3a8a;font-size:13px}
   .leer{padding:14px;color:var(--grau)}
+  /* Hinweis über der Karte (z. B. Kartenhintergrund nicht erreichbar) – Liste bleibt nutzbar */
+  #kartenHinweis{display:none;position:absolute;left:12px;right:12px;top:12px;z-index:1000;max-width:460px;padding:10px 12px;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+  /* Lade-Overlay */
+  #laden{position:fixed;top:0;right:0;bottom:0;left:0;z-index:1500;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(255,255,255,.92);transition:opacity .3s ease}
+  #laden.weg{opacity:0;pointer-events:none}
+  .spinner{width:44px;height:44px;border:4px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:dreh 1s linear infinite;margin-bottom:14px}
+  @keyframes dreh{to{transform:rotate(360deg)}}
+  #ladenText{color:#64748b;font-weight:500;text-align:center;padding:0 16px}
   /* Sperrhinweis bei ungültigem Link */
-  #gesperrt{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#f9fafb;z-index:2000}
-  #gesperrt div{background:#fff;padding:22px;border-radius:14px;width:min(420px,92vw);box-shadow:0 10px 40px rgba(0,0,0,.15);text-align:center}
+  #gesperrt{position:fixed;top:0;right:0;bottom:0;left:0;display:none;align-items:center;justify-content:center;background:#f9fafb;z-index:2000}
+  #gesperrt div{background:#fff;padding:22px;border-radius:14px;width:92%;max-width:420px;box-shadow:0 10px 40px rgba(0,0,0,.15);text-align:center}
   /* PKW-Marker */
   .wl-auto-icon{background:none;border:0}
   .wl-auto{position:relative;width:44px;height:60px}
   .wl-auto-body{width:44px;height:44px;transition:transform .8s ease}
   .wl-auto-label{position:absolute;left:50%;top:44px;transform:translateX(-50%);color:#fff;font-weight:600;font-size:11px;line-height:1;padding:3px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35)}
   .leaflet-marker-icon.wl-auto-icon{transition:transform .8s linear}
+  @media (prefers-reduced-motion:reduce){.wl-auto-body,.leaflet-marker-icon.wl-auto-icon,.spinner{transition:none;animation:none}}
   @media (max-width:760px){.layout{flex-direction:column}aside{width:auto;max-height:40%;border-left:0;border-top:1px solid var(--rand)}}
 </style>
 </head>
@@ -46,12 +59,18 @@
   <h1>🗺️ Einsatzkarte <span id="datum" style="font-weight:400;color:var(--grau)"></span></h1>
   <div class="info">
     <span id="stand"></span>
-    <button id="reload">Aktualisieren</button>
+    <button id="reload" type="button">Aktualisieren</button>
   </div>
 </header>
 <div class="layout">
   <div id="map"></div>
+  <div id="kartenHinweis"></div>
   <aside id="liste"><div class="leer">Lade Tagesplan …</div></aside>
+</div>
+
+<div id="laden">
+  <div class="spinner"></div>
+  <div id="ladenText">Einsatzkarte wird geladen …</div>
 </div>
 
 <div id="gesperrt">
@@ -62,35 +81,82 @@
 </div>
 
 <script>
-(() => {
+(function () {
   'use strict';
   // Schlüssel kommt ausschließlich aus dem Link des Airtable-Interface (?k=...).
-  const KEY = new URLSearchParams(location.search).get('k') || '';
-  const TICK_MS = 30000, RELOAD_MS = 10 * 60000;
-  const FALLBACK_CENTER = [48.62, 9.83];
+  var KEY = '';
+  try { KEY = new URLSearchParams(location.search).get('k') || ''; }
+  catch (e) { var km = /[?&]k=([^&#]*)/.exec(location.search); KEY = km ? decodeURIComponent(km[1]) : ''; }
 
-  const $ = (id) => document.getElementById(id);
-  const fmt = (min) => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(Math.round(min % 60)).padStart(2, '0');
-  const jetztMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  var TICK_MS = 30000, RELOAD_MS = 10 * 60000, FETCH_TIMEOUT_MS = 20000;
+  var RETRY_S = [15, 30, 60, 120];          // automatische Wiederholung bei Netzproblemen
+  var FALLBACK_CENTER = [48.62, 9.83];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var fmt = function (min) { return pad(Math.floor(min / 60)) + ':' + pad(Math.round(min % 60)); };
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+
+  // --- Fehler melden (E-Mail-Alarm über /api/report-error), je Art nur einmal pro Seitenaufruf.
+  // Es wird nie der Link/Schlüssel oder Klientendaten übertragen.
+  var gemeldet = {};
+  function melde(art, nachricht) {
+    if (gemeldet[art]) return; gemeldet[art] = true;
+    try {
+      fetch('/api/report-error', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+        body: JSON.stringify({ source: 'karte.html/' + art, message: String(nachricht || '').slice(0, 500),
+          context: { ua: navigator.userAgent, online: navigator.onLine } })
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  window.addEventListener('error', function (ev) { melde('js', (ev && ev.message) || 'unbekannter Fehler'); });
+  window.addEventListener('unhandledrejection', function (ev) { melde('promise', ev && ev.reason && (ev.reason.message || ev.reason)); });
+
+  // --- Uhrzeit immer in deutscher Zeit (auch wenn der PC anders eingestellt ist)
+  var berlinFmt = null;
+  try { berlinFmt = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); } catch (e) {}
+  function jetztMin() {
+    var d = new Date();
+    if (berlinFmt && berlinFmt.formatToParts) {
+      try {
+        var p = {}; berlinFmt.formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+        var h = Number(p.hour) % 24, mi = Number(p.minute), s = Number(p.second);
+        if (!isNaN(h) && !isNaN(mi)) return h * 60 + mi + (isNaN(s) ? 0 : s / 60);
+      } catch (e) {}
+    }
+    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+  }
+  function datumText(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    if (!m) return '';
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+    var wt = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()];
+    return wt + ', ' + m[3] + '.' + m[2] + '.';
+  }
+  function uhrText() {
+    var d = new Date();
+    try { return d.toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }); }
+    catch (e) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  }
 
   function bearing(a, b) {
-    const r = Math.PI / 180, f1 = a.lat * r, f2 = b.lat * r, dl = (b.lng - a.lng) * r;
-    const y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+    var r = Math.PI / 180, f1 = a.lat * r, f2 = b.lat * r, dl = (b.lng - a.lng) * r;
+    var y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
     return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
   }
 
   // Position eines Mitarbeiters zur Minute t – nur Einsätze mit Koordinaten zählen.
   function positionFuer(ma, t) {
-    const es = ma.einsaetze.filter((e) => e.lat != null && e.lng != null);
+    var es = (ma.einsaetze || []).filter(function (e) { return e.lat != null && e.lng != null; });
     if (!es.length) return null;
-    const erster = es[0], letzter = es[es.length - 1];
+    var erster = es[0], letzter = es[es.length - 1];
     if (t < erster.start) return { lat: erster.lat, lng: erster.lng, heading: 0, phase: 'vor', naechster: erster, text: 'Erster Einsatz ' + fmt(erster.start) + ' Uhr · ' + erster.klient };
-    for (let i = 0; i < es.length; i++) {
-      const e = es[i], next = es[i + 1];
+    for (var i = 0; i < es.length; i++) {
+      var e = es[i], next = es[i + 1];
       if (t >= e.start && t <= e.ende) return { lat: e.lat, lng: e.lng, heading: next ? bearing(e, next) : 0, phase: 'beim', aktueller: e, naechster: next, text: 'Beim Klienten · ' + e.klient + ' (bis ' + fmt(e.ende) + ' Uhr)' };
       if (next && t > e.ende && t < next.start) {
-        const p = Math.min(1, Math.max(0, (t - e.ende) / Math.max(1, next.start - e.ende)));
+        var p = Math.min(1, Math.max(0, (t - e.ende) / Math.max(1, next.start - e.ende)));
         return { lat: e.lat + (next.lat - e.lat) * p, lng: e.lng + (next.lng - e.lng) * p, heading: bearing(e, next), phase: 'fahrt', naechster: next, text: 'Unterwegs zu ' + next.klient + ' (' + fmt(next.start) + ' Uhr)' };
       }
     }
@@ -117,17 +183,17 @@
   }
 
   function autoIcon(ma, pos) {
-    const uid = ma.id.replace(/[^A-Za-z0-9]/g, '');
-    const fade = pos.phase === 'vor' || pos.phase === 'nach' ? 'opacity:.55;' : '';
-    const html = '<div class="wl-auto" style="' + fade + '"><div class="wl-auto-body" style="transform:rotate(' + pos.heading.toFixed(0) + 'deg)">'
-      + autoSvg(ma.farbe, uid) + '</div><div class="wl-auto-label" style="background:' + ma.farbe + '">' + esc(ma.name.split(' ')[0]) + '</div></div>';
-    return L.divIcon({ html, className: 'wl-auto-icon', iconSize: [44, 60], iconAnchor: [22, 22], popupAnchor: [0, -20] });
+    var uid = String(ma.id).replace(/[^A-Za-z0-9]/g, '');
+    var fade = pos.phase === 'vor' || pos.phase === 'nach' ? 'opacity:.55;' : '';
+    var html = '<div class="wl-auto" style="' + fade + '"><div class="wl-auto-body" style="transform:rotate(' + pos.heading.toFixed(0) + 'deg)">'
+      + autoSvg(ma.farbe, uid) + '</div><div class="wl-auto-label" style="background:' + ma.farbe + '">' + esc(String(ma.name).split(' ')[0]) + '</div></div>';
+    return L.divIcon({ html: html, className: 'wl-auto-icon', iconSize: [44, 60], iconAnchor: [22, 22], popupAnchor: [0, -20] });
   }
 
   function popupHtml(ma, pos) {
-    const zeilen = ma.einsaetze.map((e) => {
-      const aktiv = pos.aktueller && pos.aktueller.id === e.id;
-      const ohne = e.lat == null ? ' <span style="color:#b91c1c">⚠ ohne Standort</span>' : '';
+    var zeilen = (ma.einsaetze || []).map(function (e) {
+      var aktiv = pos.aktueller && pos.aktueller.id === e.id;
+      var ohne = e.lat == null ? ' <span style="color:#b91c1c">⚠ ohne Standort</span>' : '';
       return '<div style="' + (aktiv ? 'font-weight:600' : '') + '">' + fmt(e.start) + '–' + fmt(e.ende) + ' · ' + esc(e.klient) + ohne + '</div>';
     }).join('');
     return '<div style="min-width:220px;font-size:13px;line-height:1.4"><div style="font-weight:700;font-size:15px;color:' + ma.farbe + '">'
@@ -135,97 +201,189 @@
       + '</div><div style="border-top:1px solid #e5e7eb;padding-top:6px">' + zeilen + '</div></div>';
   }
 
-  // --- Karte -----------------------------------------------------------
-  const map = L.map('map').setView(FALLBACK_CENTER, 12);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
-  }).addTo(map);
+  // --- Overlay / Hinweise --------------------------------------------------
+  var overlayZu = false;
+  function overlayAus() {
+    if (overlayZu) return; overlayZu = true;
+    var o = $('laden'); o.className = 'weg';
+    setTimeout(function () { o.style.display = 'none'; }, 350);
+  }
+  // Dauert der erste Abruf länger: beruhigender Text statt Fehlermeldung.
+  setTimeout(function () { if (!overlayZu) $('ladenText').textContent = 'Verbindung wird aufgebaut – das dauert einen Moment …'; }, 8000);
 
-  let daten = null, fitDone = false, route = null;
-  const marker = new Map();
+  function kartenHinweis(text) {
+    var h = $('kartenHinweis');
+    if (text) { h.textContent = text; h.style.display = 'block'; } else { h.style.display = 'none'; }
+  }
+
+  // --- Karte -----------------------------------------------------------------
+  var map = null;
+  try {
+    if (typeof L === 'undefined') throw new Error('Leaflet nicht geladen');
+    map = L.map('map').setView(FALLBACK_CENTER, 12);
+    var kachelFehler = 0, kachelOk = 0;
+    var tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      referrerPolicy: 'strict-origin-when-cross-origin', // Pflicht laut OSM-Richtlinie; sendet nur die Domain
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende'
+    }).addTo(map);
+    tiles.on('tileload', function () { kachelOk++; if (kachelOk === 1) kartenHinweis(''); });
+    tiles.on('tileerror', function () {
+      kachelFehler++;
+      if (kachelFehler >= 6 && kachelOk === 0) {
+        kartenHinweis('Der Kartenhintergrund ist gerade nicht erreichbar. Die Fahrzeuge und die Liste rechts sind trotzdem aktuell.');
+        melde('kacheln', 'OSM-Kacheln laden nicht (' + kachelFehler + ' Fehler)');
+      }
+    });
+    window.addEventListener('resize', function () { try { map.invalidateSize(); } catch (e) {} });
+    setTimeout(function () { try { map.invalidateSize(); } catch (e) {} }, 300);
+  } catch (e) {
+    map = null;
+    kartenHinweis('Die Kartenansicht konnte in diesem Browser nicht gestartet werden. Die Liste rechts zeigt alle Mitarbeiter. Bitte Seite neu laden (F5).');
+    melde('leaflet', e && e.message);
+  }
+
+  var daten = null, fitDone = false, route = null;
+  var marker = {};
 
   function zeigeRoute(ma) {
+    if (!map) return;
     if (route) { route.remove(); route = null; }
-    const pts = ma.einsaetze.filter((e) => e.lat != null).map((e) => [e.lat, e.lng]);
+    var pts = (ma.einsaetze || []).filter(function (e) { return e.lat != null; }).map(function (e) { return [e.lat, e.lng]; });
     if (pts.length >= 2) route = L.polyline(pts, { color: ma.farbe, weight: 3, opacity: .6, dashArray: '6 8' }).addTo(map);
   }
 
   function springeZu(ma) {
-    const m = marker.get(ma.id); if (!m) return;
+    var m = marker[ma.id]; if (!m || !map) return;
     map.flyTo(m.getLatLng(), Math.max(map.getZoom(), 14), { duration: .8 });
     m.openPopup(); zeigeRoute(ma);
   }
 
-  function render() {
-    if (!daten) return;
-    const t = jetztMin();
-    const positionen = daten.mitarbeiter.map((ma) => ({ ma, pos: positionFuer(ma, t) })).filter((x) => x.pos);
-    const seen = new Set();
-    for (const { ma, pos } of positionen) {
-      seen.add(ma.id);
-      let m = marker.get(ma.id);
+  function renderKarte(positionen) {
+    if (!map) return;
+    var seen = {};
+    positionen.forEach(function (x) {
+      var ma = x.ma, pos = x.pos;
+      seen[ma.id] = true;
+      var m = marker[ma.id];
       if (!m) {
         m = L.marker([pos.lat, pos.lng], { icon: autoIcon(ma, pos), zIndexOffset: 500 }).addTo(map);
-        m.on('click', () => zeigeRoute(ma));
-        marker.set(ma.id, m);
+        m.on('click', function () { zeigeRoute(ma); });
+        marker[ma.id] = m;
       } else { m.setLatLng([pos.lat, pos.lng]); m.setIcon(autoIcon(ma, pos)); }
       m.bindPopup(popupHtml(ma, pos), { maxWidth: 320 });
-    }
-    for (const [id, m] of marker) if (!seen.has(id)) { m.remove(); marker.delete(id); }
+    });
+    Object.keys(marker).forEach(function (id) { if (!seen[id]) { marker[id].remove(); delete marker[id]; } });
 
     if (!fitDone) {
-      const pts = [];
-      daten.mitarbeiter.forEach((ma) => ma.einsaetze.forEach((e) => { if (e.lat != null) pts.push([e.lat, e.lng]); }));
+      var pts = [];
+      daten.mitarbeiter.forEach(function (ma) { (ma.einsaetze || []).forEach(function (e) { if (e.lat != null) pts.push([e.lat, e.lng]); }); });
       if (pts.length) { map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14 }); fitDone = true; }
     }
+  }
 
-    // Seitenleiste
-    const liste = $('liste'); liste.innerHTML = '';
+  function renderListe(positionen) {
+    var liste = $('liste'); liste.innerHTML = '';
     if (!daten.mitarbeiter.length) liste.innerHTML = '<div class="leer">Heute sind keine Einsätze geplant.</div>';
-    for (const { ma, pos } of positionen) {
-      const b = document.createElement('button'); b.className = 'ma';
+    positionen.forEach(function (x) {
+      var ma = x.ma, pos = x.pos;
+      var b = document.createElement('button'); b.className = 'ma'; b.type = 'button';
       b.innerHTML = '<b><span class="dot" style="background:' + ma.farbe + '"></span>' + esc(ma.name)
         + (ma.fahrzeug ? ' <span style="font-weight:400;color:#6b7280">· ' + esc(ma.fahrzeug) + '</span>' : '') + '</b><div class="txt">' + esc(pos.text) + '</div>';
-      b.onclick = () => springeZu(ma); liste.appendChild(b);
-    }
-    for (const ma of daten.mitarbeiter) if (!positionen.some((p) => p.ma.id === ma.id)) {
-      const d = document.createElement('div'); d.className = 'ma'; d.style.color = '#6b7280';
+      b.onclick = function () { springeZu(ma); }; liste.appendChild(b);
+    });
+    daten.mitarbeiter.forEach(function (ma) {
+      if (positionen.some(function (p) { return p.ma.id === ma.id; })) return;
+      var d = document.createElement('div'); d.className = 'ma'; d.style.color = '#6b7280';
       d.innerHTML = '<span class="dot" style="background:' + ma.farbe + ';margin-right:8px"></span>' + esc(ma.name) + ': Einsätze ohne Standort'; liste.appendChild(d);
-    }
-    if (daten.ohneStandort.length) {
-      const w = document.createElement('div'); w.className = 'warn';
-      w.innerHTML = '<b>⚠ Ohne Standort (' + daten.ohneStandort.length + ')</b><br>'
-        + daten.ohneStandort.map((o) => fmt(o.start) + ' · ' + esc(o.klient) + ' (' + esc(o.mitarbeiter) + ')' + (o.adresse ? '' : ' – keine Anschrift')).join('<br>')
+    });
+    var ohne = daten.ohneStandort || [];
+    if (ohne.length) {
+      var w = document.createElement('div'); w.className = 'warn';
+      w.innerHTML = '<b>⚠ Ohne Standort (' + ohne.length + ')</b><br>'
+        + ohne.map(function (o) { return fmt(o.start) + ' · ' + esc(o.klient) + ' (' + esc(o.mitarbeiter) + ')' + (o.adresse ? '' : ' – keine Anschrift'); }).join('<br>')
         + '<div style="margin-top:6px;font-size:12px">Anschrift auf der Seite „Klienten" prüfen; die Karte ergänzt den Standort automatisch.</div>';
       liste.appendChild(w);
     }
   }
 
-  // --- Laden -------------------------------------------------------------
-  function sperren() { $('gesperrt').style.display = 'flex'; }
-
-  async function laden() {
-    if (!KEY) { sperren(); return; }
-    $('reload').disabled = true;
+  function render() {
+    if (!daten) return;
     try {
-      const r = await fetch('/api/einsatz-karte', { headers: { 'X-Karte-Key': KEY }, cache: 'no-store' });
-      const j = await r.json().catch(() => ({}));
-      if (r.status === 401) { sperren(); return; }
-      if (!r.ok || j.status !== 'success') throw new Error(j.message || 'Karte konnte nicht geladen werden.');
-      daten = j;
-      $('datum').textContent = new Date(j.datum).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
-      $('stand').textContent = 'Stand ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-      render();
+      var t = jetztMin();
+      var positionen = daten.mitarbeiter.map(function (ma) { return { ma: ma, pos: positionFuer(ma, t) }; }).filter(function (x) { return x.pos; });
+      renderKarte(positionen);
+      renderListe(positionen);
     } catch (e) {
-      const f = document.createElement('div'); f.className = 'fehler'; f.textContent = e.message || 'Keine Verbindung. Bitte später erneut versuchen.';
-      $('liste').innerHTML = ''; $('liste').appendChild(f);
-      console.error('[karte]', e);
-    } finally { $('reload').disabled = false; }
+      melde('render', e && e.message);
+    }
+  }
+
+  // --- Laden -------------------------------------------------------------------
+  function sperren() { overlayAus(); $('gesperrt').style.display = 'flex'; }
+
+  function holen(url, opts, ms) {
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (ctl) opts.signal = ctl.signal;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    return fetch(url, opts).then(function (r) { clearTimeout(timer); return r; }, function (e) { clearTimeout(timer); throw e; });
+  }
+
+  var laeuft = false, fehlversuche = 0, retryTimer = null, letzterLauf = 0;
+
+  function planeWiederholung() {
+    var s = RETRY_S[Math.min(fehlversuche - 1, RETRY_S.length - 1)];
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(laden, s * 1000);
+    var st = $('stand'); st.className = 'hinweis';
+    st.textContent = daten
+      ? 'Stand ' + (st.getAttribute('data-uhr') || '') + ' · Verbindung wird automatisch erneuert …'
+      : 'Verbindung wird automatisch erneuert …';
+    if (!daten) {
+      $('liste').innerHTML = '<div class="info-box">Der Tagesplan wird gerade geladen. Die Seite versucht es automatisch erneut – Sie müssen nichts tun.</div>';
+      overlayAus();
+    }
+  }
+
+  function laden() {
+    if (!KEY) { sperren(); return; }
+    if (laeuft) return;
+    laeuft = true; letzterLauf = Date.now();
+    clearTimeout(retryTimer);
+    $('reload').disabled = true;
+    holen('/api/einsatz-karte', { headers: { 'X-Karte-Key': KEY }, cache: 'no-store' }, FETCH_TIMEOUT_MS)
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) { return { r: r, j: j }; });
+      })
+      .then(function (x) {
+        if (x.r.status === 401) { sperren(); return; }
+        if (!x.r.ok || x.j.status !== 'success' || !Array.isArray(x.j.mitarbeiter)) {
+          throw new Error('Server ' + x.r.status + (x.j && x.j.message ? ': ' + x.j.message : ''));
+        }
+        daten = x.j;
+        if (!Array.isArray(daten.ohneStandort)) daten.ohneStandort = [];
+        fehlversuche = 0;
+        $('datum').textContent = datumText(daten.datum);
+        var uhr = uhrText(), st = $('stand');
+        st.className = ''; st.setAttribute('data-uhr', uhr); st.textContent = 'Stand ' + uhr;
+        render();
+        overlayAus();
+      })
+      .catch(function (e) {
+        fehlversuche++;
+        // Erst nach mehreren Fehlversuchen alarmieren – einzelne Netz-Aussetzer sind normal.
+        if (fehlversuche >= 3) melde('laden', (e && e.message) || 'Abruf fehlgeschlagen');
+        planeWiederholung();
+      })
+      .then(function () { laeuft = false; $('reload').disabled = false; });
   }
 
   $('reload').addEventListener('click', laden);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') laden(); });
-  window.addEventListener('error', (ev) => console.error('[karte]', ev.message));
+  // Zurück im Tab / wieder online: frisch laden (höchstens einmal pro Minute).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && Date.now() - letzterLauf > 60000) laden();
+  });
+  window.addEventListener('online', laden);
 
   setInterval(render, TICK_MS);
   setInterval(laden, RELOAD_MS);
