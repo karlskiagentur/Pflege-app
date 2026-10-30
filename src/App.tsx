@@ -2209,6 +2209,8 @@ export default function App() {
                               {dauerSaving === t.id ? <RefreshCw className="animate-spin" size={16}/> : <Check size={16}/>} Dauer speichern
                               </button>
                             </div>
+                            {/* Vorgabe 30.10.2026: Ohne Bestätigung wird nichts berechnet (api/_zeitkonto.js). */}
+                            <p className="text-[11px] text-gray-400 mt-2">Nur bestätigte Zeiten kommen auf den Stundenzettel.</p>
                         </div>
                         );
                       })()}

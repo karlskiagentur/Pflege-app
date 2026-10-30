@@ -7,7 +7,7 @@ import { pdfText } from './_pdftext.js';
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
 // Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
-// Rechenregeln (nur Vergangenes, Ist/Plan, Kunden-Anfahrt, Pausen): api/_zeitkonto.js
+// Rechenregeln (nur Vergangenes, nur bestätigte Ist-Zeit, Kunden-Anfahrt, Pausen): api/_zeitkonto.js
 
 const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
 const DATEI_FELD = 'Datei';          // Anhang-Feld (uploadAttachment akzeptiert Feldnamen)
@@ -36,10 +36,11 @@ const uhrDe = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${Strin
 export const SPALTEN = { datum: 50, fenster: 110, sollR: 212, istR: 256, klient: 272 };
 
 // Kurzhinweis oben auf Seite 1; die ausführliche Erläuterung steht am Ende jedes Zettels.
-export const HINWEIS = 'Zeitfenster und Soll = Planung laut Dienstplan · bezahlt wird die Ist-Zeit plus Kunden-Anfahrt · Erläuterung am Ende';
+export const HINWEIS = 'Zeitfenster und Soll = Planung laut Dienstplan · bezahlt wird nur die bestätigte Ist-Zeit plus Kunden-Anfahrt · Erläuterung am Ende';
 export const ERLAEUTERUNG = [
   'Zeitfenster und Soll: geplante Zeit laut Dienstplan. Das Zeitfenster bleibt so stehen, auch wenn ein Einsatz länger oder kürzer gedauert hat – es zeigt immer die Planung.',
-  'Ist: die in der App unter „Tatsächliche Dauer“ erfasste Zeit im 15-Minuten-Takt (gerundet, z. B. 20 Min. = 0:15, 25 Min. = 0:30). Bezahlt wird die Ist-Zeit, nicht das Zeitfenster. Fett gedruckt = weicht von der Planung ab.',
+  'Ist: die in der App unter „Tatsächliche Dauer“ bestätigte (oder vom Büro eingetragene) Zeit im 15-Minuten-Takt (gerundet, z. B. 20 Min. = 0:15, 25 Min. = 0:30). Bezahlt wird nur die bestätigte Ist-Zeit, nicht das Zeitfenster. Fett gedruckt = weicht von der Planung ab.',
+  'Nicht bestätigt: Einsätze ohne bestätigte Ist-Zeit werden nicht berechnet – auch keine Kunden-Anfahrt dorthin. Sie stehen gesammelt unter „Nicht bestätigt – nicht berechnet“. Wurde ein solcher Einsatz geleistet, bitte beim Büro melden – das Büro trägt die Zeit nach.',
   '„laut Ist“: der gerechnete Zeitraum, wenn er vom Zeitfenster abweicht – Beginn laut Plan (bzw. direkt nach dem vorherigen Einsatz, wenn dieser länger gedauert hat) plus Ist-Dauer.',
   'Kunden-Anfahrt: Die Zeit zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten wird bis 30 Minuten voll bezahlt. Ist die Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause – unbezahlt und separat ausgewiesen (z. B. Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt).',
   'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; was über 30 Minuten hinausgeht, ist Pause.',
@@ -47,8 +48,8 @@ export const ERLAEUTERUNG = [
 
 /**
  * Anzeige-Zeilen eines Tages (rein, ohne PDF - testbar).
- * Spalten: Zeitfenster laut Dienstplan | Soll | Ist | Klient.
- * Ist = erfasste Zeit; ohne Erfassung die angerechnete Soll-Zeit, markiert mit "*".
+ * Spalten: Zeitfenster laut Dienstplan | Soll | Ist | Klient. Auf dem Tag stehen nur bestätigte
+ * Einsätze (Ist = bestätigte Zeit); nicht bestätigte stehen getrennt (nichtBestaetigtZeilen).
  */
 export function tagesZeilen(tag) {
   return tag.zeilen.map((z) => {
@@ -56,18 +57,41 @@ export function tagesZeilen(tag) {
     if (z.art === 'anfahrt') return { art: 'anfahrt', fenster, soll: '', ist: hm(z.min), fett: false, istFenster: '', klient: 'Kunden-Anfahrt' };
     if (z.art === 'pause') return { art: 'pause', fenster, soll: '', ist: `(${hm(z.min)})`, fett: false, istFenster: '', klient: 'Pause (unbezahlt)' };
     const sollBekannt = typeof z.sollMin === 'number';
-    const erfasst = z.quelle === 'ist';
     return {
       art: 'einsatz',
       fenster,
       soll: sollBekannt ? hm(z.sollMin) : '–',
-      ist: erfasst ? hm(z.min) : `${hm(z.min)}*`,
-      fett: erfasst && sollBekannt && z.min !== z.sollMin, // Ist weicht von der Planung ab
+      ist: hm(z.min),
+      fett: sollBekannt && z.min !== z.sollMin, // Ist weicht von der Planung ab
       // Zeitraum laut Ist, wenn er vom Zeitfenster abweicht (nicht bei 0 Minuten)
       istFenster: z.zeitAbweichend && z.min > 0 ? `${z.istVon} – ${z.istBis}` : '',
       klient: z.klient || '–',
     };
   });
+}
+
+// Überschrift der Liste nicht bestätigter Einsätze (am Ende der Tage).
+export const NICHT_BESTAETIGT_TITEL = 'Nicht bestätigt – nicht berechnet';
+
+/**
+ * Zeilen der nicht bestätigten Einsätze (rein - testbar): Datum | Zeitfenster | Soll | Ist | Klient.
+ * Ist bleibt leer ("–"): diese Einsätze zählen nicht zur Summe.
+ */
+export function nichtBestaetigtZeilen(nachweis) {
+  return ((nachweis && nachweis.nichtBestaetigt) || []).map((t) => ({
+    datum: t.datum ? datumDe(t.datum) : '–',
+    fenster: t.von && t.bis ? `${t.von} – ${t.bis}` : (t.von || '–'),
+    soll: typeof t.sollMin === 'number' ? hm(t.sollMin) : '–',
+    ist: '–',
+    klient: t.klient || '–',
+  }));
+}
+
+/** Hinweis im Summenblock, wenn es nicht bestätigte Einsätze gibt ('' wenn keine). */
+export function nichtBestaetigtText(summen) {
+  const n = (summen && summen.ohneIst) || 0;
+  if (!n) return '';
+  return `Nicht bestätigt: ${n} ${n === 1 ? 'Einsatz' : 'Einsätze'} (geplant ${hm(summen.ohneIstSollMin || 0)} Std.) – nicht berechnet, Liste oben.`;
 }
 
 // Text der Tagessumme (Klient-Spalte); der Betrag (bezahlt) steht in der Ist-Spalte.
@@ -202,9 +226,27 @@ export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
     }
     y -= 4; // Abstand zwischen Tagen
   }
+  const offen = nichtBestaetigtZeilen(nachweis);
   if (nachweis.tage.length === 0) {
-    text(page, 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
+    text(page, offen.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
     y -= 16;
+  }
+  // Nicht bestätigte Einsätze: zur Kontrolle aufgeführt, zählen aber nicht (kein Ist, keine Anfahrt).
+  if (offen.length) {
+    platz(40);
+    y -= 6;
+    text(page, NICHT_BESTAETIGT_TITEL, SP.datum, y, 10, bold, orange);
+    y -= 15;
+    for (const z of offen) {
+      platz(14);
+      text(page, z.datum, SP.datum, y, 10, font, grau);
+      text(page, z.fenster, SP.fenster, y, 10, font, grau);
+      rechts(page, z.soll, SP.sollR, y, 10, font, grau);
+      rechts(page, z.ist, SP.istR, y, 10, font, grau);
+      page.drawText(gekuerzt(z.klient, font, 10, KLIENT_MAX), { x: SP.klient, y, size: 10, font, color: grau });
+      y -= 14;
+    }
+    y -= 4;
   }
 
   // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Pflegedienstleitung.
@@ -222,14 +264,15 @@ export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
     if (notiz) text(page, notiz, NOTIZ_X, y, 8, font, grau);
     y -= size + 6;
   };
-  summenZeile('Einsätze laut Dienstplan (Soll)', hm(s.sollMin), 'nur zum Vergleich', font, 10, grau);
-  summenZeile('Einsätze erfasst (Ist)', hm(s.einsatzMin), '', font, 10, schwarz);
+  summenZeile('Einsätze laut Dienstplan (Soll)', hm(s.sollMin), 'der bestätigten Einsätze, nur zum Vergleich', font, 10, grau);
+  summenZeile('Einsätze bestätigt (Ist)', hm(s.einsatzMin), '', font, 10, schwarz);
   summenZeile('Kunden-Anfahrt', hm(s.anfahrtMin), '', font, 10, schwarz);
   summenZeile(final ? 'Monatssumme (bezahlt)' : 'Zwischensumme (bezahlt)', hm(s.bezahltMin), '= Ist + Kunden-Anfahrt', bold, 12, schwarz);
   summenZeile('Pausen (unbezahlt)', hm(s.pauseMin), 'nicht in der Summe enthalten', font, 9, grau);
-  if (s.ohneIst > 0) {
-    text(page, `* Keine Ist-Zeit erfasst – die Soll-Zeit wurde angerechnet (${s.ohneIst} ${s.ohneIst === 1 ? 'Einsatz' : 'Einsätze'}).`, M, y, 8, font, grau);
-    y -= 12;
+  const offenText = nichtBestaetigtText(s);
+  if (offenText) {
+    text(page, offenText, M, y, 9, bold, orange);
+    y -= 14;
   }
 
   if (mitUnterschrift) {
@@ -297,7 +340,8 @@ export default async function handler(req, res) {
     const maNr = pf.Anmelde_ID || pf.Personal_Nr || '';
 
     // 3) ALLE Termine des Monats dieses Mitarbeiters (auch ohne erfasste Ist-Zeit) -
-    //    welche zählen, entscheidet der Rechenkern (nur Vergangenes, nichts Abgesagtes).
+    //    welche zählen, entscheidet der Rechenkern (nur Vergangenes, nichts Abgesagtes, nur
+    //    Bestätigtes; vergangene Termine ohne Bestätigung stehen als Liste auf dem Zettel).
     const formula = `AND({Monat} = '${esc(monat)}', FIND('${esc(maId)}', ARRAYJOIN({Pfleger_ID})))`;
     const besuche = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(formula)}`);
     const nachweis = berechneZeitnachweis(besuche, { jetzt: Date.now() });

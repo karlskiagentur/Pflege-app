@@ -4,9 +4,13 @@
 // Abrechnungsregeln (Vorgabe Pflegedienst, 21.10.2026):
 // 1. Es zählen nur Termine, die bereits vorbei sind (geplantes Ende <= Erstellungszeitpunkt).
 //    Abgesagte Termine zählen nie.
-// 2. Zeit je Termin: die vom Mitarbeiter erfasste Ist-Zeit im 15-Minuten-Takt (identisch zum
-//    Formelfeld Ist_Stunden_Monat). Ohne Erfassung gilt die geplante Zeit aus dem Zeitfenster
-//    (Von–Bis); solche Zeilen werden gekennzeichnet.
+// 2. Zeit je Termin: NUR die bestätigte Ist-Zeit – in der App vom Mitarbeiter bestätigt oder vom
+//    Büro eingetragen (Feld Dauer_Ist) –, im 15-Minuten-Takt (identisch zum Formelfeld
+//    Ist_Stunden_Monat). Ohne Bestätigung wird NICHTS berechnet (Vorgabe Karl 30.10.2026, gegen
+//    Arbeitszeitbetrug; vorher galt dann die geplante Zeit). Solche Termine zählen weder als
+//    Einsatz noch für die Kunden-Anfahrt; sie stehen getrennt als „nicht bestätigt" auf dem
+//    Zettel, damit das Büro sie prüfen und tatsächlich geleistete Zeit nachtragen kann.
+//    Eine bestätigte 0 (z. B. Klient nicht angetroffen) ist eine Bestätigung und zählt 0.
 // 3. Liegen zwischen zwei Terminen desselben Tages höchstens 30 Minuten, ist das bezahlte
 //    "Kunden-Anfahrt" (eigene Zeile, zählt zur Summe). Liegen mehr als 30 Minuten dazwischen,
 //    werden trotzdem 30 Minuten als Kunden-Anfahrt bezahlt - die Fahrt zum nächsten Klienten
@@ -118,12 +122,28 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   const jetzt = berlin(opt.jetzt === undefined ? Date.now() : opt.jetzt);
   const ausgelassen = { abgesagt: 0, zukunft: 0 };
   const termine = [];
+  const offen = []; // vorbei, aber ohne bestätigte Ist-Zeit -> nicht berechnet
   for (const r of besuche || []) {
     const t = termin(r && r.fields, r && r.id);
     if (t.status === 'Abgesagt') { ausgelassen.abgesagt++; continue; }
     if (!vorbei(t, jetzt)) { ausgelassen.zukunft++; continue; }
+    if (t.istMin === null) { offen.push(t); continue; }
     termine.push(t);
   }
+  const reihenfolge = (a, b) =>
+    (a.start === null) - (b.start === null) || (a.start || 0) - (b.start || 0) ||
+    (a.planEnde || 0) - (b.planEnde || 0) || String(a.id).localeCompare(String(b.id));
+  const nichtBestaetigt = offen
+    .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
+    .map((t) => ({
+      id: t.id,
+      datum: t.datum,
+      von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
+      bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
+      sollMin: t.planMin,
+      klient: t.klient,
+      taetigkeit: t.taetigkeit,
+    }));
 
   // Nach Tag gruppieren, innerhalb des Tages nach Beginn (Termine ohne Uhrzeit ans Ende).
   const proTag = new Map();
@@ -132,19 +152,22 @@ export function berechneZeitnachweis(besuche, opt = {}) {
     proTag.get(t.datum).push(t);
   }
   const tage = [];
-  const summen = { sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0, einsaetze: 0, ohneIst: 0 };
+  // ohneIst = Anzahl nicht bestätigter Termine (nicht berechnet), ohneIstSollMin = ihre geplante Zeit
+  const summen = {
+    sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0, einsaetze: 0,
+    ohneIst: nichtBestaetigt.length,
+    ohneIstSollMin: nichtBestaetigt.reduce((s, t) => s + (t.sollMin || 0), 0),
+  };
 
   for (const datum of [...proTag.keys()].sort()) {
-    const liste = proTag.get(datum).sort((a, b) =>
-      (a.start === null) - (b.start === null) || (a.start || 0) - (b.start || 0) ||
-      (a.planEnde || 0) - (b.planEnde || 0) || String(a.id).localeCompare(String(b.id)));
+    const liste = proTag.get(datum).sort(reihenfolge);
     const zeilen = [];
     const tag = { datum, zeilen, sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0 };
     let ende = null; // Ende des vorherigen Termins auf der Zeitachse (Minuten)
 
     for (const t of liste) {
-      const min = t.istMin !== null ? t.istMin : (t.planMin || 0);
-      const quelle = t.istMin !== null ? 'ist' : (t.planMin ? 'plan' : 'keine');
+      const min = t.istMin;  // nur bestätigte Termine stehen auf der Zeitachse
+      const quelle = 'ist';
       let beginn = t.start;
 
       if (beginn !== null && ende !== null) {
@@ -181,8 +204,8 @@ export function berechneZeitnachweis(besuche, opt = {}) {
         von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
         bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
         sollMin: t.planMin, // geplante Dauer laut Zeitfenster (null = unbekannt)
-        istMin: t.istMin,   // erfasste Dauer im 15-Minuten-Takt (null = nicht erfasst)
-        min,                // angerechnet: Ist, ohne Erfassung die Soll-Zeit
+        istMin: t.istMin,   // bestätigte Dauer im 15-Minuten-Takt
+        min,                // angerechnet = bestätigte Ist-Zeit
         quelle,
         // Zeitraum laut Ist auf der Zeitachse (Beginn laut Plan bzw. nach dem vorherigen
         // Einsatz + angerechnete Dauer) - weicht er vom Zeitfenster ab, zeigt der Zettel ihn an.
@@ -195,7 +218,6 @@ export function berechneZeitnachweis(besuche, opt = {}) {
       tag.einsatzMin += min;
       tag.sollMin += t.planMin || 0;
       summen.einsaetze++;
-      if (quelle !== 'ist') summen.ohneIst++;
       if (istEnde !== null) ende = istEnde;
     }
 
@@ -207,5 +229,5 @@ export function berechneZeitnachweis(besuche, opt = {}) {
     tage.push(tag);
   }
   summen.bezahltMin = summen.einsatzMin + summen.anfahrtMin;
-  return { jetzt, tage, summen, ausgelassen };
+  return { jetzt, tage, summen, ausgelassen, nichtBestaetigt };
 }
