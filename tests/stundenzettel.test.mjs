@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
 import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
-  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE,
+  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst,
 } from '../api/stundenzettel.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
 
@@ -59,14 +59,31 @@ function pdfTexte(bytes) {
   return texte;
 }
 
-function szenario({ monat, besuche, uploadStatus = 200 }) {
-  const log = { upload: null, patches: [] };
+// datei: Anhänge der Zeile VOR dem Hochladen (Neuerstellung); dateiNachher: Stand nach dem Hochladen
+// (Standard: neue Datei hinten angehängt, wie uploadAttachment es tut). sortierStatus/nachherStatus:
+// Antwort auf das Umsortieren (PATCH mit Datei) bzw. auf das erneute Lesen nach dem Hochladen.
+const NEUE_DATEI = { id: 'attNeueFassung01', filename: 'neu.pdf' };
+function szenario({ monat, besuche, uploadStatus = 200, datei, dateiNachher, sortierStatus = 200, nachherStatus = 200 }) {
+  const log = { upload: null, patches: [], zettelGets: 0 };
   const p = airtableAttrappe(async (a) => {
     if (a.host === 'content.airtable.com') { log.upload = a.body; return antwort(uploadStatus, { id: REC }); }
     if (a.tabelle === ZETTEL && a.methode === 'GET') {
-      return antwort(200, { id: REC, fields: { Mitarbeiter: [MA], Monat_Auswahl: monatName(monat) } });
+      log.zettelGets += 1;
+      const fields = { Mitarbeiter: [MA], Monat_Auswahl: monatName(monat) };
+      if (log.upload) {
+        if (nachherStatus !== 200) return antwort(nachherStatus, { error: { type: 'SERVER_ERROR' } });
+        const nachher = dateiNachher || [...(datei || []), NEUE_DATEI];
+        if (nachher.length) fields.Datei = nachher;
+      } else if (datei) {
+        fields.Datei = datei;
+      }
+      return antwort(200, { id: REC, fields });
     }
-    if (a.tabelle === ZETTEL && a.methode === 'PATCH') { log.patches.push(a.body.fields); return antwort(200, { id: REC }); }
+    if (a.tabelle === ZETTEL && a.methode === 'PATCH') {
+      log.patches.push(a.body.fields);
+      if (a.body.fields.Datei && sortierStatus !== 200) return antwort(sortierStatus, { error: { type: 'INVALID_VALUE_FOR_COLUMN' } });
+      return antwort(200, { id: REC });
+    }
     if (a.tabelle === PERSONAL) return antwort(200, { id: MA, fields: { Name: 'Anna Beispiel', Anmelde_ID: 90099 } });
     if (a.tabelle === BESUCHE) return antwort(200, { records: besuche });
     return antwort(404, {});
@@ -165,6 +182,74 @@ test('Upload schlägt fehl -> Status "Fehler", 500 ohne Details', async () => {
   await ruhig(() => handler(req(), res));
   assert.equal(res.statusCode, 500);
   assert.equal(log.patches.at(-1).Status, 'Fehler');
+});
+
+// --- Neue Fassung vorne (Wunsch Büro 01.11.2026: wer die Zeile öffnet, sieht zuerst die aktuelle) ---
+const ALT1 = { id: 'attAlteFassung01', filename: 'alt1.pdf' };
+const ALT2 = { id: 'attAlteFassung02', filename: 'alt2.pdf' };
+
+test('Neuerstellung: neue Fassung steht vorne, alle früheren bleiben dahinter', async () => {
+  const d = tag(-40);
+  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1, ALT2] });
+  const res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(log.patches.length, 2);
+  assert.equal(log.patches[0].Status, 'Erstellt');      // erst der fertige Zettel …
+  assert.equal(log.patches[0].Summe_Stunden, '1:00');
+  assert.equal(log.patches[0].Datei, undefined);
+  assert.deepEqual(log.patches[1], { Datei: [{ id: NEUE_DATEI.id }, { id: ALT1.id }, { id: ALT2.id }] }); // … dann sortiert
+});
+
+test('Erste Fassung (noch keine Datei): kein zusätzliches Lesen, kein Umsortieren', async () => {
+  const d = tag(-40);
+  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')] });
+  const res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(log.zettelGets, 1);
+  assert.equal(log.patches.length, 1);
+  assert.equal(log.patches[0].Status, 'Erstellt');
+});
+
+test('Umsortieren scheitert: Zettel bleibt "Erstellt", Antwort 200, kein Fehlerstatus', async () => {
+  const d = tag(-40);
+  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], sortierStatus: 422 });
+  const res = antwortObjekt();
+  await ruhig(() => handler(req(), res));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'success');
+  assert.equal(log.patches[0].Status, 'Erstellt');
+  assert.ok(log.patches[1].Datei, 'Umsortieren wurde versucht');
+  assert.ok(!log.patches.some((f) => f.Status === 'Fehler'));
+});
+
+test('Erneutes Lesen nach dem Hochladen scheitert: Zettel bleibt "Erstellt", nichts wird umsortiert', async () => {
+  const d = tag(-40);
+  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], nachherStatus: 500 });
+  const res = antwortObjekt();
+  await ruhig(() => handler(req(), res));
+  assert.equal(res.statusCode, 200);
+  assert.equal(log.patches.length, 1);
+  assert.equal(log.patches[0].Status, 'Erstellt');
+});
+
+test('neuesteZuerst: sortiert nur bei eindeutigem Stand, verliert nie einen Anhang', () => {
+  const A = { id: 'attA' }, B = { id: 'attB' }, N = { id: 'attN' }, M = { id: 'attM' };
+  // Normalfall: neue hinten angehängt -> nach vorne, Rest in bisheriger Reihenfolge
+  assert.deepEqual(neuesteZuerst([A, B], [A, B, N]), [{ id: 'attN' }, { id: 'attA' }, { id: 'attB' }]);
+  assert.deepEqual(neuesteZuerst([B, A], [B, A, N]), [{ id: 'attN' }, { id: 'attB' }, { id: 'attA' }]);
+  // Nichts zu tun: erste Fassung, neue schon vorne, keine neue Datei
+  assert.equal(neuesteZuerst([], [N]), null);
+  assert.equal(neuesteZuerst(undefined, [N]), null);
+  assert.equal(neuesteZuerst([A], [N, A]), null);
+  assert.equal(neuesteZuerst([A, B], [A, B]), null);
+  // Unklarer Stand -> lieber nichts ändern: zwei neue Dateien, ein bisheriger Anhang fehlt, kaputte Daten
+  assert.equal(neuesteZuerst([A], [A, N, M]), null);
+  assert.equal(neuesteZuerst([A, B], [A, N]), null);
+  assert.equal(neuesteZuerst([A], undefined), null);
+  assert.equal(neuesteZuerst([A], 'kein Array'), null);
+  assert.deepEqual(neuesteZuerst([A, null, { id: 7 }], [A, N, null]), [{ id: 'attN' }, { id: 'attA' }]);
 });
 
 test('Sonderzeichen in Namen brechen das PDF nie ab (auch in der Liste "nicht bestätigt")', async () => {
