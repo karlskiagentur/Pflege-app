@@ -3,11 +3,13 @@ import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 import { berechneZeitnachweis, hm } from './_zeitkonto.js';
 import { pdfText } from './_pdftext.js';
+import { abrechnungszeitraum, imZeitraum, zeitraumText } from './_abrechnung.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
 // Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
 // Rechenregeln (nur Vergangenes, nur bestätigte Ist-Zeit, Kunden-Anfahrt, Pausen): api/_zeitkonto.js
+// Abrechnungszeitraum (seit November 2026 vom 27. bis 26.): api/_abrechnung.js
 
 const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
 const DATEI_FELD = 'Datei';          // Anhang-Feld (uploadAttachment akzeptiert Feldnamen)
@@ -48,7 +50,18 @@ export const ERLAEUTERUNG = [
   '„laut Ist“: der gerechnete Zeitraum, wenn er vom Zeitfenster abweicht – Beginn laut Plan (bzw. direkt nach dem vorherigen Einsatz, wenn dieser länger gedauert hat) plus Ist-Dauer.',
   'Kunden-Anfahrt: Die Zeit zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten wird bis 30 Minuten voll bezahlt. Ist die Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause – unbezahlt und separat ausgewiesen (z. B. Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt).',
   'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; was über 30 Minuten hinausgeht, ist Pause.',
+  'Abrechnungszeitraum (steht oben neben dem Monat): vom 27. des Vormonats bis zum 26., z. B. Dezember 2026 = 27.11.–26.12.2026. Der Zettel ist am 27. fertig. Umstellung: November 2026 = 01.11.–26.11.2026; bis Oktober 2026 galt der Kalendermonat.',
 ];
+
+/**
+ * Airtable-Formel für die Einsätze eines Mitarbeiters im Abrechnungszeitraum. Grob über das
+ * Formelfeld {Monat} (Kalendermonat; ein Zeitraum berührt höchstens zwei), genau danach im Code
+ * über das Datum (imZeitraum) – die Regel des Zeitraums steht so nur an einer Stelle.
+ */
+export function besucheFormel(maId, zeitraum) {
+  const monate = [...new Set([zeitraum.von.slice(0, 7), zeitraum.bis.slice(0, 7)])];
+  return `AND(OR(${monate.map((m) => `{Monat} = '${esc(m)}'`).join(', ')}), FIND('${esc(maId)}', ARRAYJOIN({Pfleger_ID})))`;
+}
 
 /**
  * Anzeige-Zeilen eines Tages (rein, ohne PDF - testbar).
@@ -132,10 +145,12 @@ export function tagesSummeText(tag) {
 
 /**
  * Rendert den Stundenzettel (A4 hoch). Rein, ohne Netz - auch für Tests/Vorschau.
- * @param {{maName: string, maNr: string|number, monat: string, nachweis: object, final: boolean}} d
+ * @param {{maName: string, maNr: string|number, monat: string, zeitraum?: {von: string, bis: string},
+ *   nachweis: object, final: boolean}} d  zeitraum: Abrechnungszeitraum (Standard: Regel aus _abrechnung.js)
  */
-export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
+export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungszeitraum(monat), nachweis, final }) {
   const monatLabel = new Date(`${monat}-01T12:00:00Z`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const zeitraumLabel = zeitraumText(zeitraum);
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -191,7 +206,7 @@ export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
     y = A4[1] - M;
     text(page, 'Wunschlos Pflege – Stundennachweis', M, y, 16, bold, schwarz);
     y -= 22;
-    text(page, `${maName}${maNr ? ` · Nr. ${maNr}` : ''} · ${monatLabel}`, M, y, 11, font, grau);
+    text(page, `${maName}${maNr ? ` · Nr. ${maNr}` : ''} · ${monatLabel} · ${zeitraumLabel}`, M, y, 11, font, grau);
     y -= 16;
     const stand = `${datumDe(nachweis.jetzt.datum)}, ${uhrDe(nachweis.jetzt.min)} Uhr`;
     if (final) {
@@ -367,16 +382,18 @@ export default async function handler(req, res) {
     const maName = pf.Name || 'Mitarbeiter';
     const maNr = pf.Anmelde_ID || pf.Personal_Nr || '';
 
-    // 3) ALLE Termine des Monats dieses Mitarbeiters (auch ohne erfasste Ist-Zeit) -
+    // 3) ALLE Termine des Abrechnungszeitraums dieses Mitarbeiters (auch ohne erfasste Ist-Zeit) -
     //    welche zählen, entscheidet der Rechenkern (nur Vergangenes, nichts Abgesagtes, nur
     //    Bestätigtes; vergangene Termine ohne Bestätigung stehen als Liste auf dem Zettel).
-    const formula = `AND({Monat} = '${esc(monat)}', FIND('${esc(maId)}', ARRAYJOIN({Pfleger_ID})))`;
-    const besuche = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(formula)}`);
+    //    Zeitraum: seit November 2026 vom 27. des Vormonats bis zum 26. (api/_abrechnung.js).
+    const zeitraum = abrechnungszeitraum(monat);
+    const kandidaten = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(besucheFormel(maId, zeitraum))}`);
+    const besuche = kandidaten.filter((b) => imZeitraum(b && b.fields && b.fields.Datum, zeitraum));
     const nachweis = berechneZeitnachweis(besuche, { jetzt: Date.now() });
 
-    // Fertig ist der Zettel erst, wenn der Monat vorbei ist; vorher "vorläufig".
-    const final = nachweis.jetzt.datum.slice(0, 7) > monat;
-    const bytes = await erstellePdf({ maName, maNr, monat, nachweis, final });
+    // Fertig ist der Zettel erst, wenn der Zeitraum vorbei ist (ab dem 27.); vorher "vorläufig".
+    const final = nachweis.jetzt.datum > zeitraum.bis;
+    const bytes = await erstellePdf({ maName, maNr, monat, zeitraum, nachweis, final });
     // Die finale Fassung trägt "_final" im Namen: Zettel der Vorversion hießen auch mitten
     // im Monat "Stundenzettel_YYYY-MM.pdf" und dürfen nicht als fertig gelten (der
     // Monatsabschluss erkennt fertige Zettel am Dateinamen).
