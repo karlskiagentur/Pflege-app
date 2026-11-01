@@ -35,6 +35,10 @@ const uhrDe = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${Strin
 // Spalten des Zettels (x in pt; A4 hoch, Rand 50). Soll und Ist rechtsbündig, Klient ganz rechts.
 export const SPALTEN = { datum: 50, fenster: 110, sollR: 212, istR: 256, klient: 272 };
 
+// Beschriftung unter der eingedruckten Unterschrift (Wunsch des Pflegedienstes 01.11.2026:
+// „Geschäftsleitung“ statt „Pflegedienstleitung“).
+export const UNTERSCHRIFT_ROLLE = 'Geschäftsleitung';
+
 // Kurzhinweis oben auf Seite 1; die ausführliche Erläuterung steht am Ende jedes Zettels.
 export const HINWEIS = 'Zeitfenster und Soll = Planung laut Dienstplan · bezahlt wird nur die bestätigte Ist-Zeit plus Kunden-Anfahrt · Erläuterung am Ende';
 export const ERLAEUTERUNG = [
@@ -249,7 +253,7 @@ export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
     y -= 4;
   }
 
-  // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Pflegedienstleitung.
+  // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Geschäftsleitung.
   const s = nachweis.summen;
   const mitUnterschrift = final && s.einsaetze > 0;
   platz(mitUnterschrift ? 230 : 120, false);
@@ -285,7 +289,7 @@ export async function erstellePdf({ maName, maNr, monat, nachweis, final }) {
     page.drawImage(sigPdl, { x: imgX, y: y - sigH, width: sigW, height: sigH });
     const lineY = y - sigH - 4;
     page.drawLine({ start: { x: lineX0, y: lineY }, end: { x: lineX1, y: lineY }, thickness: 0.8, color: schwarz });
-    text(page, 'Pflegedienstleitung', lineX0, lineY - 14, 9, font, grau);
+    text(page, UNTERSCHRIFT_ROLLE, lineX0, lineY - 14, 9, font, grau);
     y = lineY - 24;
   }
 
