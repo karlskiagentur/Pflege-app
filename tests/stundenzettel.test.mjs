@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
 import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
-  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText,
+  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE,
 } from '../api/stundenzettel.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
 
@@ -112,6 +112,10 @@ test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), S
     [`${d2.slice(8, 10)}.${d2.slice(5, 7)}.${d2.slice(0, 4)}`, '08:00 – 09:00', '1:00', '–', 'Max Mustermann']);
   assert.ok(texte.includes('Nicht bestätigt: 1 Einsatz (geplant 1:00 Std.) – nicht berechnet, Liste oben.'));
   assert.ok(!texte.some((t) => /\*/.test(t)), 'kein "*" (Soll-Ersatz) mehr auf dem Zettel');
+  // Unterschriftszeile: „Geschäftsleitung“ (Wunsch des Pflegedienstes 01.11.2026)
+  assert.equal(UNTERSCHRIFT_ROLLE, 'Geschäftsleitung');
+  assert.ok(texte.includes('Geschäftsleitung'), 'Unterschriftszeile fehlt');
+  assert.ok(!texte.some((t) => /Pflegedienstleitung/.test(t)), 'alte Bezeichnung steht noch auf dem Zettel');
   const f = log.patches.at(-1);
   assert.equal(f.Summe_Stunden, '3:00');
   assert.equal(f.Status, 'Erstellt');
@@ -133,7 +137,7 @@ test('abgeschlossener Monat ganz ohne Bestätigung: Summe 0:00, Liste auf dem Ze
   assert.ok(texte.includes('Keine bestätigten Einsätze in diesem Monat.'));
   assert.ok(texte.includes(NICHT_BESTAETIGT_TITEL));
   assert.ok(texte.includes('Nicht bestätigt: 2 Einsätze (geplant 1:30 Std.) – nicht berechnet, Liste oben.'));
-  assert.ok(!texte.includes('Pflegedienstleitung'), 'ohne berechnete Einsätze keine Unterschrift');
+  assert.ok(!texte.includes(UNTERSCHRIFT_ROLLE), 'ohne berechnete Einsätze keine Unterschrift');
 });
 
 test('laufender Monat: nur Vergangenes und Bestätigtes zählt, Zettel ist vorläufig', async () => {

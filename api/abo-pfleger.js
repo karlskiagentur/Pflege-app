@@ -1,7 +1,12 @@
-import { airtable, sendError, requireMitarbeiter, handledPreflight, TABLES } from './_lib.js';
+import { sendError, requireMitarbeiter, handledPreflight, TABLES } from './_lib.js';
+import { aboEndpoint, aboSpeichern, endpointGueltig } from './_abo.js';
 
 // Speichert das Push-Abo des eingeloggten Mitarbeiters – Datensatz wird über
 // den Session-Token ermittelt (nicht über eine frei setzbare mitarbeiterId).
+// Ein Gerät gehört immer nur dem zuletzt angemeldeten Konto: dasselbe Gerät wird bei
+// allen anderen Konten (Klienten und Mitarbeiter) entfernt, siehe api/_abo.js.
+const MAX_ABO_LAENGE = 4000;
+
 export default async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') {
@@ -15,11 +20,11 @@ export default async function handler(req, res) {
     if (!subscription || typeof subscription !== 'object') {
       res.status(400).json({ status: 'error', message: 'subscription nötig' }); return;
     }
+    if (!endpointGueltig(aboEndpoint(subscription)) || JSON.stringify(subscription).length > MAX_ABO_LAENGE) {
+      res.status(400).json({ status: 'error', message: 'Ungültiges Push-Abo' }); return;
+    }
 
-    await airtable(`${TABLES.PERSONAL}/${ma.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ fields: { Push_Subscription: JSON.stringify(subscription) } }),
-    });
+    await aboSpeichern(TABLES.PERSONAL, ma, subscription);
     res.status(200).json({ status: 'success' });
   } catch (e) {
     sendError(res, e, 'api/abo-pfleger');

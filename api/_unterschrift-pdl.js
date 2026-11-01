@@ -1,4 +1,4 @@
-// Vor-eingedruckte Unterschrift der Pflegedienstleitung (PNG, 1200x600).
+// Vor-eingedruckte Unterschrift der Geschäftsleitung (PNG, 1200x600).
 // Wird im Stundenzettel-PDF ueber die rechte Unterschriftslinie eingebettet.
 // Base64, weil /api-Functions zur Laufzeit nicht auf /public zugreifen koennen.
 export const UNTERSCHRIFT_PDL_B64 =

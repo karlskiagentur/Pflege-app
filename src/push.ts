@@ -150,3 +150,60 @@ export async function isPushSubscribed(): Promise<boolean> {
     return false;
   }
 }
+
+// --- Gerät und Konto -------------------------------------------------------------------
+// Ein Gerät bekommt nur die Pushs des Kontos, das gerade darauf angemeldet ist (Vorfall
+// 01.11.2026: nach einem Kontowechsel kamen Einsatz-Pushs des vorherigen Kontos weiter an).
+// Der Server entfernt beim Speichern dasselbe Gerät bei allen anderen Konten (api/_abo.js).
+
+const warte = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Beim Abmelden: das Push-Abo dieses Geräts vom bisherigen Konto lösen. Wartet höchstens
+ * 1,5 s und wirft nie – das Abmelden selbst darf daran nicht hängen. Das Abo auf dem Gerät
+ * bleibt bestehen; die nächste Anmeldung übernimmt es ohne erneute Nachfrage.
+ */
+export async function pushVomKontoLoesen(token: string | null | undefined): Promise<void> {
+  if (!token) return;
+  const loesen = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
+    if (!subscription) return;
+    await fetch('/api/save-subscription', {
+      method: 'POST',
+      keepalive: true, // läuft weiter, auch wenn die Seite gleich danach neu lädt
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, abmelden: true, endpoint: subscription.endpoint }),
+    });
+  };
+  try {
+    await Promise.race([loesen(), warte(1500)]);
+  } catch (e) {
+    console.log('Push-Abo beim Abmelden nicht gelöst:', e);
+  }
+}
+
+/**
+ * Nach der Anmeldung eines Klienten: Gibt es auf diesem Gerät schon ein Push-Abo und sind
+ * Benachrichtigungen erlaubt, wird es still diesem Konto zugeordnet. Legt kein neues Abo an
+ * und fragt nie nach einer Erlaubnis.
+ */
+export async function pushAboUebernehmen(token: string | null | undefined): Promise<boolean> {
+  try {
+    if (!token || typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = registration ? await registration.pushManager.getSubscription() : null;
+    if (!subscription) return false;
+    const response = await fetch('/api/save-subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, subscription: subscription.toJSON() }),
+    });
+    return response.ok;
+  } catch (e) {
+    console.log('Push-Abo nicht übernommen:', e);
+    return false;
+  }
+}

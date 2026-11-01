@@ -12,7 +12,7 @@ import {
 // Kartenpunkt. encodeURIComponent schützt Umlaute, Kommas und /-Hausnummern.
 const mapsUrl = (adresse: string) =>
   `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
-import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY } from './push';
+import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY, pushVomKontoLoesen, pushAboUebernehmen } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
 import PdfVorschau from './PdfVorschau';
 import {
@@ -757,7 +757,11 @@ export default function App() {
       }
       if (Notification.permission === 'denied') { setPatientPushStatus('denied'); return; }
       isPushSubscribed().then(subscribed => {
-          setPatientPushStatus(subscribed && Notification.permission === 'granted' ? 'granted' : 'idle');
+          const aktiv = subscribed && Notification.permission === 'granted';
+          setPatientPushStatus(aktiv ? 'granted' : 'idle');
+          // Abo dieses Geräts gehört ab jetzt diesem Klienten (auch wenn es von einem vorherigen
+          // Konto stammt) - der Server entfernt es bei allen anderen Konten.
+          if (aktiv) pushAboUebernehmen(token || localStorage.getItem('active_token'));
       });
   }, [patientId]);
 
@@ -1709,7 +1713,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <p className="text-xs font-bold italic">{mitarbeiterName}</p>
           <button onClick={() => fetchMitarbeiterTermine(false, true)} className={`bg-white/20 p-3 rounded-full ${mitarbeiterLoading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-          <button onClick={() => { localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+          <button onClick={async () => { await pushVomKontoLoesen(mitarbeiterToken || localStorage.getItem('active_mitarbeiter_token')); /* Gerät bekommt keine Pushs dieses Kontos mehr */ localStorage.removeItem('active_mitarbeiter_id'); localStorage.removeItem('active_mitarbeiter_name'); localStorage.removeItem('active_mitarbeiter_token'); setMitarbeiterId(null); setMitarbeiterName(''); setMitarbeiterToken(null); setLoginMode('select'); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
         </div>
       </header>
 
@@ -2877,7 +2881,7 @@ export default function App() {
         <div className="flex flex-col items-end">
           <div className="flex items-center gap-3 mb-1.5">
              <button onClick={() => fetchData(true)} className={`bg-white/20 p-3 rounded-full ${loading ? 'animate-spin' : ''}`}><RefreshCw size={20}/></button>
-             <button onClick={() => { localStorage.clear(); setPatientId(null); setToken(null); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
+             <button onClick={async () => { await pushVomKontoLoesen(token || localStorage.getItem('active_token')); /* Gerät bekommt keine Pushs dieses Kontos mehr */ localStorage.clear(); setPatientId(null); setToken(null); window.location.reload(); /* Neustart leert alle Daten im Speicher (geteilte Geräte) */ }} className="bg-white/20 p-3 rounded-full"><LogOut size={20}/></button>
           </div>
           <p className="text-xs font-bold italic">{getValue(patientData, 'Name')}</p>
         </div>
