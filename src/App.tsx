@@ -19,6 +19,8 @@ import {
   zielAusAdresse, istPushZiel, ladeJson, speichereJson, einsatzStand, einsatzMarken, neueSchluessel,
   gesehenErgaenzen, datumMs, anzeigeZeit, type PushZiel, type EinsatzMarke,
 } from './neuigkeiten';
+// Abrechnungszeitraum (27. bis 26.) – dieselbe Regel wie Stundenzettel und Monatslauf auf dem Server.
+import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText } from '../api/_abrechnung';
 
 // Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
 const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
@@ -1627,16 +1629,21 @@ export default function App() {
       else if (tab === 'lohn') { setLohnBereich('abrechnung'); fetchLohnListe(); }
     };
 
-    // --- Zeitnachweis (Lohn / Zeit): erfasste Zeiten des gewählten Monats ---
-    const zeitRef = new Date();
-    if (zeitMonat === 'vormonat') zeitRef.setMonth(zeitRef.getMonth() - 1);
-    const zeitYm = `${zeitRef.getFullYear()}-${String(zeitRef.getMonth() + 1).padStart(2, '0')}`;
+    // --- Zeitnachweis (Lohn / Zeit): erfasste Zeiten des gewählten Abrechnungsmonats ---
+    // Abrechnungsmonat wie auf dem Stundenzettel: seit November 2026 vom 27. des Vormonats bis
+    // zum 26. („Aktueller Monat“ ab dem 27. also schon der nächste). Regel: api/_abrechnung.js.
+    const zeitJetzt = new Date();
+    const zeitHeute = `${zeitJetzt.getFullYear()}-${String(zeitJetzt.getMonth() + 1).padStart(2, '0')}-${String(zeitJetzt.getDate()).padStart(2, '0')}`;
+    const zeitAktuell = abrechnungsmonatFuer(zeitHeute);
+    const zeitYm = zeitMonat === 'vormonat' ? monatPlus(zeitAktuell, -1) : zeitAktuell;
+    const zeitZeitraum = abrechnungszeitraum(zeitYm);
     const zeitMonatLabel = new Date(`${zeitYm}-01T12:00:00`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+    const zeitZeitraumLabel = zeitraumText(zeitZeitraum);
     // Nur ERFASSTE Einsätze zählen (Erledigt_Am gesetzt + Dauer_Ist vorhanden);
-    // geplante Termine erscheinen nicht. Monat aus Formelfeld, Fallback Datum.
+    // geplante Termine erscheinen nicht. Zuordnung über das Datum des Einsatzes.
     const zeitEinsaetze = (zeitTermine || [])
       .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
-      .filter((t) => String(getValue(t, 'Monat') || getValue(t, 'Datum') || '').slice(0, 7) === zeitYm)
+      .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum))
       .sort((a, b) => {
         const ka = `${getValue(a, 'Datum') || ''} ${getValue(a, 'Von') || formatTime(getValue(a, 'Uhrzeit'))}`;
         const kb = `${getValue(b, 'Datum') || ''} ${getValue(b, 'Von') || formatTime(getValue(b, 'Uhrzeit'))}`;
@@ -2061,9 +2068,12 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    {/* Kopf: Monat + Gesamtsumme */}
+                    {/* Kopf: Abrechnungsmonat (mit Zeitraum, z. B. 27.11.–26.12.2026) + Gesamtsumme */}
                     <div className="bg-white rounded-[2rem] border border-gray-100 p-5 mb-2 flex items-center justify-between">
-                      <p className="font-black text-lg text-[#3A3A3A]">{zeitMonatLabel}</p>
+                      <div>
+                        <p className="font-black text-lg text-[#3A3A3A]">{zeitMonatLabel}</p>
+                        <p className="text-[11px] font-bold text-gray-400">{zeitZeitraumLabel}</p>
+                      </div>
                       <p className="font-black text-lg text-[#0F6E56]">{stdMin(zeitSummeSec)} Std.</p>
                     </div>
 

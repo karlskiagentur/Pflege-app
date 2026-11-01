@@ -7,8 +7,9 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
 import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
-  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst,
+  NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst, besucheFormel,
 } from '../api/stundenzettel.js';
+import { abrechnungszeitraum } from '../api/_abrechnung.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
 
 process.env.STUNDENZETTEL_SECRET = 'test-secret-1234567890';
@@ -22,12 +23,10 @@ const tag = (offset) => {
   const d = new Date(`${h}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + offset);
   return d.toISOString().slice(0, 10);
 };
-// Ein Tag im Vormonat (sicher vollständig vergangen), Tag des Monats frei wählbar (1-28)
-const imVormonat = (tagImMonat) => {
-  const h = berlin(Date.now()).datum;
-  const vormonat = new Date(`${h.slice(0, 7)}-01T12:00:00Z`); vormonat.setUTCDate(0);
-  return `${vormonat.toISOString().slice(0, 8)}${String(tagImMonat).padStart(2, '0')}`;
-};
+// Handler-Tests laufen zu einer festen Uhrzeit (unabhängig vom Testtag): t.mock.timers ersetzt Date.
+// 05.12.2026: abgeschlossen ist „November 2026“ (01.11.–26.11.), es läuft „Dezember 2026“ (27.11.–26.12.).
+const zeit = (t, iso) => { t.mock.timers.reset(); t.mock.timers.enable({ apis: ['Date'], now: new Date(iso) }); };
+const AM_05_12 = '2026-12-05T10:00:00Z';
 const monatName = (ym) => `${MONATE[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
 // Standard: bestätigt mit Ist = Zeitfenster (Dauer_Ist in Sekunden, wie /api/besuch-dauer schreibt)
 const besuch = (datum, von, bis, extra = {}) => ({
@@ -64,7 +63,7 @@ function pdfTexte(bytes) {
 // Antwort auf das Umsortieren (PATCH mit Datei) bzw. auf das erneute Lesen nach dem Hochladen.
 const NEUE_DATEI = { id: 'attNeueFassung01', filename: 'neu.pdf' };
 function szenario({ monat, besuche, uploadStatus = 200, datei, dateiNachher, sortierStatus = 200, nachherStatus = 200 }) {
-  const log = { upload: null, patches: [], zettelGets: 0 };
+  const log = { upload: null, patches: [], zettelGets: 0, besucheFormel: null };
   const p = airtableAttrappe(async (a) => {
     if (a.host === 'content.airtable.com') { log.upload = a.body; return antwort(uploadStatus, { id: REC }); }
     if (a.tabelle === ZETTEL && a.methode === 'GET') {
@@ -85,7 +84,7 @@ function szenario({ monat, besuche, uploadStatus = 200, datei, dateiNachher, sor
       return antwort(200, { id: REC });
     }
     if (a.tabelle === PERSONAL) return antwort(200, { id: MA, fields: { Name: 'Anna Beispiel', Anmelde_ID: 90099 } });
-    if (a.tabelle === BESUCHE) return antwort(200, { records: besuche });
+    if (a.tabelle === BESUCHE) { log.besucheFormel = a.formel; return antwort(200, { records: besuche }); }
     return antwort(404, {});
   });
   return { p, log };
@@ -101,13 +100,16 @@ test('ohne/mit falschem Secret -> 401, keine Airtable-Zugriffe', async () => {
   assert.equal(p.aufrufe.length, 0);
 });
 
-test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), Summe 3:00, finaler Zettel', async () => {
-  const d = imVormonat(15), d2 = imVormonat(16);
+test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), Summe 3:00, finaler Zettel', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-15', d2 = '2026-11-16';
   const { log } = szenario({
-    monat: d.slice(0, 7),
+    monat: '2026-11',
     besuche: [besuch(d, '06:45', '07:00'), besuch(d, '07:30', '08:15'), besuch(d, '09:00', '10:00'),
       besuch(d, '11:00', '12:00', { Status: 'Abgesagt' }),
-      offen(d2, '08:00', '09:00', { Patient_Name: ['Max Mustermann'] })], // nicht bestätigt -> zählt nicht
+      offen(d2, '08:00', '09:00', { Patient_Name: ['Max Mustermann'] }), // nicht bestätigt -> zählt nicht
+      // außerhalb des Zeitraums 01.11.–26.11. (kommt über {Monat} als Kandidat mit) -> zählt nicht
+      besuch('2026-11-27', '08:00', '09:00'), offen('2026-11-30', '08:00', '09:00')],
   });
   const res = antwortObjekt();
   await handler(req(), res);
@@ -117,12 +119,15 @@ test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), S
   assert.equal(res.body.vorlaeufig, false);
   assert.equal(res.body.einsaetze, 3);
   assert.equal(res.body.ohneIst, 1);
-  assert.equal(log.upload.filename, `Stundenzettel_${d.slice(0, 7)}_final.pdf`);
+  assert.equal(log.upload.filename, 'Stundenzettel_2026-11_final.pdf');
   const bytes = Buffer.from(log.upload.file, 'base64');
   const pdf = await PDFDocument.load(bytes);
   assert.equal(pdf.getPageCount(), 1);
   // Der nicht bestätigte Einsatz steht getrennt auf dem Zettel, ohne Ist-Zeit
   const texte = pdfTexte(bytes);
+  // Kopf mit Abrechnungszeitraum (Übergangsmonat November 2026)
+  assert.ok(texte.includes('Anna Beispiel · Nr. 90099 · November 2026 · 01.11.–26.11.2026'), 'Zeitraum fehlt im Kopf');
+  assert.ok(!texte.some((x) => /^(27|30)\.11\.2026$/.test(x)), 'Einsatz außerhalb des Zeitraums steht auf dem Zettel');
   const titel = texte.indexOf(NICHT_BESTAETIGT_TITEL);
   assert.ok(titel > 0, 'Liste "nicht bestätigt" fehlt im PDF');
   assert.deepEqual(texte.slice(titel + 1, titel + 6),
@@ -139,9 +144,10 @@ test('abgeschlossener Monat: Anfahrt + Pause (mind. 30 Min Anfahrt je Lücke), S
   assert.ok(!/vorläufig/.test(f.Titel));
 });
 
-test('abgeschlossener Monat ganz ohne Bestätigung: Summe 0:00, Liste auf dem Zettel, Status "Erstellt"', async () => {
-  const d = imVormonat(10);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [offen(d, '08:00', '09:00'), offen(d, '10:00', '10:30')] });
+test('abgeschlossener Monat ganz ohne Bestätigung: Summe 0:00, Liste auf dem Zettel, Status "Erstellt"', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [offen(d, '08:00', '09:00'), offen(d, '10:00', '10:30')] });
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200, JSON.stringify(res.body));
@@ -157,27 +163,90 @@ test('abgeschlossener Monat ganz ohne Bestätigung: Summe 0:00, Liste auf dem Ze
   assert.ok(!texte.includes(UNTERSCHRIFT_ROLLE), 'ohne berechnete Einsätze keine Unterschrift');
 });
 
-test('laufender Monat: nur Vergangenes und Bestätigtes zählt, Zettel ist vorläufig', async () => {
-  const gestern = tag(-1), morgen = tag(1);
-  const monat = berlin(Date.now()).datum.slice(0, 7);
-  const imMonat = [gestern, morgen].filter((x) => x.slice(0, 7) === monat);
-  const besuche = imMonat.flatMap((x) => [besuch(x, '08:00', '09:00'), offen(x, '10:00', '11:00')]);
-  const { log } = szenario({ monat, besuche });
+test('laufender Monat: nur Vergangenes und Bestätigtes im Zeitraum zählt, Zettel ist vorläufig', async (t) => {
+  zeit(t, '2026-12-10T12:00:00Z'); // 13:00 Uhr deutscher Zeit; Zeitraum Dezember 2026 = 27.11.–26.12.
+  const besuche = [
+    besuch('2026-12-09', '08:00', '09:00'), offen('2026-12-09', '10:00', '11:00'), // gestern
+    besuch('2026-12-11', '08:00', '09:00'), offen('2026-12-11', '10:00', '11:00'), // morgen: zählt noch nicht
+    besuch('2026-11-28', '08:00', '09:00'),                                         // im Zeitraum (November-Datum)
+    besuch('2026-11-26', '08:00', '09:00'),                                         // gehört zu November
+  ];
+  const { log } = szenario({ monat: '2026-12', besuche });
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.vorlaeufig, true);
-  const erwartet = imMonat.includes(gestern) ? 1 : 0;
-  assert.equal(res.body.einsaetze, erwartet);
-  assert.equal(res.body.ohneIst, erwartet); // morgen ist weder gezählt noch "nicht bestätigt"
-  assert.equal(res.body.summe, erwartet ? '1:00' : '0:00');
-  assert.match(log.upload.filename, new RegExp(`^Stundenzettel_${monat}_vorlaeufig_\\d{4}-\\d{2}-\\d{2}\\.pdf$`));
+  assert.equal(res.body.einsaetze, 2);
+  assert.equal(res.body.ohneIst, 1); // morgen ist weder gezählt noch "nicht bestätigt"
+  assert.equal(res.body.summe, '2:00');
+  assert.equal(log.upload.filename, 'Stundenzettel_2026-12_vorlaeufig_2026-12-10.pdf');
   assert.match(log.patches.at(-1).Titel, /\(vorläufig\)$/);
+  // Kandidaten aus beiden Kalendermonaten des Zeitraums
+  assert.ok(log.besucheFormel.includes("{Monat} = '2026-11'") && log.besucheFormel.includes("{Monat} = '2026-12'"));
 });
 
-test('Upload schlägt fehl -> Status "Fehler", 500 ohne Details', async () => {
-  const d = tag(-40);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], uploadStatus: 500 });
+test('Stichtag: Zettel Dezember 2026 (27.11.–26.12.) ist ab dem 27.12. fertig, am 26.12. abends noch vorläufig', async (t) => {
+  const besuche = [
+    besuch('2026-11-26', '08:00', '09:00'), besuch('2026-11-27', '08:00', '09:00'),
+    besuch('2026-12-26', '08:00', '09:00'), besuch('2026-12-27', '08:00', '09:00'),
+  ];
+  zeit(t, '2026-12-26T22:00:00Z'); // 23:00 Uhr am 26.12.
+  let s = szenario({ monat: '2026-12', besuche });
+  let res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.body.vorlaeufig, true);
+  assert.equal(res.body.einsaetze, 2);
+  zeit(t, '2026-12-27T03:00:00Z'); // 04:00 Uhr am 27.12. (Monatslauf)
+  s = szenario({ monat: '2026-12', besuche });
+  res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.vorlaeufig, false);
+  assert.equal(res.body.einsaetze, 2); // 27.11. und 26.12. – nicht 26.11. (November), nicht 27.12. (Januar)
+  assert.equal(res.body.summe, '2:00');
+  assert.equal(s.log.upload.filename, 'Stundenzettel_2026-12_final.pdf');
+  const texte = pdfTexte(Buffer.from(s.log.upload.file, 'base64'));
+  assert.ok(texte.includes('Anna Beispiel · Nr. 90099 · Dezember 2026 · 27.11.–26.12.2026'));
+  assert.ok(texte.includes(UNTERSCHRIFT_ROLLE));
+});
+
+test('Zeitraum über den Jahreswechsel und alte Kalendermonate: Kopf und Auswahl stimmen', async (t) => {
+  zeit(t, '2027-02-03T10:00:00Z');
+  const s = szenario({ monat: '2027-01', besuche: [besuch('2026-12-27', '08:00', '09:00'), besuch('2027-01-27', '08:00', '09:00')] });
+  const res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.body.einsaetze, 1);
+  assert.equal(res.body.vorlaeufig, false);
+  const texte = pdfTexte(Buffer.from(s.log.upload.file, 'base64'));
+  assert.ok(texte.includes('Anna Beispiel · Nr. 90099 · Januar 2027 · 27.12.2026–26.01.2027'));
+  // Ein Oktober-Zettel (vor der Umstellung) bleibt ein Kalendermonat
+  const alt = szenario({ monat: '2026-10', besuche: [besuch('2026-10-01', '08:00', '09:00'), besuch('2026-10-31', '08:00', '09:00')] });
+  const res2 = antwortObjekt();
+  await handler(req(), res2);
+  assert.equal(res2.body.einsaetze, 2);
+  assert.ok(pdfTexte(Buffer.from(alt.log.upload.file, 'base64')).includes('Anna Beispiel · Nr. 90099 · Oktober 2026 · 01.10.–31.10.2026'));
+  assert.ok(alt.log.besucheFormel.startsWith("AND(OR({Monat} = '2026-10'), FIND("));
+});
+
+test('besucheFormel: Kandidaten über die berührten Kalendermonate, Mitarbeiter-ID escaped', () => {
+  assert.equal(besucheFormel('recMaTestXXXXXXX1', abrechnungszeitraum('2026-12')),
+    "AND(OR({Monat} = '2026-11', {Monat} = '2026-12'), FIND('recMaTestXXXXXXX1', ARRAYJOIN({Pfleger_ID})))");
+  assert.equal(besucheFormel('recMaTestXXXXXXX1', abrechnungszeitraum('2026-11')),
+    "AND(OR({Monat} = '2026-11'), FIND('recMaTestXXXXXXX1', ARRAYJOIN({Pfleger_ID})))");
+  assert.ok(besucheFormel("rec'X", abrechnungszeitraum('2026-12')).includes("FIND('rec\\'X'"));
+});
+
+test('Kopfzeile mit Zeitraum passt auch bei langem Namen auf die Seite', async () => {
+  const doc = await PDFDocument.create();
+  const normal = await doc.embedFont(StandardFonts.Helvetica);
+  const kopf = pdfText('Huong Thi Xuan N. Mustermann · Nr. 90123 · September 2027 · 27.12.2026–26.01.2027');
+  assert.ok(normal.widthOfTextAtSize(kopf, 11) <= 595.28 - 2 * 50, `zu breit: ${normal.widthOfTextAtSize(kopf, 11)}`);
+});
+
+test('Upload schlägt fehl -> Status "Fehler", 500 ohne Details', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [besuch(d, '08:00', '09:00')], uploadStatus: 500 });
   const res = antwortObjekt();
   await ruhig(() => handler(req(), res));
   assert.equal(res.statusCode, 500);
@@ -188,9 +257,10 @@ test('Upload schlägt fehl -> Status "Fehler", 500 ohne Details', async () => {
 const ALT1 = { id: 'attAlteFassung01', filename: 'alt1.pdf' };
 const ALT2 = { id: 'attAlteFassung02', filename: 'alt2.pdf' };
 
-test('Neuerstellung: neue Fassung steht vorne, alle früheren bleiben dahinter', async () => {
-  const d = tag(-40);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1, ALT2] });
+test('Neuerstellung: neue Fassung steht vorne, alle früheren bleiben dahinter', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1, ALT2] });
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200);
@@ -201,9 +271,10 @@ test('Neuerstellung: neue Fassung steht vorne, alle früheren bleiben dahinter',
   assert.deepEqual(log.patches[1], { Datei: [{ id: NEUE_DATEI.id }, { id: ALT1.id }, { id: ALT2.id }] }); // … dann sortiert
 });
 
-test('Erste Fassung (noch keine Datei): kein zusätzliches Lesen, kein Umsortieren', async () => {
-  const d = tag(-40);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')] });
+test('Erste Fassung (noch keine Datei): kein zusätzliches Lesen, kein Umsortieren', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [besuch(d, '08:00', '09:00')] });
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200);
@@ -212,9 +283,10 @@ test('Erste Fassung (noch keine Datei): kein zusätzliches Lesen, kein Umsortier
   assert.equal(log.patches[0].Status, 'Erstellt');
 });
 
-test('Umsortieren scheitert: Zettel bleibt "Erstellt", Antwort 200, kein Fehlerstatus', async () => {
-  const d = tag(-40);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], sortierStatus: 422 });
+test('Umsortieren scheitert: Zettel bleibt "Erstellt", Antwort 200, kein Fehlerstatus', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], sortierStatus: 422 });
   const res = antwortObjekt();
   await ruhig(() => handler(req(), res));
   assert.equal(res.statusCode, 200);
@@ -224,9 +296,10 @@ test('Umsortieren scheitert: Zettel bleibt "Erstellt", Antwort 200, kein Fehlers
   assert.ok(!log.patches.some((f) => f.Status === 'Fehler'));
 });
 
-test('Erneutes Lesen nach dem Hochladen scheitert: Zettel bleibt "Erstellt", nichts wird umsortiert', async () => {
-  const d = tag(-40);
-  const { log } = szenario({ monat: d.slice(0, 7), besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], nachherStatus: 500 });
+test('Erneutes Lesen nach dem Hochladen scheitert: Zettel bleibt "Erstellt", nichts wird umsortiert', async (t) => {
+  zeit(t, AM_05_12);
+  const d = '2026-11-10';
+  const { log } = szenario({ monat: '2026-11', besuche: [besuch(d, '08:00', '09:00')], datei: [ALT1], nachherStatus: 500 });
   const res = antwortObjekt();
   await ruhig(() => handler(req(), res));
   assert.equal(res.statusCode, 200);
