@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { airtable, fetchAll, sendError, esc, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 import { berechneZeitnachweis, hm } from './_zeitkonto.js';
 import { pdfText } from './_pdftext.js';
@@ -96,6 +96,30 @@ export function nichtBestaetigtText(summen) {
   const n = (summen && summen.ohneIst) || 0;
   if (!n) return '';
   return `Nicht bestätigt: ${n} ${n === 1 ? 'Einsatz' : 'Einsätze'} (geplant ${hm(summen.ohneIstSollMin || 0)} Std.) – nicht berechnet, Liste oben.`;
+}
+
+/**
+ * Reihenfolge des Felds „Datei“ nach dem Hochladen: die neue Fassung zuerst, alle früheren dahinter
+ * in ihrer bisherigen Reihenfolge (archivieren statt löschen). uploadAttachment hängt neue Dateien
+ * hinten an – nach einer Neuerstellung (z. B. Korrektur durch das Büro) stünde sonst eine ältere
+ * Fassung, womöglich mit alten Stunden, an erster Stelle.
+ * Umsortiert wird nur, wenn der Stand nach dem Hochladen ALLE bisherigen Anhänge und GENAU eine
+ * neue Datei enthält; sonst null (nichts tun, Airtable-Reihenfolge bleibt). So geht nie ein Anhang
+ * verloren. Ebenfalls null: erste Fassung (nichts umzusortieren) oder neue Fassung schon vorne.
+ * @param {Array<{id?: string}>|undefined} vorher   Anhänge vor dem Hochladen
+ * @param {Array<{id?: string}>|undefined} nachher  Anhänge nach dem Hochladen
+ * @returns {Array<{id: string}>|null}
+ */
+export function neuesteZuerst(vorher, nachher) {
+  const ids = (liste) => (Array.isArray(liste) ? liste : [])
+    .map((a) => (a && typeof a.id === 'string' ? a.id : ''))
+    .filter(Boolean);
+  const alt = ids(vorher);
+  const jetzt = ids(nachher);
+  const neu = jetzt.filter((id) => !alt.includes(id));
+  if (!alt.length || neu.length !== 1 || !alt.every((id) => jetzt.includes(id))) return null;
+  if (jetzt[0] === neu[0]) return null;
+  return [neu[0], ...jetzt.filter((id) => id !== neu[0])].map((id) => ({ id }));
 }
 
 // Text der Tagessumme (Klient-Spalte); der Betrag (bezahlt) steht in der Ist-Spalte.
@@ -360,7 +384,8 @@ export default async function handler(req, res) {
       ? `Stundenzettel_${monat}_final.pdf`
       : `Stundenzettel_${monat}_vorlaeufig_${nachweis.jetzt.datum}.pdf`;
 
-    // 4) PDF anhängen (uploadAttachment hängt an, frühere Fassungen bleiben erhalten)
+    // 4) PDF anhängen (uploadAttachment hängt hinten an, frühere Fassungen bleiben erhalten;
+    //    Schritt 6 holt die neue Fassung nach vorne)
     const up = await fetch(`https://content.airtable.com/v0/${BASE}/${recordId}/${DATEI_FELD}/uploadAttachment`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${AT_TOKEN}`, 'Content-Type': 'application/json' },
@@ -386,6 +411,24 @@ export default async function handler(req, res) {
       method: 'PATCH',
       body: JSON.stringify({ fields, typecast: true }),
     });
+
+    // 6) Neue Fassung im Feld „Datei“ nach vorne (nur bei Neuerstellung, d. h. es gab schon eine
+    //    Datei). Best effort: Der Zettel ist hier schon fertig – ein Fehler beim Sortieren wird
+    //    gemeldet, ändert aber nichts an PDF, Summe und Status „Erstellt“.
+    if (Array.isArray(zf[DATEI_FELD]) && zf[DATEI_FELD].length) {
+      try {
+        const nachUpload = await airtable(`${ZETTEL}/${recordId}`);
+        const reihenfolge = neuesteZuerst(zf[DATEI_FELD], (nachUpload.fields || {})[DATEI_FELD]);
+        if (reihenfolge) {
+          await airtable(`${ZETTEL}/${recordId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ fields: { [DATEI_FELD]: reihenfolge } }),
+          });
+        }
+      } catch (e) {
+        reportError('api/stundenzettel', 'Neue Fassung konnte nicht nach vorne sortiert werden', { status: e && e.status });
+      }
+    }
 
     res.status(200).json({
       status: 'success', einsaetze: nachweis.summen.einsaetze, summe, vorlaeufig: !final,
