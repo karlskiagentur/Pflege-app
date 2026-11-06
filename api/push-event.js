@@ -3,9 +3,11 @@ import { airtable, fetchAll, sendInfoCopy, reportError, TABLES } from './_lib.js
 import { lohnUploadPush } from './_lohn.js';
 import { pushNutzlast, einsatzZeitText } from './_push.js';
 import { MITTEILUNGEN, zielgruppeNormal, mitteilungText } from './_mitteilungen.js';
+import { abwesenheit, abwesenheitsGrund } from './_zeitkonto.js';
 
 // Push-Ereignisse aus den Airtable-Automationen: { type, recordId }.
 //   besuch         Termin freigegeben (Push_senden = "Senden") -> Klient + eingeplanter Mitarbeiter
+//                  (Urlaub/Abwesenheit, eigene Zeile ohne Klient: nur der Mitarbeiter)
 //   absage         Termin abgesagt (Status "Abgesagt")         -> eingeplanter Mitarbeiter
 //   dokument       Dokument freigegeben                         -> Klient
 //   mitteilung     Mitteilung auf "Senden"                      -> laut Zielgruppe + Verknüpfte
@@ -113,12 +115,21 @@ function einsatzBei(f) {
 /** Push-Texte für den eingeplanten Mitarbeiter (deutsche Zeit, mit Datum). */
 export function mitarbeiterEinsatzText(anlass, fields) {
   const f = fields || {};
-  const was = einsatzBei(f);
   const wann = einsatzZeitText(f);
+  // Satzende ohne doppelten Punkt: ohne Uhrzeit endet die Zeitangabe schon mit „09.11.“.
+  const satz = (s) => (s.endsWith('.') ? s : `${s}.`);
+  // Urlaub/Abwesenheit (eigene Zeile ohne Klient) ist kein Einsatz: eigener Text, z. B. wenn das
+  // Büro einen eingetragenen Urlaub wieder absagt -> „Urlaub abgesagt“ statt „Einsatz abgesagt“.
+  const art = abwesenheit(f);
+  const grund = art ? abwesenheitsGrund(art, txt(f['Tätigkeit'])) : '';
+  const was = art ? (grund ? `${art} (${grund})` : art) : einsatzBei(f);
+  const titel = art
+    ? { Abgesagt: `${art} abgesagt`, 'Geändert': `${art} geändert`, Neu: `${art} eingetragen` }
+    : { Abgesagt: 'Einsatz abgesagt', 'Geändert': 'Einsatz geändert', Neu: 'Neuer Einsatz' };
   const mitZeit = wann ? `${was} ${wann}` : was;
-  if (anlass === 'Abgesagt') return { titel: 'Einsatz abgesagt', text: `${mitZeit} wurde abgesagt.` };
-  if (anlass === 'Geändert') return { titel: 'Einsatz geändert', text: wann ? `${was} ist jetzt ${wann}.` : `${was} wurde geändert.` };
-  return { titel: 'Neuer Einsatz', text: `${mitZeit}.` };
+  if (anlass === 'Abgesagt') return { titel: titel.Abgesagt, text: `${mitZeit} wurde abgesagt.` };
+  if (anlass === 'Geändert') return { titel: titel['Geändert'], text: wann ? satz(`${was} ist jetzt ${wann}`) : `${was} wurde geändert.` };
+  return { titel: titel.Neu, text: satz(mitZeit) };
 }
 
 // Mitarbeiter eines Einsatzes (eingeplant + ggf. Vertretung), nur aktive, ohne Doppelte.
@@ -166,10 +177,6 @@ export default async function handler(req, res) {
       // Bestaetigungs-Gate: Push nur, wenn der Mitarbeiter im Interface aktiv freigegeben hat.
       if (txt(f.Push_senden) !== 'Senden') { res.status(200).json({ status: 'skipped', grund: 'Push nicht freigegeben' }); return; }
       gateTable = TABLES.BESUCHE;
-      const patientIds = f.Patient || [];
-      if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
-      const taetigkeit = txt(f['Tätigkeit']) || 'Unterstützung';
-      const wann = fmt(f['Uhrzeit']);
       // Anlass serverseitig aus dem Datensatz ableiten - der Freigabe-Trigger
       // (Push_senden='Senden') kennt den Anlass nicht. Status/Hervorhebung sind
       // die verlässliche Quelle; ein explizit übergebenes ereignis bleibt Fallback.
@@ -178,24 +185,43 @@ export default async function handler(req, res) {
       let anlass = ereignis || 'Neu';
       if (status === 'Abgesagt' || marker === 'Storniert') anlass = 'Abgesagt';
       else if (marker === 'Änderung') anlass = 'Geändert';
-      if (anlass === 'Abgesagt') {
-        message = `Ihr Termin "${taetigkeit}" wurde abgesagt.`;
-      } else if (anlass === 'Geändert') {
-        message = `Ihr Termin "${taetigkeit}" wurde geändert` + (wann ? ` - neuer Termin: ${wann}.` : '.');
+      // Urlaub/Abwesenheit (eigene Zeile ohne Klient, Spalte „Abwesend/Urlaub“): Push nur an die
+      // Pflegekraft („Urlaub eingetragen – Urlaub am Mo, 09.11.“), nie an einen Klienten. Danach
+      // steht die Freigabe auf „Gesendet“ (bleibt nicht auf „Senden“ hängen).
+      if (abwesenheit(f)) {
+        message = '';
+        if (status !== 'Abgesagt') { // Absage meldet schon „Push an Pfleger bei Stornierung“
+          const ma = mitarbeiterEinsatzText(anlass, f);
+          message = ma.text;
+          const nutzlast = pushNutzlast(ma.titel, ma.text, 'plan');
+          for (const p of await einsatzMitarbeiter(f)) hinzufuegen(empfaenger, p, nutzlast);
+        }
+        infoKopie = { typ: 'Urlaub/Abwesenheit', empfaenger: 'zugeteilter Mitarbeiter' };
+        leerGrund = 'Kein Push-Abo beim Mitarbeiter (Eintrag steht im Dienstplan und in der App)';
       } else {
-        message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
+        const patientIds = f.Patient || [];
+        if (patientIds.length === 0) { res.status(200).json({ status: 'skipped', grund: 'Kein Klient verknüpft' }); return; }
+        const taetigkeit = txt(f['Tätigkeit']) || 'Unterstützung';
+        const wann = fmt(f['Uhrzeit']);
+        if (anlass === 'Abgesagt') {
+          message = `Ihr Termin "${taetigkeit}" wurde abgesagt.`;
+        } else if (anlass === 'Geändert') {
+          message = `Ihr Termin "${taetigkeit}" wurde geändert` + (wann ? ` - neuer Termin: ${wann}.` : '.');
+        } else {
+          message = `Neuer Termin: "${taetigkeit}"` + (wann ? ` am ${wann}` : '');
+        }
+        hinzufuegen(empfaenger, await loadRec(TABLES.PATIENTEN, patientIds[0]), pushNutzlast(TITLE, message, 'termine'));
+        // Zusätzlich die Mitarbeiter des Einsatzes - mit eigenem Text (Einsatz, Klient,
+        // Datum, Uhrzeit). Ist der Termin bereits "Abgesagt", hat sie die Automation
+        // "Push an Pfleger bei Stornierung" schon informiert (kein zweiter Push).
+        const vorher = empfaenger.size;
+        if (status !== 'Abgesagt') {
+          const ma = mitarbeiterEinsatzText(anlass, f);
+          const nutzlast = pushNutzlast(ma.titel, ma.text, 'plan');
+          for (const p of await einsatzMitarbeiter(f)) hinzufuegen(empfaenger, p, nutzlast);
+        }
+        infoKopie = { typ: 'Termin', empfaenger: empfaenger.size > vorher ? 'Klient + zugeteilter Mitarbeiter' : 'Klient' };
       }
-      hinzufuegen(empfaenger, await loadRec(TABLES.PATIENTEN, patientIds[0]), pushNutzlast(TITLE, message, 'termine'));
-      // Zusätzlich die Mitarbeiter des Einsatzes - mit eigenem Text (Einsatz, Klient,
-      // Datum, Uhrzeit). Ist der Termin bereits "Abgesagt", hat sie die Automation
-      // "Push an Pfleger bei Stornierung" schon informiert (kein zweiter Push).
-      const vorher = empfaenger.size;
-      if (status !== 'Abgesagt') {
-        const ma = mitarbeiterEinsatzText(anlass, f);
-        const nutzlast = pushNutzlast(ma.titel, ma.text, 'plan');
-        for (const p of await einsatzMitarbeiter(f)) hinzufuegen(empfaenger, p, nutzlast);
-      }
-      infoKopie = { typ: 'Termin', empfaenger: empfaenger.size > vorher ? 'Klient + zugeteilter Mitarbeiter' : 'Klient' };
 
     } else if (type === 'absage') {
       // Termin auf "Abgesagt" -> Push an die Mitarbeiter des Einsatzes (Automation

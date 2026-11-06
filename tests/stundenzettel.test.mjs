@@ -2,12 +2,12 @@
 // Alle Daten frei erfunden. Aufruf: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import zlib from 'node:zlib';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
+import { airtableAttrappe, antwort, antwortObjekt, pdfTexte } from './_hilfen.mjs';
 import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
   NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst, besucheFormel,
+  ABWESENHEIT_TITEL, abwesenheitZeilen, abwesenheitText,
 } from '../api/stundenzettel.js';
 import { abrechnungszeitraum } from '../api/_abrechnung.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
@@ -42,21 +42,6 @@ const offen = (datum, von, bis, extra = {}) => {
   delete r.fields.Dauer_Ist;
   return r;
 };
-
-// Alle Textstücke eines von pdf-lib erzeugten PDFs (Text steht als <HEX> Tj in Flate-Streams,
-// kodiert in Windows-1252; Nodes TextDecoder bildet 0x80-0x9F nicht ab -> eigene Tabelle).
-const CP1252_80_9F = '€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ';
-const cp1252 = { decode: (buf) => [...buf].map((x) => (x >= 0x80 && x <= 0x9f ? CP1252_80_9F[x - 0x80] : String.fromCharCode(x))).join('') };
-function pdfTexte(bytes) {
-  const roh = Buffer.from(bytes).toString('latin1');
-  const texte = [];
-  for (const m of roh.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    let inhalt = Buffer.from(m[1], 'latin1');
-    try { inhalt = zlib.inflateSync(inhalt); } catch { /* unkomprimiert */ }
-    for (const t of inhalt.toString('latin1').matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) texte.push(cp1252.decode(Buffer.from(t[1], 'hex')));
-  }
-  return texte;
-}
 
 // datei: Anhänge der Zeile VOR dem Hochladen (Neuerstellung); dateiNachher: Stand nach dem Hochladen
 // (Standard: neue Datei hinten angehängt, wie uploadAttachment es tut). sortierStatus/nachherStatus:
@@ -433,4 +418,88 @@ test('Erläuterung und Hinweis: vollständig darstellbar, Regel "nur Bestätigte
   const breite = 595.28 - 2 * 50;
   assert.ok(normal.widthOfTextAtSize(pdfText(HINWEIS), 8) <= breite, 'HINWEIS zu breit');
   assert.ok(fett.widthOfTextAtSize(pdfText(nichtBestaetigtText({ ohneIst: 999, ohneIstSollMin: 99 * 60 + 45 })), 9) <= breite);
+});
+
+// ---------------------------------------------------------------- Urlaub / Abwesenheit (06.11.2026)
+test('Urlaub/Abwesenheit: eigene Zeilen (ganztägig, mit Zeit, mit Grund) und Hinweis im Summenblock', () => {
+  const nachweis = { abwesenheiten: [
+    { datum: '2026-11-09', art: 'Urlaub', grund: '', von: '', bis: '', min: null },
+    { datum: '2026-11-10', art: 'Urlaub', grund: '', von: '06:00', bis: '12:00', min: 360 },
+    { datum: '2026-11-12', art: 'Abwesend', grund: 'Arzttermin', von: '10:00', bis: '', min: null },
+  ] };
+  assert.deepEqual(abwesenheitZeilen(nachweis), [
+    { datum: '09.11.2026', fenster: 'ganztägig', soll: '–', ist: '–', klient: 'Urlaub' },
+    { datum: '10.11.2026', fenster: '06:00 – 12:00', soll: '6:00', ist: '–', klient: 'Urlaub' },
+    { datum: '12.11.2026', fenster: 'ab 10:00', soll: '–', ist: '–', klient: 'Abwesend · Arzttermin' },
+  ]);
+  assert.equal(abwesenheitText(nachweis), 'Urlaub: 2 Tage (6:00 Std.) · Abwesend: 1 Tag – nicht in der Monatssumme, Liste oben.');
+  assert.equal(abwesenheitText({ abwesenheiten: [{ datum: '2026-11-09', art: 'Urlaub', min: null }] }), 'Urlaub: 1 Tag – nicht in der Monatssumme, Liste oben.');
+  assert.equal(abwesenheitText({ abwesenheiten: [] }), '');
+  assert.equal(abwesenheitText(undefined), '');
+  assert.deepEqual(abwesenheitZeilen({}), []);
+  assert.deepEqual(abwesenheitZeilen({ abwesenheiten: [{ datum: null, art: 'Urlaub', grund: '', von: '', bis: '', min: null }] }),
+    [{ datum: '–', fenster: 'ganztägig', soll: '–', ist: '–', klient: 'Urlaub' }]);
+});
+
+test('Urlaub im Abrechnungszeitraum: eigene Liste im PDF, nicht in Summe, Einsätzen oder „nicht bestätigt“', async (t) => {
+  zeit(t, AM_05_12);
+  const urlaub = (id, datum, extra = {}) => ({
+    id, fields: { Datum: datum, Monat: datum.slice(0, 7), Status: 'Geplant', Pfleger_ID: [MA], 'Abwesend/Urlaub': 'Urlaub', ...extra },
+  });
+  const { log } = szenario({
+    monat: '2026-11',
+    besuche: [
+      besuch('2026-11-10', '08:00', '09:00'),
+      urlaub('recUrlaubTest00001', '2026-11-09', { 'Tätigkeit': 'Urlaub' }),           // ganztägig, Uhrzeit folgt später
+      urlaub('recUrlaubTest00002', '2026-11-11', { Von: '06:00', Bis: '12:00' }),      // Stunden nachgetragen
+    ],
+  });
+  const res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.summe, '1:00');
+  assert.equal(res.body.einsaetze, 1);
+  assert.equal(res.body.ohneIst, 0);
+  assert.equal(res.body.abwesenheiten, 2);
+  const texte = pdfTexte(Buffer.from(log.upload.file, 'base64'));
+  const titel = texte.indexOf(ABWESENHEIT_TITEL);
+  assert.ok(titel > 0, 'Liste „Urlaub / Abwesenheit“ fehlt im PDF');
+  assert.deepEqual(texte.slice(titel + 1, titel + 11), [
+    '09.11.2026', 'ganztägig', '–', '–', 'Urlaub',
+    '11.11.2026', '06:00 – 12:00', '6:00', '–', 'Urlaub',
+  ]);
+  assert.ok(texte.includes('Urlaub: 2 Tage (6:00 Std.) – nicht in der Monatssumme, Liste oben.'));
+  assert.ok(!texte.includes(NICHT_BESTAETIGT_TITEL), 'Urlaub darf nicht unter „nicht bestätigt“ stehen');
+});
+
+test('Monat nur mit Urlaub: kein Fehler, Hinweis statt leerem Zettel', async (t) => {
+  zeit(t, AM_05_12);
+  const { log } = szenario({
+    monat: '2026-11',
+    besuche: [{ id: 'recUrlaubTest00003', fields: { Datum: '2026-11-16', Monat: '2026-11', Status: 'Geplant', Pfleger_ID: [MA], 'Abwesend/Urlaub': 'Urlaub' } }],
+  });
+  const res = antwortObjekt();
+  await handler(req(), res);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.summe, '0:00');
+  assert.equal(res.body.einsaetze, 0);
+  assert.equal(res.body.abwesenheiten, 1);
+  const texte = pdfTexte(Buffer.from(log.upload.file, 'base64'));
+  assert.ok(texte.includes('Keine bestätigten Einsätze in diesem Monat.'));
+  assert.ok(texte.includes(ABWESENHEIT_TITEL));
+});
+
+test('Erläuterung erklärt Urlaub/Abwesenheit; Texte darstellbar und passen in die Breite', async () => {
+  const satz = ERLAEUTERUNG.find((z) => z.startsWith('Urlaub / Abwesenheit:'));
+  assert.ok(satz, 'Erläuterung zu Urlaub/Abwesenheit fehlt');
+  assert.match(satz, /nicht in der Monatssumme enthalten/);
+  assert.equal(pdfText(ABWESENHEIT_TITEL), ABWESENHEIT_TITEL);
+  const lang = abwesenheitText({ abwesenheiten: [
+    ...Array.from({ length: 23 }, (_, i) => ({ datum: `2026-11-${String(i + 1).padStart(2, '0')}`, art: 'Urlaub', min: 480 })),
+    { datum: '2026-11-24', art: 'Abwesend', min: 120 },
+  ] });
+  assert.equal(pdfText(lang), lang);
+  const doc = await PDFDocument.create();
+  const fett = await doc.embedFont(StandardFonts.HelveticaBold);
+  assert.ok(fett.widthOfTextAtSize(lang, 9) <= 595.28 - 2 * 50, 'Summen-Hinweis Urlaub zu breit');
 });

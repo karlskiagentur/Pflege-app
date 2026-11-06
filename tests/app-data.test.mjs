@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { airtableAttrappe, antwort, anfrage, antwortObjekt, kurzWarten } from './_hilfen.mjs';
-import handler, { INTERNE_FELDER } from '../api/app-data.js';
+import handler, { INTERNE_FELDER, NUR_MITARBEITER_FELDER } from '../api/app-data.js';
 
 const T = {
   PATIENTEN: 'tbl5uUUSgC9p10BHQ', BESUCHE: 'tblXJOSz4LaJCG10M', AUFGABEN: 'tbllNVrLFPfjRltL4',
@@ -127,6 +127,25 @@ test('alle übrigen Felder bleiben unverändert erhalten', async () => {
   assert.equal(d.besuche[0].createdTime, BESUCH.createdTime);
   // Original-Objekte (z. B. Airtable-Antwort) werden nicht verändert
   assert.ok('Notiz_Intern' in BESUCH.fields);
+});
+
+test('Urlaub/Abwesenheit einer Pflegekraft geht nie an Klienten (nur Mitarbeiter-App)', async () => {
+  const mitUrlaub = { ...BESUCH, fields: { ...BESUCH.fields, 'Abwesend/Urlaub': 'Urlaub' } };
+  airtableAttrappe(async (a) => {
+    if (a.tabelle === T.PATIENTEN && a.methode === 'GET') return antwort(200, { records: a.formel.includes(TOKEN) ? [patient(frisch())] : [] });
+    if (a.tabelle === T.PATIENTEN) return antwort(200, { id: PID });
+    if (a.tabelle === T.BESUCHE) return antwort(200, { records: [mitUrlaub] });
+    return antwort(200, { records: [] });
+  });
+  const res = antwortObjekt();
+  await handler(anfrage({ token: TOKEN }), res);
+  assert.equal(res.statusCode, 200);
+  const b = res.body.data.besuche[0];
+  assert.equal('Abwesend/Urlaub' in b.fields, false);
+  assert.equal(JSON.stringify(res.body).includes('Urlaub'), false);
+  assert.equal(b.fields['Tätigkeit'], 'Grundpflege');
+  assert.deepEqual(NUR_MITARBEITER_FELDER.besuch, ['Abwesend/Urlaub']);
+  assert.ok('Abwesend/Urlaub' in mitUrlaub.fields, 'Original darf nicht verändert werden');
 });
 
 test('Sperrliste enthält kein Feld, das die App liest (Regressionsschutz)', () => {

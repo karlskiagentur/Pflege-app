@@ -2,7 +2,10 @@
 // Aufruf: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { berechneZeitnachweis, berlin, takt, hm, termin, vorbei, minutenAus } from '../api/_zeitkonto.js';
+import {
+  berechneZeitnachweis, berlin, takt, hm, termin, vorbei, minutenAus,
+  abwesenheit, abwesenheitsAuswahl, abwesenheitsGrund, abwesenheitNachArt,
+} from '../api/_zeitkonto.js';
 
 let n = 0;
 // Besuch wie aus der Airtable-REST-API (Selects als Text, Lookups als Array, Dauer in Sekunden).
@@ -418,4 +421,118 @@ test('Soll und Ist je Einsatz getrennt; Soll-Summe nur über berechnete (bestät
   assert.equal(hm(r.summen.einsatzMin), '1:00'); // 1:00 + 0:00
   assert.equal(r.summen.ohneIst, 1);
   assert.equal(hm(r.summen.ohneIstSollMin), '0:45');
+});
+
+// ---------------------------------------------------------------- Urlaub / Abwesenheit (06.11.2026)
+// Eigene Dienstplan-Zeile OHNE Klient, Spalte „Abwesend/Urlaub“ gewählt (Uhrzeit optional).
+const abw = (datum, art, extra = {}) => ({
+  id: `recAbw${String(++n).padStart(11, '0')}`,
+  fields: { Datum: datum, Status: 'Geplant', 'Abwesend/Urlaub': art, ...extra },
+});
+
+test('Urlaub ganztägig (ohne Uhrzeit): kein Einsatz, nicht „nicht bestätigt“, getrennt aufgeführt', () => {
+  const r = berechneZeitnachweis([
+    b('2026-10-21', '08:00', '09:00'),
+    abw('2026-10-22', 'Urlaub', { 'Tätigkeit': 'Unterstützung' }),
+  ], { jetzt: ZEIT });
+  assert.equal(r.summen.einsaetze, 1);
+  assert.equal(hm(r.summen.bezahltMin), '1:00');
+  assert.equal(hm(r.summen.sollMin), '1:00');
+  assert.equal(r.summen.ohneIst, 0);
+  assert.deepEqual(r.nichtBestaetigt, []);
+  assert.deepEqual(r.tage.map((t) => t.datum), ['2026-10-21']);
+  assert.equal(r.abwesenheiten.length, 1);
+  assert.deepEqual((({ id, ...rest }) => rest)(r.abwesenheiten[0]),
+    { datum: '2026-10-22', art: 'Urlaub', grund: '', von: '', bis: '', min: null });
+  assert.match(r.abwesenheiten[0].id, /^recAbw\d{11}$/);
+});
+
+test('Urlaub mit später eingetragener Uhrzeit: Stunden nur zur Info, keine Anfahrt, auch eine Ist-Zeit zählt nicht', () => {
+  const r = berechneZeitnachweis([
+    b('2026-10-20', '13:00', '14:00'),
+    abw('2026-10-20', 'Urlaub', { Von: '06:00', Bis: '12:00', Dauer_Ist: 6 * 3600, Erledigt_Am: '2026-10-20T12:00:00.000Z' }),
+  ], { jetzt: ZEIT });
+  assert.deepEqual(kurz(r.tage[0]), ['einsatz:13:00-14:00=1:00']);
+  assert.equal(r.summen.einsaetze, 1);
+  assert.equal(hm(r.summen.einsatzMin), '1:00');
+  assert.equal(hm(r.summen.anfahrtMin), '0:00');
+  assert.equal(hm(r.summen.bezahltMin), '1:00');
+  assert.equal(hm(r.summen.sollMin), '1:00');
+  assert.deepEqual(r.abwesenheiten.map((a) => [a.datum, a.art, a.von, a.bis, a.min]), [['2026-10-20', 'Urlaub', '06:00', '12:00', 360]]);
+});
+
+test('Urlaub zwischen zwei Einsätzen ändert die Anfahrt-/Pausenrechnung der Einsätze nicht', () => {
+  const ohne = berechneZeitnachweis([b('2026-10-19', '07:00', '07:30'), b('2026-10-19', '12:30', '13:00')], { jetzt: ZEIT });
+  const mit = berechneZeitnachweis([
+    b('2026-10-19', '07:00', '07:30'), b('2026-10-19', '12:30', '13:00'),
+    abw('2026-10-19', 'Abwesend', { Von: '08:00', Bis: '12:00', 'Tätigkeit': 'Arzttermin' }),
+  ], { jetzt: ZEIT });
+  assert.deepEqual(mit.summen, ohne.summen);
+  assert.deepEqual(kurz(mit.tage[0]), kurz(ohne.tage[0]));
+  assert.equal(mit.abwesenheiten[0].grund, 'Arzttermin');
+});
+
+test('Abgesagter oder künftiger Urlaub steht nicht auf dem Zettel', () => {
+  const r = berechneZeitnachweis([
+    abw('2026-10-19', 'Urlaub', { Status: 'Abgesagt' }),
+    abw('2026-10-23', 'Urlaub'),             // heute ohne Uhrzeit: wie Einsätze erst ab morgen „vorbei“
+    abw('2026-10-26', 'Abwesend'),
+  ], { jetzt: ZEIT });
+  assert.deepEqual(r.abwesenheiten, []);
+  assert.deepEqual(r.ausgelassen, { abgesagt: 1, zukunft: 2 });
+  assert.equal(r.summen.einsaetze, 0);
+});
+
+test('Auswahl an einem Einsatz MIT Klient: bleibt ein Einsatz (nie versteckt, bestätigbar)', () => {
+  const r = berechneZeitnachweis([
+    b('2026-10-20', '08:00', '09:00', { 'Abwesend/Urlaub': 'Urlaub' }),
+    offen('2026-10-21', '08:00', '09:00', { 'Abwesend/Urlaub': 'Abwesend' }),
+  ], { jetzt: ZEIT });
+  assert.equal(r.summen.einsaetze, 1);
+  assert.equal(hm(r.summen.einsatzMin), '1:00');
+  assert.equal(r.summen.ohneIst, 1);
+  assert.deepEqual(r.abwesenheiten, []);
+  assert.equal(abwesenheit({ 'Abwesend/Urlaub': 'Urlaub', Patient: ['recPatTest0000001'] }), '');
+  assert.equal(abwesenheit({ 'Abwesend/Urlaub': 'Urlaub', Patient_Name: ['Erika Musterfrau'] }), '');
+  assert.equal(abwesenheitsAuswahl({ 'Abwesend/Urlaub': 'Urlaub', Patient: ['recPatTest0000001'] }), 'Urlaub');
+});
+
+test('Abwesenheit: Reihenfolge, Grund aus „Tätigkeit“, Auswahl als Objekt, Zusammenfassung je Art', () => {
+  const r = berechneZeitnachweis([
+    abw('2026-10-21', 'Abwesend', { 'Tätigkeit': 'Fortbildung', Von: '10:00', Bis: '12:00' }),
+    abw('2026-10-20', 'Urlaub', { 'Tätigkeit': 'Urlaub' }),
+    abw('2026-10-21', 'Urlaub', { Von: '06:00', Bis: '09:00' }),
+    abw('2026-10-21', 'Urlaub', { Von: '13:00', Bis: '15:00' }),
+    abw('2026-10-22', { id: 'selTest', name: 'Urlaub' }), // Auswahlwert als Objekt (Automationen/Skripte)
+    abw('2026-10-22', ['Krank']),                        // später ergänzter Auswahlwert, als Array
+  ], { jetzt: ZEIT });
+  assert.deepEqual(r.abwesenheiten.map((a) => [a.datum, a.art, a.grund, a.von, a.min]), [
+    ['2026-10-20', 'Urlaub', '', '', null],
+    ['2026-10-21', 'Urlaub', '', '06:00', 180],
+    ['2026-10-21', 'Abwesend', 'Fortbildung', '10:00', 120],
+    ['2026-10-21', 'Urlaub', '', '13:00', 120],
+    ['2026-10-22', 'Urlaub', '', '', null], // ganztägig: gleiche Reihenfolge wie bei Einsätzen (stabil nach ID)
+    ['2026-10-22', 'Krank', '', '', null],
+  ]);
+  assert.deepEqual(abwesenheitNachArt(r.abwesenheiten), [
+    { art: 'Urlaub', anzahl: 4, tage: 3, min: 300 },
+    { art: 'Abwesend', anzahl: 1, tage: 1, min: 120 },
+    { art: 'Krank', anzahl: 1, tage: 1, min: 0 },
+  ]);
+  assert.deepEqual(abwesenheitNachArt(undefined), []);
+  assert.deepEqual(abwesenheitNachArt([null, { art: '' }]), []);
+});
+
+test('Abwesenheitsgrund: ohne Wiederholung der Art und ohne Standardtext', () => {
+  assert.equal(abwesenheitsGrund('Urlaub', ''), '');
+  assert.equal(abwesenheitsGrund('Urlaub', ' urlaub '), '');
+  assert.equal(abwesenheitsGrund('Abwesend', 'Unterstützung'), '');
+  assert.equal(abwesenheitsGrund('Abwesend', ' Fortbildung '), 'Fortbildung');
+  assert.equal(abwesenheitsGrund('', undefined), '');
+  assert.equal(abwesenheit({ 'Abwesend/Urlaub': ['Urlaub'] }), 'Urlaub');
+  assert.equal(abwesenheit({ 'Abwesend/Urlaub': '  ' }), '');
+  assert.equal(abwesenheit({}), '');
+  assert.equal(abwesenheit(null), '');
+  assert.equal(termin({ Datum: '2026-10-20', 'Abwesend/Urlaub': 'Urlaub' }).abwesenheit, 'Urlaub');
+  assert.equal(termin({ Datum: '2026-10-20' }).abwesenheit, '');
 });

@@ -3,11 +3,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PDFDocument, PDFName } from 'pdf-lib';
-import { airtableAttrappe, antwort, antwortObjekt } from './_hilfen.mjs';
+import { airtableAttrappe, antwort, antwortObjekt, pdfTexte } from './_hilfen.mjs';
 import handler from '../api/dienstplan-pdf.js';
 import {
   wochenBereich, dienstplanFormel, wochenplan, erstelleDienstplanPdf, dateiname, PERSONAL_FELDER as PF,
-  BESUCHE_FELDER, DRUCK_SKRIPT, datumGueltig, wocheZuDatum, DATUM_MAX_TAGE,
+  BESUCHE_FELDER, DRUCK_SKRIPT, datumGueltig, wocheZuDatum, DATUM_MAX_TAGE, LEGENDE, abwesenheitNotiz,
 } from '../api/_dienstplan.js';
 import { ohneDruckLinks, istDruckFeld } from '../api/_lib.js';
 
@@ -365,4 +365,87 @@ test('Druck-Links: Felder mit Schlüssel oder Link werden entfernt, alles andere
     assert.equal(istDruckFeld(name, 'x'), false, name);
   }
   assert.equal(ohneDruckLinks(null), null);
+});
+
+// ---------------------------------------------------------------- Urlaub / Abwesenheit (06.11.2026)
+// Eigene Zeile OHNE Klient, Spalte „Abwesend/Urlaub“ (Uhrzeit trägt das Büro ggf. später ein).
+const abwesend = (id, fields) => ({ id, fields: { Status: 'Geplant', ...fields } });
+
+test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zählt nicht zur geplanten Zeit', () => {
+  const w = wochenBereich(Date.parse('2026-11-11T10:00:00Z')); // KW 46: 09.11.–15.11.
+  const plan = wochenplan([
+    besuch('rec0000000000021', { Datum: '2026-11-09', Von: '08:00', Bis: '09:00' }),
+    abwesend('rec0000000000022', { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', 'Tätigkeit': 'Urlaub' }),
+    abwesend('rec0000000000023', { Datum: '2026-11-10', Von: '06:00', Bis: '12:00', 'Abwesend/Urlaub': 'Abwesend', 'Tätigkeit': 'Fortbildung' }),
+    abwesend('rec0000000000024', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt' }),
+  ], w);
+  const [mo, di, mi] = plan.tage;
+  assert.deepEqual(mo.eintraege.map((e) => [e.id, e.zeit, e.klient, e.taetigkeit, e.adresse, e.abwesenheit]), [
+    ['rec0000000000022', 'ganztägig', 'Urlaub', '', '', 'Urlaub'],
+    ['rec0000000000021', '08:00 – 09:00', 'Erika Musterfrau', 'Unterstützung', '', ''],
+  ]);
+  assert.equal(mo.einsaetze, 1);
+  assert.equal(mo.planMin, 60);
+  assert.deepEqual(mo.abwesenheiten, ['Urlaub']);
+  assert.deepEqual(di.eintraege.map((e) => [e.zeit, e.klient, e.taetigkeit]), [['06:00 – 12:00', 'Abwesend', 'Fortbildung']]);
+  assert.equal(di.einsaetze, 0);
+  assert.equal(di.planMin, 0);
+  assert.equal(di.abwesenheitMin, 360);
+  // vom Büro wieder abgesagter Urlaub: bleibt durchgestrichen sichtbar, zählt nicht
+  assert.deepEqual(mi.eintraege.map((e) => [e.klient, e.abgesagt, e.hinweise.map((h) => h.text)]), [['Urlaub', true, ['Abgesagt']]]);
+  assert.deepEqual(mi.abwesenheiten, []);
+  assert.equal(plan.summen.einsaetze, 1);
+  assert.equal(plan.summen.planMin, 60);
+  assert.equal(plan.summen.ohneDauer, 0, 'Urlaub ohne Uhrzeit ist kein „Einsatz ohne Dauer“');
+  assert.deepEqual(plan.summen.abwesenheiten, [
+    { datum: '2026-11-09', art: 'Urlaub', min: null },
+    { datum: '2026-11-10', art: 'Abwesend', min: 360 },
+  ]);
+  assert.equal(abwesenheitNotiz(plan), 'Abwesenheit: Mo 09.11. Urlaub, Di 10.11. Abwesend (6:00 Std.) – kein Einsatz, nicht in der geplanten Zeit.');
+  assert.equal(abwesenheitNotiz(wochenplan([], w)), '');
+  assert.equal(abwesenheitNotiz(undefined), '');
+});
+
+test('Wochenplan: Auswahl an einem Einsatz MIT Klient bleibt ein Einsatz – mit Hinweis fürs Büro', () => {
+  const w = wochenBereich(Date.parse('2026-11-11T10:00:00Z'));
+  const plan = wochenplan([
+    besuch('rec0000000000031', { Datum: '2026-11-12', Von: '08:00', Bis: '08:30', 'Abwesend/Urlaub': 'Urlaub', Pfleger_Ersatz_Name: ['Lea V.'] }),
+  ], w);
+  const [e] = plan.tage[3].eintraege;
+  assert.equal(e.klient, 'Erika Musterfrau');
+  assert.equal(e.abwesenheit, '');
+  assert.deepEqual(e.hinweise.map((h) => h.text), ['Vertretung: Lea V.', 'Urlaub eingetragen']);
+  assert.equal(plan.tage[3].einsaetze, 1);
+  assert.equal(plan.summen.planMin, 30);
+  assert.deepEqual(plan.summen.abwesenheiten, []);
+});
+
+test('PDF: Urlaub steht am Tag, im Tageskopf und unter der Wochensumme; Legende erklärt es', async () => {
+  const jetzt = Date.parse('2026-11-06T13:47:00Z');
+  const w = wochenBereich(Date.parse('2026-11-11T10:00:00Z'));
+  const plan = wochenplan([
+    abwesend('rec0000000000041', { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub' }),
+    besuch('rec0000000000042', { Datum: '2026-11-10', Von: '08:00', Bis: '09:00', 'Tätigkeit': 'Grundpflege' }),
+    abwesend('rec0000000000043', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt' }),
+  ], w);
+  const bytes = await erstelleDienstplanPdf({ maName: 'Monika B.', bereich: w, plan, jetzt });
+  const doc = await PDFDocument.load(bytes);
+  assert.equal(doc.getPageCount(), 1);
+  const texte = pdfTexte(bytes);
+  const montag = texte.indexOf('Montag, 09.11.2026');
+  assert.ok(montag >= 0, 'Tageskopf Montag fehlt');
+  assert.deepEqual(texte.slice(montag + 1, montag + 4), ['Urlaub', 'ganztägig', 'Urlaub']); // Tageskopf, Zeit, Art
+  assert.ok(!texte.slice(montag, montag + 6).includes('ohne Uhrzeit'));
+  assert.ok(!texte.includes('Unterstützung'), 'Urlaub darf nicht als „Unterstützung“ erscheinen');
+  const mittwoch = texte.indexOf('Mittwoch, 11.11.2026');
+  assert.equal(texte[mittwoch + 1], 'frei', 'nur abgesagter Urlaub -> Tag frei');
+  assert.ok(texte.includes('Woche gesamt: 1 Einsatz · geplante Zeit 1:00 Std.'));
+  assert.ok(texte.includes('Abwesenheit: Mo 09.11. Urlaub – kein Einsatz, nicht in der geplanten Zeit.'));
+  assert.equal(LEGENDE.length, 3);
+  assert.ok(LEGENDE[2].startsWith('Urlaub/Abwesend: vom Büro eingetragen – kein Einsatz'));
+});
+
+test('Endpoint: liest die Spalte „Abwesend/Urlaub“ und den Klient-Link mit', () => {
+  assert.ok(BESUCHE_FELDER.includes('Abwesend/Urlaub'));
+  assert.ok(BESUCHE_FELDER.includes('Patient'));
 });

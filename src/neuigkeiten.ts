@@ -60,8 +60,13 @@ export function einsatzSignatur(t: any): string {
   const angaben = [
     feld(t, 'Uhrzeit'), feld(t, 'Datum'), feld(t, 'Von'), feld(t, 'Bis'), feld(t, 'Tätigkeit'),
     feld(t, 'Patient_Name'), feld(t, 'Adresse_Klient'), feld(t, 'Hervorhebung'), feld(t, 'Pfleger_Ersatz_Name'),
-  ].join('\u0001');
-  return `${feld(t, 'Status')}|${pruefwert(angaben)}`;
+  ];
+  // Urlaub/Abwesenheit nur anhängen, wenn gesetzt: So bleibt der Fingerabdruck aller übrigen
+  // Einsätze unverändert (kein „Geändert“ für alle nach dem Update), ein Setzen oder Entfernen
+  // der Abwesenheit gilt dagegen als Änderung.
+  const abwesend = feld(t, 'Abwesend/Urlaub');
+  if (abwesend) angaben.push(abwesend);
+  return `${feld(t, 'Status')}|${pruefwert(angaben.join('\u0001'))}`;
 }
 
 /** Zeitpunkt eines Einsatzes (ms) - Uhrzeit, sonst Datum (Tagesbeginn); 0 = unbekannt. */

@@ -179,6 +179,76 @@ const getValueOr = (item: any, fieldName: string, fallback = "-") => {
     return v === "" ? fallback : v;
 };
 
+// --- URLAUB / ABWESENHEIT (Spalte „Abwesend/Urlaub“ im Dienstplan, Wunsch Pflegedienst 06.11.2026) ---
+// Das Büro trägt dafür eine eigene Zeile OHNE Klient ein. Sie ist KEIN Einsatz: keine Ist-Zeit,
+// kein „Problem melden“ (Server-Sicherung: /api/besuch-dauer lehnt die Erfassung ab).
+// An einem Einsatz MIT Klient bleibt es ein Einsatz (z. B. für die Vertretung) - gleiche Regel
+// wie api/_zeitkonto.js.
+const abwesenheitVon = (t: any) =>
+  getValue(t, 'Patient') || getValue(t, 'Patient_Name') ? '' : getValue(t, 'Abwesend/Urlaub').trim();
+// Grund aus dem Feld Tätigkeit (z. B. „Arzttermin“) - ohne Wiederholung der Art, ohne Standardtext.
+const abwesenheitsGrundVon = (t: any) => {
+  const art = abwesenheitVon(t).toLowerCase();
+  const g = getValue(t, 'Tätigkeit').trim();
+  return g && g.toLowerCase() !== art && g !== 'Unterstützung' ? g : '';
+};
+// Zeitpunkt (ms) für Sortierung und Tageszuordnung: die Uhrzeit; eine ganztägige Abwesenheit
+// ohne Uhrzeit zählt über ihr Datum (Tagesbeginn). Sonst NaN (wie bisher: keinem Tag zugeordnet).
+const zeitpunktMs = (t: any): number => {
+  const u = new Date(getValue(t, 'Uhrzeit')).getTime();
+  if (Number.isFinite(u)) return u;
+  const d = getValue(t, 'Datum');
+  if (abwesenheitVon(t) && /^\d{4}-\d{2}-\d{2}/.test(d)) return new Date(`${d.slice(0, 10)}T00:00:00`).getTime();
+  return NaN;
+};
+
+// Vom Büro wieder abgesagt (Status „Abgesagt“) - gleiche Regel wie bei Einsätzen in der App.
+const abwesenheitAbgesagt = (t: any) => getValue(t, 'Status') === 'Abgesagt';
+
+function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompakt?: boolean; marke?: React.ReactNode }) {
+  const art = abwesenheitVon(t);
+  const grund = abwesenheitsGrundVon(t);
+  const abgesagt = abwesenheitAbgesagt(t);
+  const von = getValue(t, 'Von');
+  const bis = getValue(t, 'Bis');
+  const zeit = von && bis ? `${von} – ${bis} Uhr` : von ? `ab ${von} Uhr` : 'ganztägig';
+  const ms = zeitpunktMs(t);
+  const datum = Number.isFinite(ms) ? new Date(ms).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }) : '';
+  const rahmen = abgesagt ? 'bg-gray-50 border border-gray-200' : 'bg-[#EAF2FB] border border-[#C9DDF2]';
+  const artFarbe = abgesagt ? 'text-gray-400 line-through' : 'text-[#335F8F]';
+  const hinweis = abgesagt ? 'Abgesagt' : 'Kein Einsatz';
+  if (kompakt) {
+    return (
+      <div className={`rounded-[1.5rem] p-4 mb-2 ${rahmen}`}>
+        <div className="flex items-center gap-3">
+          <div className="text-center min-w-[52px]">
+            <p className={`text-[13px] font-bold ${abgesagt ? 'text-gray-400' : 'text-[#335F8F]'}`}>{datum}</p>
+          </div>
+          <div className={`flex-1 border-l pl-3 text-left ${abgesagt ? 'border-gray-200' : 'border-[#C9DDF2]'}`}>
+            <p className={`text-sm font-black ${artFarbe}`}>{art}</p>
+            <p className="text-xs text-gray-500">{grund ? `${grund} · ${zeit}` : zeit}</p>
+          </div>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            {marke}
+            <p className={`text-[9px] font-black uppercase tracking-wider ${abgesagt ? 'text-[#B5483C]' : 'text-[#335F8F]'}`}>{hinweis}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className={`rounded-[2rem] shadow-sm mb-3 overflow-hidden border-l-4 ${rahmen} ${abgesagt ? 'border-l-gray-300' : 'border-l-[#335F8F]'}`}>
+      <div className="p-6 text-left">
+        {marke && <div className="flex justify-end -mt-2 mb-1">{marke}</div>}
+        <p className={`text-[11px] font-black uppercase tracking-wide ${abgesagt ? 'text-gray-400' : 'text-[#335F8F]'}`}>{zeit}</p>
+        <p className={`font-black text-2xl mt-1 ${abgesagt ? 'text-gray-400 line-through' : 'text-[#3A3A3A]'}`}>{art}</p>
+        {grund && <p className="text-sm text-gray-500 mt-1">{grund}</p>}
+        <p className="text-sm text-gray-500 mt-3">{abgesagt ? 'Vom Büro abgesagt.' : 'Kein Einsatz – vom Büro eingetragen.'}</p>
+      </div>
+    </div>
+  );
+}
+
 // DATEI-EXTRAKTOR
 const getFileUrl = (item: any, fieldName: string) => {
     if (!item) return "";
@@ -1257,8 +1327,9 @@ export default function App() {
       // Format 2: { termine, mitteilungen?, lohn? } - ein Array (ältere Server) geht weiter.
       const liste = Array.isArray(data) ? data : (data && Array.isArray(data.termine) ? data.termine : []);
       liste.sort((a: any, b: any) => {
-        const dA = new Date(getValue(a, 'Uhrzeit')).getTime() || 0;
-        const dB = new Date(getValue(b, 'Uhrzeit')).getTime() || 0;
+        // Uhrzeit; ganztägige Abwesenheit über ihr Datum (zeitpunktMs), sonst wie bisher 0.
+        const dA = zeitpunktMs(a) || 0;
+        const dB = zeitpunktMs(b) || 0;
         return dA - dB;
       });
       setMitarbeiterTermine(liste);
@@ -1597,14 +1668,19 @@ export default function App() {
     // Erstes Laden nach dem Öffnen (noch keine Einsätze im Speicher).
     const ersteLadungMa = mitarbeiterLoading && mitarbeiterTermine.length === 0;
 
+    // Zuordnung über zeitpunktMs: Uhrzeit, ganztägige Abwesenheit über ihr Datum (NaN = nirgends).
     const termineHeute = mitarbeiterTermine.filter(t => {
-      const d = new Date(getValue(t, 'Uhrzeit'));
-      return d >= heute && d < morgen;
+      const d = zeitpunktMs(t);
+      return d >= heute.getTime() && d < morgen.getTime();
     });
     const termineZukunft = mitarbeiterTermine.filter(t => {
-      const d = new Date(getValue(t, 'Uhrzeit'));
-      return d >= morgen;
+      const d = zeitpunktMs(t);
+      return d >= morgen.getTime();
     });
+    // Urlaub/Abwesenheit zählt nicht als Einsatz (Zähler oben); die Karte steht trotzdem in der Liste.
+    const einsaetzeHeute = termineHeute.filter((t) => !abwesenheitVon(t));
+    const abwesendHeute = termineHeute.filter((t) => !abwesenheitAbgesagt(t)).map(abwesenheitVon).find(Boolean) || '';
+    const anzahlEinsaetze = (n: number) => (n === 1 ? '1 Einsatz' : `${n} Einsätze`);
 
     const heuteText = heute.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
 
@@ -1641,7 +1717,9 @@ export default function App() {
     const zeitZeitraumLabel = zeitraumText(zeitZeitraum);
     // Nur ERFASSTE Einsätze zählen (Erledigt_Am gesetzt + Dauer_Ist vorhanden);
     // geplante Termine erscheinen nicht. Zuordnung über das Datum des Einsatzes.
+    // Urlaub/Abwesenheit ist nie Arbeitszeit - wie auf dem Stundenzettel (api/_zeitkonto.js, Regel 5).
     const zeitEinsaetze = (zeitTermine || [])
+      .filter((t) => !abwesenheitVon(t))
       .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
       .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum))
       .sort((a, b) => {
@@ -1770,7 +1848,7 @@ export default function App() {
 
             {/* TAGESPLAN-VORSCHAU */}
             <p className="text-[11px] font-black tracking-wide text-[#0F6E56] mb-2">
-              HEUTE · {ersteLadungMa ? 'wird geladen …' : termineHeute.length === 0 ? 'Heute keine Einsätze' : termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}
+              HEUTE · {ersteLadungMa ? 'wird geladen …' : einsaetzeHeute.length === 0 ? (abwesendHeute || 'Heute keine Einsätze') : anzahlEinsaetze(einsaetzeHeute.length)}
             </p>
             {ersteLadungMa ? (
               /* Erstes Laden nach dem Öffnen: nicht kurz „keine Einsätze" anzeigen */
@@ -1782,6 +1860,7 @@ export default function App() {
             ) : (
               <div className="space-y-3">
                 {termineHeute.map((t) => {
+                  if (abwesenheitVon(t)) return <AbwesenheitKarte key={t.id} t={t} kompakt marke={markePill(planMarken[t.id])} />;
                   const status = getValue(t, 'Status');
                   const isAbgesagt = status === 'Abgesagt';
                   const tile =
@@ -2122,7 +2201,7 @@ export default function App() {
             {/* DATUMS-HEADER */}
             <div className="text-center mb-6">
               <p className="text-[11px] font-black uppercase tracking-wide text-[#0F6E56]">HEUTE · {heuteText}</p>
-              <h2 className="text-2xl font-black text-[#3A3A3A] mt-1">{termineHeute.length === 1 ? '1 Einsatz' : `${termineHeute.length} Einsätze`}</h2>
+              <h2 className="text-2xl font-black text-[#3A3A3A] mt-1">{einsaetzeHeute.length === 0 && abwesendHeute ? abwesendHeute : anzahlEinsaetze(einsaetzeHeute.length)}</h2>
             </div>
 
             {/* HEUTE-TERMINE */}
@@ -2133,6 +2212,7 @@ export default function App() {
               </div>
             ) : (
               termineHeute.map((t) => {
+                if (abwesenheitVon(t)) return <AbwesenheitKarte key={t.id} t={t} marke={markePill(planMarken[t.id])} />;
                 const endzeit = getEndzeit(t);
                 const ersatz = getValue(t, 'Pfleger_Ersatz_Name');
                 const badge = getStatusBadge(t);
@@ -2247,6 +2327,7 @@ export default function App() {
                   <p className="text-[12px] font-black uppercase tracking-wide text-gray-400">Demnächst ({termineZukunft.length})</p>
                 </div>
                 {termineZukunft.map((t) => {
+                  if (abwesenheitVon(t)) return <AbwesenheitKarte key={t.id} t={t} kompakt marke={markePill(planMarken[t.id])} />;
                   const datumOben = new Date(getValue(t, 'Uhrzeit')).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric' });
                   const badge = getStatusBadge(t);
                   const marke = planMarken[t.id];

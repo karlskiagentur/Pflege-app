@@ -1,7 +1,24 @@
 // Test-Hilfen: Airtable-Attrappe (globales fetch) + minimale Request/Response-Objekte.
 // Alle Testdaten sind frei erfunden.
+import zlib from 'node:zlib';
 
 delete process.env.RESEND_API_KEY; // Alarm-Mails in Tests nie verschicken
+
+// Alle Textstücke eines von pdf-lib erzeugten PDFs in Zeichenreihenfolge (Text steht als <HEX> Tj
+// in Flate-Streams, kodiert in Windows-1252; Nodes TextDecoder bildet 0x80-0x9F nicht ab ->
+// eigene Tabelle). Genutzt von den Tests für Stundenzettel und Dienstplan.
+const CP1252_80_9F = '€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ';
+const cp1252 = (buf) => [...buf].map((x) => (x >= 0x80 && x <= 0x9f ? CP1252_80_9F[x - 0x80] : String.fromCharCode(x))).join('');
+export function pdfTexte(bytes) {
+  const roh = Buffer.from(bytes).toString('latin1');
+  const texte = [];
+  for (const m of roh.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    let inhalt = Buffer.from(m[1], 'latin1');
+    try { inhalt = zlib.inflateSync(inhalt); } catch { /* unkomprimiert */ }
+    for (const t of inhalt.toString('latin1').matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) texte.push(cp1252(Buffer.from(t[1], 'hex')));
+  }
+  return texte;
+}
 
 export function antwort(status, body) {
   return {

@@ -3,7 +3,7 @@
 // auch ins App-Bundle übernommen (src/App.tsx) – hier nie etwas Server-Spezifisches importieren
 // (tests/abrechnung.test.mjs prüft das). Typen für die App: api/_abrechnung.d.ts.
 //
-// Vorgabe Pflegedienst (02.11.2026): Ein Abrechnungsmonat läuft vom 27. des Vormonats bis zum 26.
+// Vorgabe Pflegedienst (01.11.2026): Ein Abrechnungsmonat läuft vom 27. des Vormonats bis zum 26.
 // und heißt nach dem Monat, in dem er endet („Dezember 2026“ = 27.11.–26.12.2026). Am 27. früh ist
 // der Zettel fertig (Monatslauf). Bis Oktober 2026 galten Kalendermonate; der Übergangsmonat
 // November 2026 läuft vom 01.11. bis 26.11. – so zählt kein Tag doppelt und keiner fehlt.

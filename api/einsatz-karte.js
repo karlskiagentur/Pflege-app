@@ -1,4 +1,5 @@
 import { fetchAll, sendError, esc, handledPreflight, requireKarteKey, TABLES } from './_lib.js';
+import { ABWESENHEIT_FELD, abwesenheit } from './_zeitkonto.js';
 
 // Tagesplan aller Mitarbeiter für die Einsatzkarte (public/karte.html).
 // Auth: Header X-Karte-Key = KARTE_SECRET. Optional ?datum=YYYY-MM-DD (Standard: heute, Europe/Berlin).
@@ -68,7 +69,7 @@ export default async function handler(req, res) {
 
     const formula = `DATETIME_FORMAT({Datum},'YYYY-MM-DD')='${esc(datum)}'`;
     const besuche = await fetchAll(TABLES.BESUCHE,
-      `filterByFormula=${encodeURIComponent(formula)}&${felderQuery(['Datum', 'Von', 'Bis', 'Uhrzeit', 'Dauer_Soll', 'Ende', 'Status', 'Patient', 'Pfleger', 'Tätigkeit'])}`);
+      `filterByFormula=${encodeURIComponent(formula)}&${felderQuery(['Datum', 'Von', 'Bis', 'Uhrzeit', 'Dauer_Soll', 'Ende', 'Status', 'Patient', 'Pfleger', 'Tätigkeit', ABWESENHEIT_FELD])}`);
 
     // Personal: bewusst nur Name + Fahrzeug anfordern (keine Tokens/Codes in der Antwort).
     const personal = await fetchAll(TABLES.PERSONAL, felderQuery(['Name', 'Fahrzeug']));
@@ -83,6 +84,9 @@ export default async function handler(req, res) {
     for (const b of besuche) {
       const f = b.fields || {};
       if (AUSGESCHLOSSEN.has(String(f.Status || ''))) continue;
+      // Urlaub/Abwesenheit (eigene Zeile ohne Klient) ist kein Einsatz - nicht auf der Karte,
+      // auch nicht unter „ohne Standort“ (sonst stünde dort ein „Klient“ ohne Adresse).
+      if (abwesenheit(f)) continue;
       const maId = first(f.Pfleger);
       if (!maId || !personalMap.has(maId)) continue; // Termin ohne Mitarbeiter: nicht kartierbar
 

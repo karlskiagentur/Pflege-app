@@ -94,6 +94,31 @@ test('Mitarbeiter-Texte: Einsatz, Klient, Datum und Uhrzeit', () => {
   assert.deepEqual(mitarbeiterEinsatzText('Neu', {}), { titel: 'Neuer Einsatz', text: 'Einsatz.' });
 });
 
+test('Mitarbeiter-Texte: Urlaub/Abwesenheit (eigene Zeile ohne Klient) heißt auch so', () => {
+  const urlaub = { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', 'Tätigkeit': 'Urlaub', Pfleger: [MA1] };
+  assert.deepEqual(mitarbeiterEinsatzText('Abgesagt', urlaub), { titel: 'Urlaub abgesagt', text: 'Urlaub am Mo, 09.11. wurde abgesagt.' });
+  assert.deepEqual(mitarbeiterEinsatzText('Neu', urlaub), { titel: 'Urlaub eingetragen', text: 'Urlaub am Mo, 09.11.' }); // kein „09.11..“
+  assert.deepEqual(mitarbeiterEinsatzText('Geändert', urlaub), { titel: 'Urlaub geändert', text: 'Urlaub ist jetzt am Mo, 09.11.' });
+  const fortbildung = { Datum: '2026-11-10', Von: '12:00', 'Abwesend/Urlaub': 'Abwesend', 'Tätigkeit': 'Fortbildung' };
+  assert.deepEqual(mitarbeiterEinsatzText('Geändert', fortbildung), { titel: 'Abwesend geändert', text: 'Abwesend (Fortbildung) ist jetzt am Di, 10.11. um 12:00 Uhr.' });
+  // an einem Einsatz MIT Klient bleibt es ein Einsatz-Text
+  assert.equal(mitarbeiterEinsatzText('Abgesagt', einsatz({ 'Abwesend/Urlaub': 'Urlaub' }).fields).titel, 'Einsatz abgesagt');
+  // Einsatz nur mit Datum (ohne Uhrzeit): ebenfalls kein doppelter Punkt
+  assert.equal(mitarbeiterEinsatzText('Neu', { 'Tätigkeit': 'Grundpflege', Datum: '2026-11-04' }).text, 'Grundpflege am Mi, 04.11.');
+  assert.equal(mitarbeiterEinsatzText('Geändert', { 'Tätigkeit': 'Grundpflege', Datum: '2026-11-04' }).text, 'Grundpflege ist jetzt am Mi, 04.11.');
+});
+
+test('Absage eines eingetragenen Urlaubs: Push „Urlaub abgesagt“ an die Pflegekraft', async () => {
+  pushes.length = 0;
+  welt({ besuch: { id: 'recBesPushTest001', fields: { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', Pfleger: [MA1], Status: 'Abgesagt' } } });
+  const res = await senden('absage', 'recBesPushTest001');
+  assert.equal(res.body.status, 'ok');
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].title, 'Urlaub abgesagt');
+  assert.equal(pushes[0].body, 'Urlaub am Mo, 09.11. wurde abgesagt.');
+  assert.equal(pushes[0].ziel, 'plan');
+});
+
 // --- Absage an den Mitarbeiter -------------------------------------------------------------
 test('Absage: Push an den eingeplanten Mitarbeiter (deutsche Zeit, Ziel Tagesplan), Sperre zuerst', async () => {
   pushes.length = 0;
@@ -130,6 +155,23 @@ test('Absage: deaktivierte Mitarbeiter bekommen nichts; fehlendes Sperrfeld verh
 });
 
 // --- Termin-Freigabe (Push_senden) ----------------------------------------------------------
+test('Freigabe eines Urlaubs: Push nur an die Pflegekraft, nie an einen Klienten; danach „Gesendet“', async () => {
+  pushes.length = 0;
+  const log = welt({ besuch: { id: 'recBesPushTest001', fields: { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', Pfleger: [MA1], Status: 'Geplant', Push_senden: 'Senden' } } });
+  const res = await senden('besuch', 'recBesPushTest001');
+  assert.equal(res.body.status, 'ok');
+  assert.deepEqual(pushes.map((p) => [p.endpoint, p.title, p.body, p.ziel]),
+    [['https://push.example.invalid/ma1', 'Urlaub eingetragen', 'Urlaub am Mo, 09.11.', 'plan']]);
+  assert.deepEqual(log.patches.map((p) => p.fields), [{ Push_senden: 'Gesendet' }]);
+  // schon abgesagt: kein zweiter Push (meldet „Push an Pfleger bei Stornierung“), Freigabe erledigt
+  pushes.length = 0;
+  const log2 = welt({ besuch: { id: 'recBesPushTest001', fields: { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', Pfleger: [MA1], Status: 'Abgesagt', Push_senden: 'Senden' } } });
+  const res2 = await senden('besuch', 'recBesPushTest001');
+  assert.equal(res2.body.status, 'skipped');
+  assert.equal(pushes.length, 0);
+  assert.deepEqual(log2.patches.map((p) => p.fields), [{ Push_senden: 'Gesendet' }]);
+});
+
 test('Termin-Freigabe: Klient bekommt seinen Text, der Mitarbeiter einen eigenen (mit Datum)', async () => {
   pushes.length = 0;
   const log = welt({ besuch: einsatz({ Push_senden: 'Senden', Hervorhebung: 'Änderung' }) });

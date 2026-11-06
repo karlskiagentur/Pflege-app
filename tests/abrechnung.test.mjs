@@ -119,3 +119,23 @@ test('Mitarbeiter-App rechnet „Lohn / Zeit“ im selben Zeitraum (statt Kalend
   assert.ok(!/slice\(0, 7\) === zeitYm/.test(app), 'alte Kalendermonats-Zuordnung noch vorhanden');
   assert.ok(app.includes('{zeitZeitraumLabel}'));
 });
+
+test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung, nie in „Lohn / Zeit“', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  // gleiche Regel wie api/_zeitkonto.js: nur eine Zeile OHNE Klient ist eine Abwesenheit
+  assert.ok(app.includes("getValue(t, 'Patient') || getValue(t, 'Patient_Name') ? '' : getValue(t, 'Abwesend/Urlaub').trim()"));
+  // alle drei Listen (Übersicht, Tagesplan heute, Demnächst) zeigen die Karte vor allem anderen
+  const karten = app.match(/if \(abwesenheitVon\(t\)\) return <AbwesenheitKarte /g) || [];
+  assert.equal(karten.length, 3, 'Urlaubs-Karte fehlt in einer Liste');
+  // die Karte hat weder Ist-Zeit-Eingabe noch „Problem melden“
+  const karte = app.slice(app.indexOf('function AbwesenheitKarte'), app.indexOf('function AbwesenheitKarte') + 4000);
+  const ende = karte.indexOf('\n}\n');
+  const koerper = karte.slice(0, ende);
+  assert.ok(ende > 0);
+  assert.ok(!/Dauer_Ist|besuch-dauer|Problem melden|<input/.test(koerper));
+  // Tageszuordnung ganztägiger Einträge über das Datum, Zähler nur für echte Einsätze
+  assert.ok(app.includes('const d = zeitpunktMs(t);'));
+  assert.ok(app.includes('const einsaetzeHeute = termineHeute.filter((t) => !abwesenheitVon(t));'));
+  // „Lohn / Zeit“: Urlaub zählt nie als Arbeitszeit
+  assert.ok(/const zeitEinsaetze = \(zeitTermine \|\| \[\]\)\s*\.filter\(\(t\) => !abwesenheitVon\(t\)\)/.test(app));
+});
