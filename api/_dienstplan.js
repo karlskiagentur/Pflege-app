@@ -10,9 +10,13 @@
 //    herunterladen und später drucken geht immer.
 // 4. Enthalten ist nur, was der Mitarbeiter auch in seiner App sieht (gleiche Auswahl über
 //    Pfleger_ID wie /api/ma-termine) - keine internen Notizen des Büros.
+// 5. Urlaub/Abwesenheit (eigene Zeile ohne Klient, Spalte „Abwesend/Urlaub“; Wunsch Pflegedienst
+//    06.11.2026) steht am Tag als eigene Zeile („Urlaub“, ganztägig oder mit Uhrzeit, Grund aus
+//    „Tätigkeit“), ist aber kein Einsatz und zählt nicht zur geplanten Zeit. An einem Einsatz MIT
+//    Klient bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“.
 
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib';
-import { berlin, hm, termin, uhr } from './_zeitkonto.js';
+import { ABWESENHEIT_FELD, abwesenheitsAuswahl, abwesenheitsGrund, berlin, hm, termin, uhr } from './_zeitkonto.js';
 import { pdfText } from './_pdftext.js';
 
 // Felder der Tabelle Personal über ihre IDs (umbenennungsfest).
@@ -25,11 +29,12 @@ export const PERSONAL_FELDER = {
 // Besuche-Felder, die der Dienstplan braucht (Datenminimierung: keine internen Notizen,
 // keine Zeiterfassung, keine Kontaktdaten).
 export const BESUCHE_FELDER = [
-  'Datum', 'Uhrzeit', 'Von', 'Bis', 'Dauer_Soll', 'Status', 'Patient_Name', 'Tätigkeit',
-  'Adresse_Klient', 'Hervorhebung', 'Pfleger_Ersatz_Name',
+  'Datum', 'Uhrzeit', 'Von', 'Bis', 'Dauer_Soll', 'Status', 'Patient', 'Patient_Name', 'Tätigkeit',
+  'Adresse_Klient', 'Hervorhebung', 'Pfleger_Ersatz_Name', ABWESENHEIT_FELD,
 ];
 
 const WOCHENTAGE = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+const WOCHENTAGE_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const TAG_MS = 86400000;
 
 const isoPlus = (iso, tage) => {
@@ -110,13 +115,14 @@ const zeitText = (t) => {
 /**
  * Ordnet die Einsätze den sieben Tagen der Woche zu (Berliner Datum), sortiert nach Beginn
  * und markiert Abgesagtes. Abgesagte Einsätze bleiben sichtbar (durchgestrichen), zählen
- * aber nicht.
+ * aber nicht. Urlaub/Abwesenheit steht als eigener Eintrag am Tag (ganztägige zuerst) und
+ * zählt ebenfalls nicht.
  * @param {Array<{id?: string, fields: object}>} besuche  Airtable-Records
  * @param {{tage: string[]}} bereich  aus wochenBereich()
  */
 export function wochenplan(besuche, bereich) {
   const tage = bereich.tage.map((datum, i) => ({
-    datum, wochentag: WOCHENTAGE[i], eintraege: [], einsaetze: 0, planMin: 0,
+    datum, wochentag: WOCHENTAGE[i], eintraege: [], einsaetze: 0, planMin: 0, abwesenheiten: [], abwesenheitMin: 0,
   }));
   const proDatum = new Map(tage.map((t) => [t.datum, t]));
   for (const r of besuche || []) {
@@ -126,6 +132,24 @@ export function wochenplan(besuche, bereich) {
     if (!tag) continue;
     const markierung = wert(f.Hervorhebung);
     const abgesagt = t.status === 'Abgesagt' || markierung === 'Storniert';
+    if (t.abwesenheit) {
+      // Urlaub/Abwesenheit: Art statt Klient, Grund statt Tätigkeit, keine Adresse. Vom Büro
+      // wieder abgesagt -> bleibt durchgestrichen sichtbar (wie ein abgesagter Einsatz).
+      tag.eintraege.push({
+        id: t.id,
+        start: t.start,
+        ende: t.planEnde,
+        zeit: t.start !== null ? zeitText(t) : 'ganztägig',
+        klient: t.abwesenheit,
+        adresse: '',
+        taetigkeit: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
+        planMin: t.planMin,
+        abgesagt,
+        abwesenheit: t.abwesenheit,
+        hinweise: abgesagt ? [{ text: 'Abgesagt', art: 'abgesagt' }] : [],
+      });
+      continue;
+    }
     const hinweise = [];
     if (abgesagt) {
       hinweise.push({ text: 'Abgesagt', art: 'abgesagt' });
@@ -137,6 +161,10 @@ export function wochenplan(besuche, bereich) {
       if (t.status === 'Anfrage') hinweise.push({ text: 'Anfrage', art: 'anfrage' });
       const vertretung = alleWerte(f.Pfleger_Ersatz_Name).join(', ');
       if (vertretung) hinweise.push({ text: `Vertretung: ${vertretung}`, art: 'vertretung' });
+      // Urlaub/Abwesenheit an einem Einsatz MIT Klient: bleibt ein Einsatz (verschwindet nie aus
+      // dem Plan, z. B. der Vertretung) – der Hinweis zeigt, dass das Büro die Planung klären muss.
+      const auswahl = abwesenheitsAuswahl(f);
+      if (auswahl) hinweise.push({ text: `${auswahl} eingetragen`, art: 'konflikt' });
     }
     tag.eintraege.push({
       id: t.id,
@@ -148,17 +176,28 @@ export function wochenplan(besuche, bereich) {
       taetigkeit: t.taetigkeit || 'Unterstützung',
       planMin: t.planMin,
       abgesagt,
+      abwesenheit: '',
       hinweise,
     });
   }
 
-  const summen = { einsaetze: 0, planMin: 0, abgesagt: 0, ohneDauer: 0 };
+  // abwesenheiten: [{ datum, art, min }] der Woche für die Notiz unter der Wochensumme
+  const summen = { einsaetze: 0, planMin: 0, abgesagt: 0, ohneDauer: 0, abwesenheiten: [] };
+  // Sortierbeginn: ganztägige Abwesenheit (ohne Uhrzeit) vor allen Einsätzen des Tages,
+  // Einsätze ohne Uhrzeit ans Ende.
+  const beginn = (e) => (e.start !== null ? e.start : (e.abwesenheit ? -1 : null));
   for (const tag of tage) {
     tag.eintraege.sort((a, b) =>
-      (a.start === null) - (b.start === null) || (a.start || 0) - (b.start || 0)
+      (beginn(a) === null) - (beginn(b) === null) || (beginn(a) || 0) - (beginn(b) || 0)
       || (a.ende || 0) - (b.ende || 0) || String(a.id).localeCompare(String(b.id)));
     for (const e of tag.eintraege) {
       if (e.abgesagt) { summen.abgesagt++; continue; }
+      if (e.abwesenheit) {
+        if (!tag.abwesenheiten.includes(e.abwesenheit)) tag.abwesenheiten.push(e.abwesenheit);
+        tag.abwesenheitMin += e.planMin || 0;
+        summen.abwesenheiten.push({ datum: tag.datum, art: e.abwesenheit, min: e.planMin });
+        continue;
+      }
       tag.einsaetze++;
       tag.planMin += e.planMin || 0;
       if (e.planMin === null || e.planMin === undefined) summen.ohneDauer++;
@@ -187,7 +226,18 @@ export const DRUCK_SKRIPT = 'this.print({bUI: true, bSilent: false, bShrinkToFit
 export const LEGENDE = [
   'Neu, Geändert, Zusatz: Markierung des Büros im Dienstplan. Abgesagt: entfällt (durchgestrichen, nicht mitgezählt).',
   'Vertretung: Für diesen Einsatz ist eine Vertretung eingetragen. Änderungswunsch/Anfrage: Rückmeldung des Klienten ist noch offen.',
+  'Urlaub/Abwesend: vom Büro eingetragen – kein Einsatz, zählt nicht zur geplanten Zeit. „Urlaub eingetragen“ an einem Einsatz: das Büro klärt die Planung.',
 ];
+
+/** Notiz zur Abwesenheit unter der Wochensumme ('' wenn keine), z. B. „Abwesenheit: Mo 09.11. Urlaub – …“. */
+export function abwesenheitNotiz(plan) {
+  const liste = ((plan && plan.summen && plan.summen.abwesenheiten) || []).map((a) => {
+    const i = plan.tage.findIndex((t) => t.datum === a.datum);
+    const tagKurz = i >= 0 ? `${WOCHENTAGE_KURZ[i]} ` : '';
+    return `${tagKurz}${kurzDe(a.datum)} ${a.art}${a.min ? ` (${hm(a.min)} Std.)` : ''}`;
+  });
+  return liste.length ? `Abwesenheit: ${liste.join(', ')} – kein Einsatz, nicht in der geplanten Zeit.` : '';
+}
 
 /**
  * Rendert den Wochendienstplan (A4 hoch). Rein, ohne Netz - auch für Tests und Vorschau.
@@ -212,6 +262,8 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
     wunsch: rgb(0.6, 0.24, 0.11),
     anfrage: rgb(0.52, 0.31, 0.04),
     vertretung: rgb(0.76, 0.25, 0.05),
+    abwesenheit: rgb(0.2, 0.4, 0.62),
+    konflikt: rgb(0.71, 0.28, 0.24),
   };
 
   const A4 = [595.28, 841.89];
@@ -309,11 +361,14 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
   };
 
   const tagInfo = (tag) => {
+    const teile = [...tag.abwesenheiten]; // z. B. „Urlaub“
     if (tag.einsaetze > 0) {
       const anzahl = `${tag.einsaetze} ${tag.einsaetze === 1 ? 'Einsatz' : 'Einsätze'}`;
-      return tag.planMin > 0 ? `${anzahl} · geplant ${hm(tag.planMin)} Std.` : anzahl;
+      teile.push(tag.planMin > 0 ? `${anzahl} · geplant ${hm(tag.planMin)} Std.` : anzahl);
     }
-    return tag.eintraege.length ? 'alle Einsätze abgesagt' : 'frei';
+    if (teile.length) return teile.join(' · ');
+    // nur Abgesagtes: „alle Einsätze abgesagt“ – war es nur ein (abgesagter) Urlaub, ist der Tag frei
+    return tag.eintraege.some((e) => !e.abwesenheit) ? 'alle Einsätze abgesagt' : 'frei';
   };
   const tagKopf = (tag, fortsetzung) => {
     page.drawRectangle({ x: M, y: y - 5, width: SP.rechts - M, height: 18, color: band });
@@ -343,7 +398,8 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
       const zeit = gekuerzt(e.zeit, bold, 10, SP.klient - SP.zeit - 6);
       const klient = gekuerzt(e.klient, bold, 10, BREITE.klient);
       page.drawText(zeit, { x: SP.zeit, y, size: 10, font: bold, color: farbe });
-      page.drawText(klient, { x: SP.klient, y, size: 10, font: bold, color: farbe });
+      // Urlaub/Abwesenheit steht farbig in der Klient-Spalte (kein Klient, keine Adresse).
+      page.drawText(klient, { x: SP.klient, y, size: 10, font: bold, color: e.abwesenheit && !e.abgesagt ? FARBE.abwesenheit : farbe });
       adresse.forEach((z, i) => page.drawText(z, { x: SP.klient, y: y - 11 - i * 10.5, size: 8.5, font, color: e.abgesagt ? hellgrau : grau }));
       taetigkeit.forEach((z, i) => page.drawText(z, { x: SP.taetigkeit, y: y - i * 11.5, size: 9.5, font, color: farbe }));
       hinweise.forEach((h, i) => page.drawText(h.z, { x: SP.hinweis, y: y - i * 9.5, size: 7.5, font: bold, color: h.farbe }));
@@ -363,9 +419,12 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
 
   // Wochensumme + Legende
   const s = plan.summen;
-  const notizen = [];
-  if (s.ohneDauer > 0) notizen.push(`${s.ohneDauer} ${s.ohneDauer === 1 ? 'Einsatz' : 'Einsätze'} ohne geplante Dauer – in der Zeit nicht enthalten.`);
-  notizen.push(`Stand ${standText}. Spätere Änderungen im Dienstplan sind nicht enthalten – aktuell ist immer die App.`);
+  const notizTexte = [];
+  const abwNotiz = abwesenheitNotiz(plan);
+  if (abwNotiz) notizTexte.push(abwNotiz);
+  if (s.ohneDauer > 0) notizTexte.push(`${s.ohneDauer} ${s.ohneDauer === 1 ? 'Einsatz' : 'Einsätze'} ohne geplante Dauer – in der Zeit nicht enthalten.`);
+  notizTexte.push(`Stand ${standText}. Spätere Änderungen im Dienstplan sind nicht enthalten – aktuell ist immer die App.`);
+  const notizen = notizTexte.flatMap((t) => umbrechen(t, font, 8, SP.rechts - M, 3));
   const legende = LEGENDE.flatMap((t) => umbrechen(t, font, 7.5, SP.rechts - M, 3));
   if (y - (40 + (notizen.length + legende.length) * 10) < UNTEN) neueSeite();
   y -= 2;

@@ -18,6 +18,10 @@
 //    Beispiel: Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt. (Vorgabe Karl 28.10.2026; vorher galt
 //    eine Lücke über 30 Minuten komplett als Pause.)
 // 4. Alle Zeiten liegen im 15-Minuten-Raster; die Monatssumme ist die exakte Addition.
+// 5. Urlaub/Abwesenheit (eigene Dienstplan-Zeile ohne Klient, Spalte „Abwesend/Urlaub“; Wunsch
+//    Pflegedienst 06.11.2026) ist KEIN Einsatz: zählt weder als Einsatz noch zur Monatssumme,
+//    bekommt keine Kunden-Anfahrt und steht nicht unter „nicht bestätigt“. Solche Zeilen stehen
+//    getrennt auf dem Zettel; vom Büro eingetragene Stunden (Von/Bis) stehen zur Information dabei.
 //
 // Zeitachse je Tag: Ein Termin beginnt zur geplanten Von-Zeit und dauert so lange wie seine
 // angerechnete Zeit. Dauert ein Termin länger, verschiebt sich der nächste entsprechend
@@ -67,6 +71,28 @@ const text = (v) => {
   return v === undefined || v === null ? '' : String(v);
 };
 
+// Abwesenheit im Dienstplan: Das Büro legt für den Tag eine eigene Zeile OHNE Klient an und wählt
+// in der Spalte „Abwesend/Urlaub“ z. B. „Urlaub“ oder „Abwesend“ (leer = Mitarbeiter ist da). Jeder
+// Wert gilt als Abwesenheit – auch später ergänzte Auswahlwerte wie „Krank“.
+// Steht die Auswahl an einem Einsatz MIT Klient, bleibt es ein Einsatz: Er verschwindet nie aus
+// einem Plan (z. B. bei der Vertretung) und bleibt bestätigbar; der Dienstplan zeigt dann den
+// Hinweis „Urlaub eingetragen“, damit das Büro die Planung klärt.
+export const ABWESENHEIT_FELD = 'Abwesend/Urlaub';
+export const abwesenheitsAuswahl = (fields) => text((fields || {})[ABWESENHEIT_FELD]).trim();
+const mitKlient = (f) => (Array.isArray(f.Patient) ? f.Patient.length > 0 : !!f.Patient) || text(f.Patient_Name).trim() !== '';
+export const abwesenheit = (fields) => {
+  const f = fields || {};
+  return mitKlient(f) ? '' : abwesenheitsAuswahl(f);
+};
+
+// Grund einer Abwesenheit aus dem Feld Tätigkeit (frei eintragbar, z. B. „Arzttermin“) – ohne
+// Wiederholung der Art und ohne den Standardtext „Unterstützung“ der App.
+export function abwesenheitsGrund(art, taetigkeit) {
+  const g = String(taetigkeit || '').trim();
+  if (!g || g.toLowerCase() === String(art || '').trim().toLowerCase() || g === 'Unterstützung') return '';
+  return g;
+}
+
 // Einen Besuch (Airtable-Felder) in einen normierten Termin übersetzen.
 export function termin(fields, id = '') {
   const f = fields || {};
@@ -101,6 +127,7 @@ export function termin(fields, id = '') {
     taetigkeit: text(f['Tätigkeit']).trim(),
     vonText: text(f.Von),
     bisText: text(f.Bis),
+    abwesenheit: abwesenheit(f), // '' = normaler Einsatz
   };
 }
 
@@ -123,16 +150,29 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   const ausgelassen = { abgesagt: 0, zukunft: 0 };
   const termine = [];
   const offen = []; // vorbei, aber ohne bestätigte Ist-Zeit -> nicht berechnet
+  const abwesend = []; // Urlaub/Abwesenheit -> kein Einsatz, getrennt ausgewiesen (Regel 5)
   for (const r of besuche || []) {
     const t = termin(r && r.fields, r && r.id);
     if (t.status === 'Abgesagt') { ausgelassen.abgesagt++; continue; }
     if (!vorbei(t, jetzt)) { ausgelassen.zukunft++; continue; }
+    if (t.abwesenheit) { abwesend.push(t); continue; } // auch eine eingetragene Ist-Zeit zählt hier nicht
     if (t.istMin === null) { offen.push(t); continue; }
     termine.push(t);
   }
   const reihenfolge = (a, b) =>
     (a.start === null) - (b.start === null) || (a.start || 0) - (b.start || 0) ||
     (a.planEnde || 0) - (b.planEnde || 0) || String(a.id).localeCompare(String(b.id));
+  const abwesenheiten = abwesend
+    .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
+    .map((t) => ({
+      id: t.id,
+      datum: t.datum,
+      art: t.abwesenheit,
+      grund: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
+      von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
+      bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
+      min: t.planMin, // vom Büro eingetragene Stunden (Von–Bis); null = ganztägig ohne Zeit
+    }));
   const nichtBestaetigt = offen
     .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
     .map((t) => ({
@@ -229,5 +269,25 @@ export function berechneZeitnachweis(besuche, opt = {}) {
     tage.push(tag);
   }
   summen.bezahltMin = summen.einsatzMin + summen.anfahrtMin;
-  return { jetzt, tage, summen, ausgelassen, nichtBestaetigt };
+  return { jetzt, tage, summen, ausgelassen, nichtBestaetigt, abwesenheiten };
+}
+
+/**
+ * Urlaub/Abwesenheit je Art zusammengefasst (für Summenzeilen), z. B.
+ * [{ art: 'Urlaub', anzahl: 2, tage: 2, min: 360 }]. „Urlaub“ zuerst, dann alphabetisch.
+ * @param {Array<{art: string, datum: string|null, min: number|null}>} abwesenheiten
+ */
+export function abwesenheitNachArt(abwesenheiten) {
+  const proArt = new Map();
+  for (const a of abwesenheiten || []) {
+    if (!a || !a.art) continue;
+    if (!proArt.has(a.art)) proArt.set(a.art, { art: a.art, anzahl: 0, daten: new Set(), min: 0 });
+    const s = proArt.get(a.art);
+    s.anzahl++;
+    if (a.datum) s.daten.add(a.datum);
+    s.min += typeof a.min === 'number' ? a.min : 0;
+  }
+  return [...proArt.values()]
+    .sort((a, b) => (b.art === 'Urlaub') - (a.art === 'Urlaub') || a.art.localeCompare(b.art, 'de'))
+    .map(({ art, anzahl, daten, min }) => ({ art, anzahl, tage: daten.size, min }));
 }

@@ -23,6 +23,14 @@ export const INTERNE_FELDER = {
   dokument: ['Drive_Link', 'Push_Gesendet', 'Push_senden'],
 };
 
+// Felder, die NUR die Mitarbeiter-App liest (über /api/ma-termine) - Klienten bekommen sie nie.
+// Getrennt von INTERNE_FELDER, weil deren Regressionstest jedes von der App gelesene Feld
+// verbietet. „Abwesend/Urlaub“: Urlaub/Abwesenheit einer Pflegekraft ist Personalsache
+// (Datenminimierung) - auch wenn das Büro sie versehentlich an einem Einsatz mit Klient wählt.
+export const NUR_MITARBEITER_FELDER = {
+  besuch: ['Abwesend/Urlaub'],
+};
+
 // Kopie des Records ohne die genannten Felder (Original bleibt unverändert).
 export function ohneFelder(record, felder) {
   if (!record || !record.fields) return record;
@@ -89,7 +97,7 @@ export default async function handler(req, res) {
         patienten_daten: ohneFelder(patient, INTERNE_FELDER.patient),
         kontakte,
         // Sperrliste + Schutznetz für Druck-Links (auch unter anderem Feldnamen)
-        besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, INTERNE_FELDER.besuch))),
+        besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, [...INTERNE_FELDER.besuch, ...NUR_MITARBEITER_FELDER.besuch]))),
         tasks,
         dokumente: dokumente.map((d) => ohneFelder(d, INTERNE_FELDER.dokument)),
         ...(mitteilungen ? { mitteilungen } : {}),

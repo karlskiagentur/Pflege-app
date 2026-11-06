@@ -37,6 +37,21 @@ test('Fingerabdruck: Status + Prüfwert - keine Namen oder Adressen im Speicher'
   assert.equal(N.einsatzSignatur(einsatz('recA', { Dauer_Ist: 1800, Erledigt_Am: '2026-11-03T08:00:00.000Z' })), sig);
 });
 
+test('Fingerabdruck: Urlaub/Abwesenheit setzen ist eine Änderung, sonst bleibt alles gleich', () => {
+  const sig = N.einsatzSignatur(einsatz('recA'));
+  // fehlendes oder leeres Feld: derselbe Fingerabdruck wie VOR dem Update - die Geräte haben ihn
+  // gespeichert (fester Wert, berechnet mit der bisherigen Fassung) -> kein „Geändert“ für alle
+  assert.equal(sig, 'Geplant|8umegg');
+  assert.equal(N.einsatzSignatur(einsatz('recA', { 'Abwesend/Urlaub': '' })), 'Geplant|8umegg');
+  const urlaub = N.einsatzSignatur(einsatz('recA', { 'Abwesend/Urlaub': 'Urlaub' }));
+  assert.notEqual(urlaub, sig);
+  assert.notEqual(N.einsatzSignatur(einsatz('recA', { 'Abwesend/Urlaub': 'Abwesend' })), urlaub);
+  // ganztägige Abwesenheit ohne Uhrzeit wird über ihr Datum dem Tag zugeordnet (und markiert)
+  const ganz = { id: 'recU', fields: { Status: 'Geplant', Datum: '2026-11-04', 'Abwesend/Urlaub': 'Urlaub' } };
+  assert.equal(N.einsatzZeit(ganz), Date.parse('2026-11-04T00:00:00'));
+  assert.deepEqual(N.einsatzMarken([ganz], {}, HEUTE), { recU: 'neu' });
+});
+
 test('Markierungen: erste Nutzung ohne Markierung, danach neu / geändert / abgesagt', () => {
   const liste = [einsatz('recA'), einsatz('recB'), einsatz('recAlt', { Uhrzeit: '2026-11-01T07:00:00.000Z', Datum: '2026-11-01' })];
   assert.deepEqual(N.einsatzMarken(liste, null, HEUTE), {});

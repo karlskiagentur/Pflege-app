@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
-import { berechneZeitnachweis, hm } from './_zeitkonto.js';
+import { berechneZeitnachweis, abwesenheitNachArt, hm } from './_zeitkonto.js';
 import { pdfText } from './_pdftext.js';
 import { abrechnungszeitraum, imZeitraum, zeitraumText } from './_abrechnung.js';
 
@@ -47,6 +47,7 @@ export const ERLAEUTERUNG = [
   'Zeitfenster und Soll: geplante Zeit laut Dienstplan. Das Zeitfenster bleibt so stehen, auch wenn ein Einsatz länger oder kürzer gedauert hat – es zeigt immer die Planung.',
   'Ist: die in der App unter „Tatsächliche Dauer“ bestätigte (oder vom Büro eingetragene) Zeit im 15-Minuten-Takt (gerundet, z. B. 20 Min. = 0:15, 25 Min. = 0:30). Bezahlt wird nur die bestätigte Ist-Zeit, nicht das Zeitfenster. Fett gedruckt = weicht von der Planung ab.',
   'Nicht bestätigt: Einsätze ohne bestätigte Ist-Zeit werden nicht berechnet – auch keine Kunden-Anfahrt dorthin. Sie stehen gesammelt unter „Nicht bestätigt – nicht berechnet“. Wurde ein solcher Einsatz geleistet, bitte beim Büro melden – das Büro trägt die Zeit nach.',
+  'Urlaub / Abwesenheit: vom Büro im Dienstplan eingetragen (Spalte „Abwesend/Urlaub“). Diese Tage stehen getrennt unter „Urlaub / Abwesenheit“ und sind nicht in der Monatssumme enthalten; eingetragene Stunden stehen zur Information für die Lohnabrechnung dabei.',
   '„laut Ist“: der gerechnete Zeitraum, wenn er vom Zeitfenster abweicht – Beginn laut Plan (bzw. direkt nach dem vorherigen Einsatz, wenn dieser länger gedauert hat) plus Ist-Dauer.',
   'Kunden-Anfahrt: Die Zeit zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten wird bis 30 Minuten voll bezahlt. Ist die Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause – unbezahlt und separat ausgewiesen (z. B. Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt).',
   'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; was über 30 Minuten hinausgeht, ist Pause.',
@@ -111,6 +112,31 @@ export function nichtBestaetigtText(summen) {
   return `Nicht bestätigt: ${n} ${n === 1 ? 'Einsatz' : 'Einsätze'} (geplant ${hm(summen.ohneIstSollMin || 0)} Std.) – nicht berechnet, Liste oben.`;
 }
 
+// Überschrift der Liste Urlaub/Abwesenheit (nach den Tagen, vor „nicht bestätigt“).
+export const ABWESENHEIT_TITEL = 'Urlaub / Abwesenheit – nicht in der Monatssumme';
+
+/**
+ * Zeilen Urlaub/Abwesenheit (rein - testbar): Datum | Zeitfenster („ganztägig“ ohne Zeit) |
+ * eingetragene Stunden (Soll-Spalte) | Ist „–“ | Art und Grund (Klient-Spalte).
+ */
+export function abwesenheitZeilen(nachweis) {
+  return ((nachweis && nachweis.abwesenheiten) || []).map((a) => ({
+    datum: a.datum ? datumDe(a.datum) : '–',
+    fenster: a.von && a.bis ? `${a.von} – ${a.bis}` : (a.von ? `ab ${a.von}` : 'ganztägig'),
+    soll: typeof a.min === 'number' ? hm(a.min) : '–',
+    ist: '–',
+    klient: a.grund ? `${a.art} · ${a.grund}` : a.art,
+  }));
+}
+
+/** Hinweis im Summenblock zu Urlaub/Abwesenheit ('' wenn keine), z. B. „Urlaub: 1 Tag (6:00 Std.) – …“. */
+export function abwesenheitText(nachweis) {
+  const arten = abwesenheitNachArt(nachweis && nachweis.abwesenheiten);
+  if (!arten.length) return '';
+  const teile = arten.map((a) => `${a.art}: ${a.tage} ${a.tage === 1 ? 'Tag' : 'Tage'}${a.min ? ` (${hm(a.min)} Std.)` : ''}`);
+  return `${teile.join(' · ')} – nicht in der Monatssumme, Liste oben.`;
+}
+
 /**
  * Reihenfolge des Felds „Datei“ nach dem Hochladen: die neue Fassung zuerst, alle früheren dahinter
  * in ihrer bisherigen Reihenfolge (archivieren statt löschen). uploadAttachment hängt neue Dateien
@@ -159,6 +185,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   const hellgrau = rgb(0.6, 0.6, 0.6);
   const schwarz = rgb(0.2, 0.2, 0.2);
   const orange = rgb(0.7, 0.33, 0.08);
+  const blau = rgb(0.2, 0.4, 0.62); // Urlaub/Abwesenheit
   const A4 = [595.28, 841.89];
   const M = 50;
   const SP = SPALTEN;
@@ -270,9 +297,27 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     y -= 4; // Abstand zwischen Tagen
   }
   const offen = nichtBestaetigtZeilen(nachweis);
+  const abwesend = abwesenheitZeilen(nachweis);
   if (nachweis.tage.length === 0) {
-    text(page, offen.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
+    text(page, offen.length || abwesend.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
     y -= 16;
+  }
+  // Urlaub/Abwesenheit: getrennt aufgeführt, zählt nicht zur Monatssumme (Stunden nur zur Info).
+  if (abwesend.length) {
+    platz(40);
+    y -= 6;
+    text(page, ABWESENHEIT_TITEL, SP.datum, y, 10, bold, blau);
+    y -= 15;
+    for (const z of abwesend) {
+      platz(14);
+      text(page, z.datum, SP.datum, y, 10, font, schwarz);
+      text(page, z.fenster, SP.fenster, y, 10, font, schwarz);
+      rechts(page, z.soll, SP.sollR, y, 10, font, schwarz);
+      rechts(page, z.ist, SP.istR, y, 10, font, grau);
+      page.drawText(gekuerzt(z.klient, bold, 10, KLIENT_MAX), { x: SP.klient, y, size: 10, font: bold, color: blau });
+      y -= 14;
+    }
+    y -= 4;
   }
   // Nicht bestätigte Einsätze: zur Kontrolle aufgeführt, zählen aber nicht (kein Ist, keine Anfahrt).
   if (offen.length) {
@@ -295,7 +340,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Geschäftsleitung.
   const s = nachweis.summen;
   const mitUnterschrift = final && s.einsaetze > 0;
-  platz(mitUnterschrift ? 230 : 120, false);
+  platz(mitUnterschrift ? 245 : 135, false);
   y -= 4;
   page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
   y -= 18;
@@ -315,6 +360,11 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   const offenText = nichtBestaetigtText(s);
   if (offenText) {
     text(page, offenText, M, y, 9, bold, orange);
+    y -= 14;
+  }
+  const abwText = abwesenheitText(nachweis);
+  if (abwText) {
+    text(page, abwText, M, y, 9, bold, blau);
     y -= 14;
   }
 
@@ -449,7 +499,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       status: 'success', einsaetze: nachweis.summen.einsaetze, summe, vorlaeufig: !final,
-      ohneIst: nachweis.summen.ohneIst, ausgelassen: nachweis.ausgelassen,
+      ohneIst: nachweis.summen.ohneIst, abwesenheiten: nachweis.abwesenheiten.length, ausgelassen: nachweis.ausgelassen,
     });
   } catch (e) {
     // Status -> Fehler (best effort), dann Standard-Fehlerpfad (Alarm-Mail,
