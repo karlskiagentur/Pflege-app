@@ -10,13 +10,16 @@
 //    herunterladen und später drucken geht immer.
 // 4. Enthalten ist nur, was der Mitarbeiter auch in seiner App sieht (gleiche Auswahl über
 //    Pfleger_ID wie /api/ma-termine) - keine internen Notizen des Büros.
-// 5. Urlaub/Abwesenheit (eigene Zeile ohne Klient, Spalte „Abwesend/Urlaub“; Wunsch Pflegedienst
-//    06.11.2026) steht am Tag als eigene Zeile („Urlaub“, ganztägig oder mit Uhrzeit, Grund aus
-//    „Tätigkeit“), ist aber kein Einsatz und zählt nicht zur geplanten Zeit. An einem Einsatz MIT
-//    Klient bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“.
+// 5. Urlaub/Gleitzeit/Krank/Abwesenheit (eigene Zeile ohne Klient, Spalte „Abwesend/Urlaub“;
+//    Wunsch Pflegedienst 06.11.2026) steht am Tag als eigene Zeile („Urlaub“, ganztägig oder mit
+//    Uhrzeit, Grund aus „Tätigkeit“), ist aber kein Einsatz und zählt nie zur geplanten Zeit – auch
+//    nicht mit eingetragenen Stunden („Stunden Urlaub/Gleitzeit“, nur für den Stundenzettel; die
+//    Notiz unter der Wochensumme nennt sie, Krank hat nie Stunden). An einem Einsatz MIT Klient
+//    bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“.
 
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { ABWESENHEIT_FELD, abwesenheitsAuswahl, abwesenheitsGrund, berlin, hm, termin, uhr } from './_zeitkonto.js';
+import { ABWESENHEIT_STUNDEN_FELD } from './_abrechnung.js';
 import { pdfText } from './_pdftext.js';
 
 // Felder der Tabelle Personal über ihre IDs (umbenennungsfest).
@@ -30,7 +33,7 @@ export const PERSONAL_FELDER = {
 // keine Zeiterfassung, keine Kontaktdaten).
 export const BESUCHE_FELDER = [
   'Datum', 'Uhrzeit', 'Von', 'Bis', 'Dauer_Soll', 'Status', 'Patient', 'Patient_Name', 'Tätigkeit',
-  'Adresse_Klient', 'Hervorhebung', 'Pfleger_Ersatz_Name', ABWESENHEIT_FELD,
+  'Adresse_Klient', 'Hervorhebung', 'Pfleger_Ersatz_Name', ABWESENHEIT_FELD, ABWESENHEIT_STUNDEN_FELD,
 ];
 
 const WOCHENTAGE = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
@@ -144,6 +147,7 @@ export function wochenplan(besuche, bereich) {
         adresse: '',
         taetigkeit: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
         planMin: t.planMin,
+        stundenMin: t.stundenMin, // Stunden („Stunden Urlaub/Gleitzeit“, nur Urlaub/Gleitzeit) – nur für die Notiz
         abgesagt,
         abwesenheit: t.abwesenheit,
         hinweise: abgesagt ? [{ text: 'Abgesagt', art: 'abgesagt' }] : [],
@@ -193,9 +197,10 @@ export function wochenplan(besuche, bereich) {
     for (const e of tag.eintraege) {
       if (e.abgesagt) { summen.abgesagt++; continue; }
       if (e.abwesenheit) {
+        // nie in der geplanten Zeit; eingetragene Stunden nennt nur die Notiz (Stundenzettel zählt sie)
         if (!tag.abwesenheiten.includes(e.abwesenheit)) tag.abwesenheiten.push(e.abwesenheit);
-        tag.abwesenheitMin += e.planMin || 0;
-        summen.abwesenheiten.push({ datum: tag.datum, art: e.abwesenheit, min: e.planMin });
+        tag.abwesenheitMin += e.stundenMin || 0;
+        summen.abwesenheiten.push({ datum: tag.datum, art: e.abwesenheit, min: e.stundenMin });
         continue;
       }
       tag.einsaetze++;
@@ -226,17 +231,24 @@ export const DRUCK_SKRIPT = 'this.print({bUI: true, bSilent: false, bShrinkToFit
 export const LEGENDE = [
   'Neu, Geändert, Zusatz: Markierung des Büros im Dienstplan. Abgesagt: entfällt (durchgestrichen, nicht mitgezählt).',
   'Vertretung: Für diesen Einsatz ist eine Vertretung eingetragen. Änderungswunsch/Anfrage: Rückmeldung des Klienten ist noch offen.',
-  'Urlaub/Abwesend: vom Büro eingetragen – kein Einsatz, zählt nicht zur geplanten Zeit. „Urlaub eingetragen“ an einem Einsatz: das Büro klärt die Planung.',
+  'Urlaub/Gleitzeit/Krank/Abwesend: vom Büro eingetragen – kein Einsatz, zählt nie zur geplanten Zeit (eingetragene Stunden stehen nur auf dem Stundenzettel). „Urlaub eingetragen“ an einem Einsatz: das Büro klärt die Planung.',
 ];
 
-/** Notiz zur Abwesenheit unter der Wochensumme ('' wenn keine), z. B. „Abwesenheit: Mo 09.11. Urlaub – …“. */
+/**
+ * Notiz zur Abwesenheit unter der Wochensumme ('' wenn keine), z. B.
+ * „Abwesenheit: Mo 09.11. Urlaub (8:00 Std.) – kein Einsatz, nicht in der geplanten Zeit (…)“.
+ * Die Stunden sind die eingetragenen „Stunden Urlaub/Gleitzeit“ (wie sie zählen: Stundenzettel).
+ */
 export function abwesenheitNotiz(plan) {
-  const liste = ((plan && plan.summen && plan.summen.abwesenheiten) || []).map((a) => {
+  const eintraege = (plan && plan.summen && plan.summen.abwesenheiten) || [];
+  const liste = eintraege.map((a) => {
     const i = plan.tage.findIndex((t) => t.datum === a.datum);
     const tagKurz = i >= 0 ? `${WOCHENTAGE_KURZ[i]} ` : '';
     return `${tagKurz}${kurzDe(a.datum)} ${a.art}${a.min ? ` (${hm(a.min)} Std.)` : ''}`;
   });
-  return liste.length ? `Abwesenheit: ${liste.join(', ')} – kein Einsatz, nicht in der geplanten Zeit.` : '';
+  if (!liste.length) return '';
+  const mitStunden = eintraege.some((a) => a.min > 0);
+  return `Abwesenheit: ${liste.join(', ')} – kein Einsatz, nicht in der geplanten Zeit${mitStunden ? ' (Stunden siehe Stundenzettel)' : ''}.`;
 }
 
 /**

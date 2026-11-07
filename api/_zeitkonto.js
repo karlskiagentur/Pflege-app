@@ -17,15 +17,22 @@
 //    fällt ja an; nur der Rest ist unbezahlte Pause (eigene Zeile, zählt NICHT zur Summe).
 //    Beispiel: Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt. (Vorgabe Karl 28.10.2026; vorher galt
 //    eine Lücke über 30 Minuten komplett als Pause.)
-// 4. Alle Zeiten liegen im 15-Minuten-Raster; die Monatssumme ist die exakte Addition.
-// 5. Urlaub/Abwesenheit (eigene Dienstplan-Zeile ohne Klient, Spalte „Abwesend/Urlaub“; Wunsch
-//    Pflegedienst 06.11.2026) ist KEIN Einsatz: zählt weder als Einsatz noch zur Monatssumme,
-//    bekommt keine Kunden-Anfahrt und steht nicht unter „nicht bestätigt“. Solche Zeilen stehen
-//    getrennt auf dem Zettel; vom Büro eingetragene Stunden (Von/Bis) stehen zur Information dabei.
+// 4. Einsätze, Anfahrt und Pausen liegen im 15-Minuten-Raster; die Monatssumme ist die exakte
+//    Addition.
+// 5. Urlaub/Gleitzeit/Krank/Abwesenheit (eigene Dienstplan-Zeile ohne Klient, Spalte
+//    „Abwesend/Urlaub“; Wunsch Pflegedienst 06.11.2026) ist KEIN Einsatz: zählt nicht als Einsatz,
+//    nie zu Soll oder Ist, bekommt keine Kunden-Anfahrt und steht nicht unter „nicht bestätigt“
+//    (auch eine dort eingetragene Ist-Zeit zählt nicht). Wie in üblichen Betrieben (Vorgabe Karl
+//    07.11.2026, Regel: api/_abrechnung.js): Urlaub mit den vom Büro eingetragenen Stunden zählt
+//    zur Monatssumme; Gleitzeit steht mit Stunden auf dem Zettel, zählt aber nicht (Freizeitausgleich
+//    aus dem Zeitkonto); Krank und Abwesend stehen nur als Tag („–“) da. Von/Bis ist bei einer
+//    Abwesenheit nur das Zeitfenster und zählt nie.
 //
 // Zeitachse je Tag: Ein Termin beginnt zur geplanten Von-Zeit und dauert so lange wie seine
 // angerechnete Zeit. Dauert ein Termin länger, verschiebt sich der nächste entsprechend
 // (niemand ist an zwei Orten gleichzeitig) - so wird keine Minute doppelt gezählt.
+
+import { abwesenheitsMinuten, abwesenheitBezahlt, abwesenheitMitStunden } from './_abrechnung.js';
 
 // Bezahlte Kunden-Anfahrt je Lücke zwischen zwei Terminen: bis 30 Min die ganze Lücke,
 // bei längerer Lücke genau 30 Min (der Rest ist Pause).
@@ -72,8 +79,8 @@ const text = (v) => {
 };
 
 // Abwesenheit im Dienstplan: Das Büro legt für den Tag eine eigene Zeile OHNE Klient an und wählt
-// in der Spalte „Abwesend/Urlaub“ z. B. „Urlaub“ oder „Abwesend“ (leer = Mitarbeiter ist da). Jeder
-// Wert gilt als Abwesenheit – auch später ergänzte Auswahlwerte wie „Krank“.
+// in der Spalte „Abwesend/Urlaub“ „Urlaub“, „Gleitzeit“, „Krank“ oder „Abwesend“ (leer = Mitarbeiter ist da).
+// Jeder Wert gilt als Abwesenheit – auch später ergänzte Auswahlwerte.
 // Steht die Auswahl an einem Einsatz MIT Klient, bleibt es ein Einsatz: Er verschwindet nie aus
 // einem Plan (z. B. bei der Vertretung) und bleibt bestätigbar; der Dienstplan zeigt dann den
 // Hinweis „Urlaub eingetragen“, damit das Büro die Planung klärt.
@@ -115,6 +122,7 @@ export function termin(fields, id = '') {
   if (typeof f.Dauer_Ist === 'number' && f.Dauer_Ist >= 0) istMin = takt(f.Dauer_Ist / 60);
   else if (Number(f.Ist_Stunden_Monat) > 0) istMin = takt(Number(f.Ist_Stunden_Monat) / 60);
 
+  const abw = abwesenheit(f);
   return {
     id,
     datum,
@@ -127,7 +135,9 @@ export function termin(fields, id = '') {
     taetigkeit: text(f['Tätigkeit']).trim(),
     vonText: text(f.Von),
     bisText: text(f.Bis),
-    abwesenheit: abwesenheit(f), // '' = normaler Einsatz
+    abwesenheit: abw, // '' = normaler Einsatz
+    // nur bei Urlaub/Gleitzeit: Minuten laut „Stunden Urlaub/Gleitzeit“ (null = Krank/Abwesend oder nicht eingetragen)
+    stundenMin: abw ? abwesenheitsMinuten(f, abw) : null,
   };
 }
 
@@ -150,7 +160,7 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   const ausgelassen = { abgesagt: 0, zukunft: 0 };
   const termine = [];
   const offen = []; // vorbei, aber ohne bestätigte Ist-Zeit -> nicht berechnet
-  const abwesend = []; // Urlaub/Abwesenheit -> kein Einsatz, getrennt ausgewiesen (Regel 5)
+  const abwesend = []; // Urlaub/Gleitzeit/Krank/Abwesenheit -> kein Einsatz, getrennt ausgewiesen (Regel 5)
   for (const r of besuche || []) {
     const t = termin(r && r.fields, r && r.id);
     if (t.status === 'Abgesagt') { ausgelassen.abgesagt++; continue; }
@@ -171,7 +181,9 @@ export function berechneZeitnachweis(besuche, opt = {}) {
       grund: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
       von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
       bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
-      min: t.planMin, // vom Büro eingetragene Stunden (Von–Bis); null = ganztägig ohne Zeit
+      // Stunden laut Spalte „Stunden Urlaub/Gleitzeit“ (nur Urlaub und Gleitzeit); null = Krank,
+      // Abwesend oder nicht eingetragen. Von/Bis oben ist nur das Zeitfenster und zählt nie.
+      min: t.stundenMin,
     }));
   const nichtBestaetigt = offen
     .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
@@ -193,10 +205,17 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   }
   const tage = [];
   // ohneIst = Anzahl nicht bestätigter Termine (nicht berechnet), ohneIstSollMin = ihre geplante Zeit
+  // Regel 5: abwesenheitBezahltMin = Urlaubsstunden (zählen zur Monatssumme), abwesenheitZeitkontoMin =
+  // Gleitzeit (Freizeitausgleich, steht nur da), abwesenheitOhneStunden = Urlaub/Gleitzeit ohne
+  // eingetragene Stunden (zählen 0:00). Krank/Abwesend haben nie Stunden.
   const summen = {
     sollMin: 0, einsatzMin: 0, anfahrtMin: 0, pauseMin: 0, bezahltMin: 0, einsaetze: 0,
     ohneIst: nichtBestaetigt.length,
     ohneIstSollMin: nichtBestaetigt.reduce((s, t) => s + (t.sollMin || 0), 0),
+    abwesenheitBezahltMin: abwesenheiten.filter((a) => abwesenheitBezahlt(a.art)).reduce((s, a) => s + (a.min || 0), 0),
+    abwesenheitZeitkontoMin: abwesenheiten.filter((a) => abwesenheitMitStunden(a.art) && !abwesenheitBezahlt(a.art))
+      .reduce((s, a) => s + (a.min || 0), 0),
+    abwesenheitOhneStunden: abwesenheiten.filter((a) => abwesenheitMitStunden(a.art) && a.min === null).length,
   };
 
   for (const datum of [...proTag.keys()].sort()) {
@@ -268,26 +287,38 @@ export function berechneZeitnachweis(besuche, opt = {}) {
     summen.pauseMin += tag.pauseMin;
     tage.push(tag);
   }
-  summen.bezahltMin = summen.einsatzMin + summen.anfahrtMin;
+  // Monatssumme = bestätigte Einsätze + Kunden-Anfahrt + eingetragene Urlaubsstunden (Regel 5)
+  summen.bezahltMin = summen.einsatzMin + summen.anfahrtMin + summen.abwesenheitBezahltMin;
   return { jetzt, tage, summen, ausgelassen, nichtBestaetigt, abwesenheiten };
 }
 
+// Reihenfolge auf dem Zettel: bezahlt (Urlaub), Zeitkonto (Gleitzeit), dann Tage ohne Stunden.
+const ART_REIHENFOLGE = ['Urlaub', 'Gleitzeit', 'Krank', 'Abwesend'];
+const rang = (art) => { const i = ART_REIHENFOLGE.indexOf(art); return i < 0 ? ART_REIHENFOLGE.length : i; };
+
 /**
- * Urlaub/Abwesenheit je Art zusammengefasst (für Summenzeilen), z. B.
- * [{ art: 'Urlaub', anzahl: 2, tage: 2, min: 360 }]. „Urlaub“ zuerst, dann alphabetisch.
+ * Urlaub/Gleitzeit/Krank/Abwesenheit je Art zusammengefasst (für die Summenzeilen), z. B.
+ * [{ art: 'Urlaub', anzahl: 2, tage: 2, min: 480, ohneStunden: 1, mitStunden: true, bezahlt: true }].
+ * min = Summe der eingetragenen Stunden; ohneStunden = Urlaub/Gleitzeit-Einträge ohne Stunden
+ * (zählen 0:00); mitStunden = Art mit Stunden (Urlaub, Gleitzeit); bezahlt = zählt zur Monatssumme.
+ * Reihenfolge: Urlaub, Gleitzeit, Krank, Abwesend, weitere alphabetisch.
  * @param {Array<{art: string, datum: string|null, min: number|null}>} abwesenheiten
  */
 export function abwesenheitNachArt(abwesenheiten) {
   const proArt = new Map();
   for (const a of abwesenheiten || []) {
     if (!a || !a.art) continue;
-    if (!proArt.has(a.art)) proArt.set(a.art, { art: a.art, anzahl: 0, daten: new Set(), min: 0 });
+    if (!proArt.has(a.art)) proArt.set(a.art, { art: a.art, anzahl: 0, daten: new Set(), min: 0, ohneStunden: 0 });
     const s = proArt.get(a.art);
     s.anzahl++;
     if (a.datum) s.daten.add(a.datum);
-    s.min += typeof a.min === 'number' ? a.min : 0;
+    if (typeof a.min === 'number') s.min += a.min;
+    else if (abwesenheitMitStunden(a.art)) s.ohneStunden++;
   }
   return [...proArt.values()]
-    .sort((a, b) => (b.art === 'Urlaub') - (a.art === 'Urlaub') || a.art.localeCompare(b.art, 'de'))
-    .map(({ art, anzahl, daten, min }) => ({ art, anzahl, tage: daten.size, min }));
+    .sort((a, b) => rang(a.art) - rang(b.art) || a.art.localeCompare(b.art, 'de'))
+    .map(({ art, anzahl, daten, min, ohneStunden }) => ({
+      art, anzahl, tage: daten.size, min, ohneStunden,
+      mitStunden: abwesenheitMitStunden(art), bezahlt: abwesenheitBezahlt(art),
+    }));
 }

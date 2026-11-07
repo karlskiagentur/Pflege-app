@@ -19,16 +19,18 @@ export const INTERNE_FELDER = {
     'Push_senden', 'Meldungen',                                         // Push-Steuerung, interne Meldungen
     'Pfleger_Druck_Link', 'Dienstplan_Druck_Link', 'Dienstplan drucken', // Druck-Links des Büros (Schlüssel!)
     'Push_Absage_MA_Am',                                                // Push-Sperre (intern)
+    'Urlaubsantrag',                                                    // Verweis Urlaubsantrag -> Dienstplan (intern)
   ],
   dokument: ['Drive_Link', 'Push_Gesendet', 'Push_senden'],
 };
 
 // Felder, die NUR die Mitarbeiter-App liest (über /api/ma-termine) - Klienten bekommen sie nie.
 // Getrennt von INTERNE_FELDER, weil deren Regressionstest jedes von der App gelesene Feld
-// verbietet. „Abwesend/Urlaub“: Urlaub/Abwesenheit einer Pflegekraft ist Personalsache
-// (Datenminimierung) - auch wenn das Büro sie versehentlich an einem Einsatz mit Klient wählt.
+// verbietet. „Abwesend/Urlaub“ und „Stunden Urlaub/Gleitzeit“: Urlaub/Gleitzeit/Krank einer
+// Pflegekraft und ihre Stunden sind Personalsache (Datenminimierung) - auch wenn das Büro sie
+// versehentlich an einem Einsatz mit Klient einträgt.
 export const NUR_MITARBEITER_FELDER = {
-  besuch: ['Abwesend/Urlaub'],
+  besuch: ['Abwesend/Urlaub', 'Stunden Urlaub/Gleitzeit'],
 };
 
 // Kopie des Records ohne die genannten Felder (Original bleibt unverändert).

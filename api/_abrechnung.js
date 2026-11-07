@@ -70,3 +70,40 @@ export function abgeschlossenerMonat(heute) {
   if (!ym) throw new Error('Ungültiges Datum');
   return monatPlus(ym, -1);
 }
+
+// Urlaub, Gleitzeit, Krank, Abwesend – wie in üblichen Betrieben (Vorgabe Karl 07.11.2026):
+// - Urlaub:    Das Büro trägt die Stunden des Tages ein (Spalte „Stunden Urlaub/Gleitzeit“).
+//              Bezahlt – zählt auf dem Stundenzettel zur Monatssumme.
+// - Gleitzeit: Das Büro trägt die Stunden ein. Freizeitausgleich aus dem Zeitkonto – steht auf dem
+//              Stundenzettel, zählt aber NICHT zur Monatssumme (die Stunden wurden schon gearbeitet,
+//              sonst wären sie doppelt bezahlt).
+// - Krank:     nur der Tag, keine Stunden („–“) – die Lohnfortzahlung rechnet das Lohnbüro.
+// - Abwesend und jede andere Art: nur der Tag, keine Stunden („–“).
+// Stunden gelten genau so, wie eingetragen (ganze Minuten, kein 15-Minuten-Takt, z. B. 7:42).
+// Von/Bis einer Abwesenheit ist nur das Zeitfenster und zählt nie. Keine Art zählt je zu den
+// geplanten, verplanten oder verkauften Stunden. Ob eine Zeile eine Abwesenheit ist (eigene Zeile
+// ohne Klient), prüft der Aufrufer (api/_zeitkonto.js, src/App.tsx).
+export const ABWESENHEIT_STUNDEN_FELD = 'Stunden Urlaub/Gleitzeit';
+export const ABWESENHEIT_STUNDEN_MAX_MIN = 24 * 60; // mehr als ein ganzer Tag ist ein Tippfehler
+export const ABWESENHEIT_MIT_STUNDEN = ['Urlaub', 'Gleitzeit']; // hier trägt das Büro Stunden ein
+export const ABWESENHEIT_BEZAHLT = ['Urlaub'];                  // diese Stunden zählen zur Monatssumme
+
+const artText = (a) => String(a || '').trim();
+/** Trägt das Büro für diese Art Stunden ein (Urlaub, Gleitzeit)? */
+export const abwesenheitMitStunden = (a) => ABWESENHEIT_MIT_STUNDEN.includes(artText(a));
+/** Zählen die Stunden dieser Art zur Monatssumme (nur Urlaub)? */
+export const abwesenheitBezahlt = (a) => ABWESENHEIT_BEZAHLT.includes(artText(a));
+
+/**
+ * Stunden eines Abwesenheitstags laut Spalte „Stunden Urlaub/Gleitzeit“ (Airtable-Dauer in Sekunden).
+ * @param {object} fields  Airtable-Felder der Dienstplan-Zeile
+ * @param {string} abwesenheitsArt  z. B. „Urlaub“, „Gleitzeit“, „Krank“
+ * @returns {number|null}  Minuten; null = Art ohne Stunden (Krank, Abwesend) oder nicht/ungültig eingetragen
+ */
+export function abwesenheitsMinuten(fields, abwesenheitsArt) {
+  if (!abwesenheitMitStunden(abwesenheitsArt)) return null;
+  const v = fields && typeof fields === 'object' ? fields[ABWESENHEIT_STUNDEN_FELD] : undefined;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+  const min = Math.round(v / 60);
+  return min <= ABWESENHEIT_STUNDEN_MAX_MIN ? min : null;
+}

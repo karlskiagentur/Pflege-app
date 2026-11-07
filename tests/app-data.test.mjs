@@ -129,8 +129,10 @@ test('alle übrigen Felder bleiben unverändert erhalten', async () => {
   assert.ok('Notiz_Intern' in BESUCH.fields);
 });
 
-test('Urlaub/Abwesenheit einer Pflegekraft geht nie an Klienten (nur Mitarbeiter-App)', async () => {
-  const mitUrlaub = { ...BESUCH, fields: { ...BESUCH.fields, 'Abwesend/Urlaub': 'Urlaub' } };
+test('Urlaub/Gleitzeit/Krank einer Pflegekraft und ihre Stunden gehen nie an Klienten (nur Mitarbeiter-App)', async () => {
+  const mitUrlaub = { ...BESUCH, fields: {
+    ...BESUCH.fields, 'Abwesend/Urlaub': 'Urlaub', 'Stunden Urlaub/Gleitzeit': 8 * 3600, Urlaubsantrag: 'recAntragTest0001',
+  } };
   airtableAttrappe(async (a) => {
     if (a.tabelle === T.PATIENTEN && a.methode === 'GET') return antwort(200, { records: a.formel.includes(TOKEN) ? [patient(frisch())] : [] });
     if (a.tabelle === T.PATIENTEN) return antwort(200, { id: PID });
@@ -142,9 +144,13 @@ test('Urlaub/Abwesenheit einer Pflegekraft geht nie an Klienten (nur Mitarbeiter
   assert.equal(res.statusCode, 200);
   const b = res.body.data.besuche[0];
   assert.equal('Abwesend/Urlaub' in b.fields, false);
+  assert.equal('Stunden Urlaub/Gleitzeit' in b.fields, false);
+  assert.equal('Urlaubsantrag' in b.fields, false);
   assert.equal(JSON.stringify(res.body).includes('Urlaub'), false);
+  assert.equal(JSON.stringify(res.body).includes('recAntragTest0001'), false);
   assert.equal(b.fields['Tätigkeit'], 'Grundpflege');
-  assert.deepEqual(NUR_MITARBEITER_FELDER.besuch, ['Abwesend/Urlaub']);
+  assert.deepEqual(NUR_MITARBEITER_FELDER.besuch, ['Abwesend/Urlaub', 'Stunden Urlaub/Gleitzeit']);
+  assert.ok(INTERNE_FELDER.besuch.includes('Urlaubsantrag'));
   assert.ok('Abwesend/Urlaub' in mitUrlaub.fields, 'Original darf nicht verändert werden');
 });
 
