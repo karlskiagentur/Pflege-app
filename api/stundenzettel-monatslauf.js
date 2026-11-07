@@ -42,10 +42,11 @@ export default async function handler(req, res) {
     const personal = await fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Aktiv');
     const aktive = personal.filter((p) => p.fields && p.fields.Aktiv);
 
-    // Nur wer im Zeitraum mindestens einen (nicht abgesagten) Einsatz im Dienstplan hatte,
-    // bekommt einen Stundenzettel (sonst entstünden 0-Stunden-Zettel für alle, die noch
-    // nicht über den digitalen Dienstplan laufen). Grob über {Monat} (der Zeitraum berührt
-    // höchstens zwei Kalendermonate), genau über das Datum.
+    // Nur wer im Zeitraum mindestens eine (nicht abgesagte) Zeile im Dienstplan hatte, bekommt
+    // einen Stundenzettel (sonst entstünden 0-Stunden-Zettel für alle, die noch nicht über den
+    // digitalen Dienstplan laufen). Eine Urlaubs-/Krankzeile zählt dabei mit: Ihre eingetragenen
+    // Stunden werden bezahlt und stehen auf dem Zettel – auch in einem Monat ganz ohne Einsatz.
+    // Grob über {Monat} (der Zeitraum berührt höchstens zwei Kalendermonate), genau über das Datum.
     const monate = [...new Set([zeitraum.von.slice(0, 7), zeitraum.bis.slice(0, 7)])];
     const formel = `AND(OR(${monate.map((m) => `{Monat} = '${esc(m)}'`).join(', ')}), {Status} != 'Abgesagt')`;
     const einsaetze = await fetchAll(

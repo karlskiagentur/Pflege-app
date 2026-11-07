@@ -7,7 +7,7 @@ import { airtableAttrappe, antwort, antwortObjekt, pdfTexte } from './_hilfen.mj
 import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
   NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst, besucheFormel,
-  ABWESENHEIT_TITEL, abwesenheitZeilen, abwesenheitText,
+  ABWESENHEIT_TITEL, abwesenheitZeilen, abwesenheitSummen, summeNotiz,
 } from '../api/stundenzettel.js';
 import { abrechnungszeitraum } from '../api/_abrechnung.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
@@ -409,7 +409,7 @@ test('Erläuterung und Hinweis: vollständig darstellbar, Regel "nur Bestätigte
   // Regel seit 30.10.2026: ohne Bestätigung nichts berechnet, kein Soll-Ersatz
   assert.ok(ERLAEUTERUNG.some((s) => /ohne bestätigte Ist-Zeit werden nicht berechnet – auch keine Kunden-Anfahrt/.test(s)));
   assert.ok(ERLAEUTERUNG.some((s) => s.includes(`„${NICHT_BESTAETIGT_TITEL}“`)));
-  assert.match(HINWEIS, /bezahlt wird nur die bestätigte Ist-Zeit/);
+  assert.match(HINWEIS, /bezahlt: bestätigte Ist-Zeit \+ Kunden-Anfahrt \+ eingetragener Urlaub ·/);
   assert.ok(![HINWEIS, ...ERLAEUTERUNG].some((s) => /Soll-Zeit wurde angerechnet|\*/.test(s)));
   // Layout: Hinweis (8 pt) und längster Summen-Hinweis (9 pt fett) passen zwischen die Ränder (A4, Rand 50)
   const doc = await PDFDocument.create();
@@ -420,86 +420,154 @@ test('Erläuterung und Hinweis: vollständig darstellbar, Regel "nur Bestätigte
   assert.ok(fett.widthOfTextAtSize(pdfText(nichtBestaetigtText({ ohneIst: 999, ohneIstSollMin: 99 * 60 + 45 })), 9) <= breite);
 });
 
-// ---------------------------------------------------------------- Urlaub / Abwesenheit (06.11.2026)
-test('Urlaub/Abwesenheit: eigene Zeilen (ganztägig, mit Zeit, mit Grund) und Hinweis im Summenblock', () => {
+// ---------------------------------------------------------------- Urlaub / Gleitzeit / Krank / Abwesenheit (06./07.11.2026)
+// Wie in üblichen Betrieben (Vorgabe Karl 07.11.2026): Urlaub mit den eingetragenen Stunden zählt zur
+// Monatssumme; Gleitzeit steht in Klammern da (Zeitkonto, zählt nicht); Krank und Abwesend sind nur
+// der Tag mit „–“ – nie eine Zahl (Lohnfortzahlung rechnet das Lohnbüro).
+test('Urlaub/Gleitzeit/Krank/Abwesenheit: eigene Zeilen und Summenzeilen je Art', () => {
   const nachweis = { abwesenheiten: [
-    { datum: '2026-11-09', art: 'Urlaub', grund: '', von: '', bis: '', min: null },
-    { datum: '2026-11-10', art: 'Urlaub', grund: '', von: '06:00', bis: '12:00', min: 360 },
+    { datum: '2026-11-09', art: 'Urlaub', grund: '', von: '', bis: '', min: 480 },
+    { datum: '2026-11-10', art: 'Urlaub', grund: '', von: '06:00', bis: '12:00', min: null },
+    { datum: '2026-11-11', art: 'Krank', grund: '', von: '', bis: '', min: null },
     { datum: '2026-11-12', art: 'Abwesend', grund: 'Arzttermin', von: '10:00', bis: '', min: null },
+    { datum: '2026-11-13', art: 'Gleitzeit', grund: '', von: '', bis: '', min: 360 },
   ] };
   assert.deepEqual(abwesenheitZeilen(nachweis), [
-    { datum: '09.11.2026', fenster: 'ganztägig', soll: '–', ist: '–', klient: 'Urlaub' },
-    { datum: '10.11.2026', fenster: '06:00 – 12:00', soll: '6:00', ist: '–', klient: 'Urlaub' },
+    { datum: '09.11.2026', fenster: 'ganztägig', soll: '–', ist: '8:00', klient: 'Urlaub' },
+    { datum: '10.11.2026', fenster: '06:00 – 12:00', soll: '–', ist: '–', klient: 'Urlaub' }, // Zeitfenster zählt nicht
+    { datum: '11.11.2026', fenster: 'ganztägig', soll: '–', ist: '–', klient: 'Krank' },
     { datum: '12.11.2026', fenster: 'ab 10:00', soll: '–', ist: '–', klient: 'Abwesend · Arzttermin' },
+    { datum: '13.11.2026', fenster: 'ganztägig', soll: '–', ist: '(6:00)', klient: 'Gleitzeit' },
   ]);
-  assert.equal(abwesenheitText(nachweis), 'Urlaub: 2 Tage (6:00 Std.) · Abwesend: 1 Tag – nicht in der Monatssumme, Liste oben.');
-  assert.equal(abwesenheitText({ abwesenheiten: [{ datum: '2026-11-09', art: 'Urlaub', min: null }] }), 'Urlaub: 1 Tag – nicht in der Monatssumme, Liste oben.');
-  assert.equal(abwesenheitText({ abwesenheiten: [] }), '');
-  assert.equal(abwesenheitText(undefined), '');
+  assert.deepEqual(abwesenheitSummen(nachweis), [
+    { label: 'Urlaub (2 Tage)', anzeige: '8:00 Std.', notiz: 'davon 1 Tag ohne Stunden (0:00)', bezahlt: true },
+    { label: 'Gleitzeit (1 Tag)', anzeige: '(6:00 Std.)', notiz: 'Freizeitausgleich (Zeitkonto) – nicht in der Summe', bezahlt: false },
+    { label: 'Krank (1 Tag)', anzeige: '–', notiz: 'Lohnfortzahlung rechnet das Lohnbüro', bezahlt: false },
+    { label: 'Abwesend (1 Tag)', anzeige: '–', notiz: 'nicht in der Summe', bezahlt: false },
+  ]);
+  assert.equal(summeNotiz(nachweis), '= Ist + Kunden-Anfahrt + Urlaub');
+  // ohne Lücken: Urlaub „bezahlt, vom Büro eingetragen“; Gleitzeit ohne Stunden nennt die Lücke
+  assert.deepEqual(abwesenheitSummen({ abwesenheiten: [
+    { datum: '2026-11-14', art: 'Urlaub', min: 480 }, { datum: '2026-11-15', art: 'Gleitzeit', min: null },
+    { datum: '2026-11-16', art: 'Gleitzeit', min: null },
+  ] }).map((z) => [z.label, z.anzeige, z.notiz]), [
+    ['Urlaub (1 Tag)', '8:00 Std.', 'bezahlt, vom Büro eingetragen'],
+    ['Gleitzeit (2 Tage)', '(0:00 Std.)', 'Zeitkonto, nicht in der Summe; 2 Tage ohne Stunden (0:00)'],
+  ]);
+  assert.equal(summeNotiz({ abwesenheiten: [{ art: 'Krank', min: null }, { art: 'Gleitzeit', min: 60 }] }), '= Ist + Kunden-Anfahrt');
+  assert.equal(summeNotiz(undefined), '= Ist + Kunden-Anfahrt');
+  assert.deepEqual(abwesenheitSummen(undefined), []);
   assert.deepEqual(abwesenheitZeilen({}), []);
   assert.deepEqual(abwesenheitZeilen({ abwesenheiten: [{ datum: null, art: 'Urlaub', grund: '', von: '', bis: '', min: null }] }),
     [{ datum: '–', fenster: 'ganztägig', soll: '–', ist: '–', klient: 'Urlaub' }]);
 });
 
-test('Urlaub im Abrechnungszeitraum: eigene Liste im PDF, nicht in Summe, Einsätzen oder „nicht bestätigt“', async (t) => {
+const urlaub = (id, datum, extra = {}) => ({
+  id, fields: { Datum: datum, Monat: datum.slice(0, 7), Status: 'Geplant', Pfleger_ID: [MA], 'Abwesend/Urlaub': 'Urlaub', ...extra },
+});
+
+test('Urlaub, Gleitzeit und Krank im Abrechnungszeitraum: nur Urlaubsstunden zählen zur Monatssumme, Krank ohne Zahl', async (t) => {
   zeit(t, AM_05_12);
-  const urlaub = (id, datum, extra = {}) => ({
-    id, fields: { Datum: datum, Monat: datum.slice(0, 7), Status: 'Geplant', Pfleger_ID: [MA], 'Abwesend/Urlaub': 'Urlaub', ...extra },
-  });
   const { log } = szenario({
     monat: '2026-11',
     besuche: [
       besuch('2026-11-10', '08:00', '09:00'),
-      urlaub('recUrlaubTest00001', '2026-11-09', { 'Tätigkeit': 'Urlaub' }),           // ganztägig, Uhrzeit folgt später
-      urlaub('recUrlaubTest00002', '2026-11-11', { Von: '06:00', Bis: '12:00' }),      // Stunden nachgetragen
+      urlaub('recUrlaubTest00001', '2026-11-09', { 'Tätigkeit': 'Urlaub', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }),
+      urlaub('recUrlaubTest00002', '2026-11-11', { Von: '06:00', Bis: '12:00' }),                  // Zeitfenster, keine Stunden
+      urlaub('recUrlaubTest00004', '2026-11-12', { 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 6 * 3600 }), // Krank: nie eine Zahl
+      urlaub('recUrlaubTest00006', '2026-11-16', { 'Abwesend/Urlaub': 'Gleitzeit', 'Stunden Urlaub/Gleitzeit': 6 * 3600 + 30 * 60 }),
+      urlaub('recUrlaubTest00005', '2026-11-13', { Status: 'Abgesagt', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }), // abgesagt: zählt nie
     ],
   });
   const res = antwortObjekt();
   await handler(req(), res);
   assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-  assert.equal(res.body.summe, '1:00');
+  assert.equal(res.body.summe, '9:00'); // 1:00 Einsatz + 8:00 Urlaub – ohne Gleitzeit, ohne Krank
   assert.equal(res.body.einsaetze, 1);
   assert.equal(res.body.ohneIst, 0);
-  assert.equal(res.body.abwesenheiten, 2);
+  assert.equal(res.body.abwesenheiten, 4);
+  assert.equal(res.body.urlaubStunden, '8:00');
+  assert.equal(res.body.gleitzeitStunden, '6:30');
+  assert.equal(log.patches.at(-1).Summe_Stunden, '9:00');
   const texte = pdfTexte(Buffer.from(log.upload.file, 'base64'));
   const titel = texte.indexOf(ABWESENHEIT_TITEL);
-  assert.ok(titel > 0, 'Liste „Urlaub / Abwesenheit“ fehlt im PDF');
-  assert.deepEqual(texte.slice(titel + 1, titel + 11), [
-    '09.11.2026', 'ganztägig', '–', '–', 'Urlaub',
-    '11.11.2026', '06:00 – 12:00', '6:00', '–', 'Urlaub',
+  assert.ok(titel > 0, 'Liste „Urlaub / Gleitzeit / Krank / Abwesenheit“ fehlt im PDF');
+  assert.deepEqual(texte.slice(titel + 1, titel + 21), [
+    '09.11.2026', 'ganztägig', '–', '8:00', 'Urlaub',
+    '11.11.2026', '06:00 – 12:00', '–', '–', 'Urlaub',
+    '12.11.2026', 'ganztägig', '–', '–', 'Krank',
+    '16.11.2026', 'ganztägig', '–', '(6:30)', 'Gleitzeit',
   ]);
-  assert.ok(texte.includes('Urlaub: 2 Tage (6:00 Std.) – nicht in der Monatssumme, Liste oben.'));
+  assert.ok(!texte.includes('6:00') && !texte.includes('6:00 Std.'), 'Krank darf nie eine Zahl haben');
+  const pos = (label) => { const i = texte.indexOf(label); assert.ok(i > 0, `${label} fehlt`); return i; };
+  const zeile = (label) => texte.slice(pos(label), pos(label) + 3);
+  assert.deepEqual(zeile('Einsätze bestätigt (Ist)').slice(0, 2), ['Einsätze bestätigt (Ist)', '1:00 Std.']);
+  assert.deepEqual(zeile('Urlaub (2 Tage)'), ['Urlaub (2 Tage)', '8:00 Std.', 'davon 1 Tag ohne Stunden (0:00)']);
+  assert.deepEqual(zeile('Monatssumme (bezahlt)'), ['Monatssumme (bezahlt)', '9:00 Std.', '= Ist + Kunden-Anfahrt + Urlaub']);
+  assert.deepEqual(zeile('Gleitzeit (1 Tag)'), ['Gleitzeit (1 Tag)', '(6:30 Std.)', 'Freizeitausgleich (Zeitkonto) – nicht in der Summe']);
+  assert.deepEqual(zeile('Krank (1 Tag)'), ['Krank (1 Tag)', '–', 'Lohnfortzahlung rechnet das Lohnbüro']);
+  // Reihenfolge: Urlaub vor der Monatssumme, Gleitzeit und Krank danach (nur Information), dann Pausen
+  assert.ok(pos('Urlaub (2 Tage)') < pos('Monatssumme (bezahlt)'));
+  assert.ok(pos('Monatssumme (bezahlt)') < pos('Gleitzeit (1 Tag)') && pos('Gleitzeit (1 Tag)') < pos('Krank (1 Tag)'));
+  assert.ok(pos('Krank (1 Tag)') < pos('Pausen (unbezahlt)'));
   assert.ok(!texte.includes(NICHT_BESTAETIGT_TITEL), 'Urlaub darf nicht unter „nicht bestätigt“ stehen');
+  assert.ok(texte.includes(UNTERSCHRIFT_ROLLE));
 });
 
-test('Monat nur mit Urlaub: kein Fehler, Hinweis statt leerem Zettel', async (t) => {
+test('Monat nur mit Urlaub oder nur Krank: Urlaub mit Stunden wird bezahlt und unterschrieben, sonst 0:00 ohne Unterschrift', async (t) => {
   zeit(t, AM_05_12);
-  const { log } = szenario({
-    monat: '2026-11',
-    besuche: [{ id: 'recUrlaubTest00003', fields: { Datum: '2026-11-16', Monat: '2026-11', Status: 'Geplant', Pfleger_ID: [MA], 'Abwesend/Urlaub': 'Urlaub' } }],
-  });
-  const res = antwortObjekt();
-  await handler(req(), res);
-  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-  assert.equal(res.body.summe, '0:00');
-  assert.equal(res.body.einsaetze, 0);
-  assert.equal(res.body.abwesenheiten, 1);
-  const texte = pdfTexte(Buffer.from(log.upload.file, 'base64'));
-  assert.ok(texte.includes('Keine bestätigten Einsätze in diesem Monat.'));
-  assert.ok(texte.includes(ABWESENHEIT_TITEL));
+  const ein = (extra) => [urlaub('recUrlaubTest00003', '2026-11-16', extra)];
+  const lauf = async (besuche) => {
+    const s = szenario({ monat: '2026-11', besuche });
+    const res = antwortObjekt();
+    await handler(req(), res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    return { res, s, texte: pdfTexte(Buffer.from(s.log.upload.file, 'base64')) };
+  };
+  // Urlaub ohne eingetragene Stunden: 0:00, Lücke sichtbar, keine Unterschrift
+  let r = await lauf(ein({}));
+  assert.equal(r.res.body.summe, '0:00');
+  assert.equal(r.res.body.einsaetze, 0);
+  assert.equal(r.res.body.abwesenheiten, 1);
+  assert.ok(r.texte.includes('Keine bestätigten Einsätze in diesem Monat.'));
+  assert.ok(r.texte.includes(ABWESENHEIT_TITEL));
+  assert.ok(r.texte.includes('davon 1 Tag ohne Stunden (0:00)'));
+  assert.ok(!r.texte.includes(UNTERSCHRIFT_ROLLE), 'nichts zu bezahlen -> keine Unterschrift');
+  // Urlaub mit Stunden: bezahlt und unterschrieben
+  r = await lauf(ein({ 'Stunden Urlaub/Gleitzeit': 8 * 3600 }));
+  assert.equal(r.res.body.summe, '8:00');
+  assert.equal(r.s.log.patches.at(-1).Summe_Stunden, '8:00');
+  assert.ok(r.texte.includes('Urlaub (1 Tag)'));
+  assert.ok(r.texte.includes(UNTERSCHRIFT_ROLLE), 'bezahlter Urlaub -> Zettel wird unterschrieben');
+  // nur Krank (auch mit versehentlich eingetragenen Stunden): 0:00, „–“, keine Unterschrift
+  r = await lauf(ein({ 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }));
+  assert.equal(r.res.body.summe, '0:00');
+  assert.ok(r.texte.includes('Krank (1 Tag)'));
+  assert.ok(!r.texte.includes('8:00') && !r.texte.includes('8:00 Std.'));
+  assert.ok(!r.texte.includes(UNTERSCHRIFT_ROLLE));
 });
 
-test('Erläuterung erklärt Urlaub/Abwesenheit; Texte darstellbar und passen in die Breite', async () => {
-  const satz = ERLAEUTERUNG.find((z) => z.startsWith('Urlaub / Abwesenheit:'));
-  assert.ok(satz, 'Erläuterung zu Urlaub/Abwesenheit fehlt');
-  assert.match(satz, /nicht in der Monatssumme enthalten/);
+test('Erläuterung erklärt Urlaub, Gleitzeit, Krank; Texte darstellbar und passen in die Breite', async () => {
+  const satz = ERLAEUTERUNG.find((z) => z.startsWith('Urlaub, Gleitzeit, Krank, Abwesenheit:'));
+  assert.ok(satz, 'Erläuterung zu Urlaub/Gleitzeit/Krank fehlt');
+  assert.match(satz, /Urlaub: bezahlt werden die Stunden, die das Büro einträgt – sie zählen zur Monatssumme/);
+  assert.match(satz, /Gleitzeit: Freizeitausgleich aus dem Zeitkonto – die Stunden stehen in Klammern da und zählen nicht zur Monatssumme/);
+  assert.match(satz, /Krank: nur der Tag \(„–“\), keine Stunden – die Lohnfortzahlung rechnet das Lohnbüro/);
+  assert.ok(!ERLAEUTERUNG.some((z) => /nicht in der Monatssumme enthalten|Stunden Urlaub\/Krank/.test(z)), 'alte Regel steht noch in der Erläuterung');
   assert.equal(pdfText(ABWESENHEIT_TITEL), ABWESENHEIT_TITEL);
-  const lang = abwesenheitText({ abwesenheiten: [
-    ...Array.from({ length: 23 }, (_, i) => ({ datum: `2026-11-${String(i + 1).padStart(2, '0')}`, art: 'Urlaub', min: 480 })),
-    { datum: '2026-11-24', art: 'Abwesend', min: 120 },
-  ] });
-  assert.equal(pdfText(lang), lang);
   const doc = await PDFDocument.create();
+  const normal = await doc.embedFont(StandardFonts.Helvetica);
   const fett = await doc.embedFont(StandardFonts.HelveticaBold);
-  assert.ok(fett.widthOfTextAtSize(lang, 9) <= 595.28 - 2 * 50, 'Summen-Hinweis Urlaub zu breit');
+  assert.ok(fett.widthOfTextAtSize(pdfText(ABWESENHEIT_TITEL), 10) <= 595.28 - 2 * 50, 'Titel zu breit');
+  // Summenzeilen: Notizen rechts (ab x=312, 8 pt), Beschriftung links vor dem Betrag (rechtsbündig bei x=300)
+  const viele = { abwesenheiten: ['Urlaub', 'Gleitzeit', 'Krank', 'Abwesend', 'Sonderurlaub'].flatMap((art) =>
+    Array.from({ length: 31 }, (_, i) => ({ datum: `2026-12-${String(i + 1).padStart(2, '0')}`, art, min: i % 2 ? 480 : null }))) };
+  const notizBreite = 595.28 - 50 - 312;
+  assert.ok(normal.widthOfTextAtSize(pdfText(summeNotiz(viele)), 8) <= notizBreite, 'Summen-Notiz zu breit');
+  for (const z of abwesenheitSummen(viele)) {
+    assert.equal(pdfText(z.label), z.label);
+    assert.equal(pdfText(z.notiz), z.notiz);
+    assert.ok(normal.widthOfTextAtSize(pdfText(z.notiz), 8) <= notizBreite, `Notiz zu breit: ${z.notiz}`);
+    assert.ok(normal.widthOfTextAtSize(z.label, 10) + normal.widthOfTextAtSize('(999:59 Std.)', 10) + 6 <= 300 - 50, `Beschriftung zu breit: ${z.label}`);
+  }
 });

@@ -377,9 +377,11 @@ test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zäh
     besuch('rec0000000000021', { Datum: '2026-11-09', Von: '08:00', Bis: '09:00' }),
     abwesend('rec0000000000022', { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', 'Tätigkeit': 'Urlaub' }),
     abwesend('rec0000000000023', { Datum: '2026-11-10', Von: '06:00', Bis: '12:00', 'Abwesend/Urlaub': 'Abwesend', 'Tätigkeit': 'Fortbildung' }),
-    abwesend('rec0000000000024', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt' }),
+    abwesend('rec0000000000024', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }),
+    abwesend('rec0000000000025', { Datum: '2026-11-12', 'Abwesend/Urlaub': 'Gleitzeit', 'Stunden Urlaub/Gleitzeit': 7 * 3600 + 42 * 60 }),
+    abwesend('rec0000000000026', { Datum: '2026-11-13', 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }), // Krank: nie Stunden
   ], w);
-  const [mo, di, mi] = plan.tage;
+  const [mo, di, mi, don, fr] = plan.tage;
   assert.deepEqual(mo.eintraege.map((e) => [e.id, e.zeit, e.klient, e.taetigkeit, e.adresse, e.abwesenheit]), [
     ['rec0000000000022', 'ganztägig', 'Urlaub', '', '', 'Urlaub'],
     ['rec0000000000021', '08:00 – 09:00', 'Erika Musterfrau', 'Unterstützung', '', ''],
@@ -390,18 +392,30 @@ test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zäh
   assert.deepEqual(di.eintraege.map((e) => [e.zeit, e.klient, e.taetigkeit]), [['06:00 – 12:00', 'Abwesend', 'Fortbildung']]);
   assert.equal(di.einsaetze, 0);
   assert.equal(di.planMin, 0);
-  assert.equal(di.abwesenheitMin, 360);
+  // Seit 07.11.2026: Stunden nur aus „Stunden Urlaub/Gleitzeit“ (Von/Bis ist nur das Zeitfenster)
+  assert.equal(di.abwesenheitMin, 0);
+  assert.equal(don.einsaetze, 0);
+  assert.equal(don.planMin, 0, 'eingetragene Gleitzeit zählt nie zur geplanten Zeit');
+  assert.equal(don.abwesenheitMin, 462);
+  assert.deepEqual(don.abwesenheiten, ['Gleitzeit']);
+  assert.equal(fr.planMin, 0);
+  assert.equal(fr.abwesenheitMin, 0, 'Krank hat nie Stunden – auch wenn versehentlich etwas eingetragen ist');
+  assert.deepEqual(fr.abwesenheiten, ['Krank']);
   // vom Büro wieder abgesagter Urlaub: bleibt durchgestrichen sichtbar, zählt nicht
   assert.deepEqual(mi.eintraege.map((e) => [e.klient, e.abgesagt, e.hinweise.map((h) => h.text)]), [['Urlaub', true, ['Abgesagt']]]);
   assert.deepEqual(mi.abwesenheiten, []);
+  assert.equal(mi.abwesenheitMin, 0, 'abgesagter Urlaub: auch seine Stunden zählen nicht');
   assert.equal(plan.summen.einsaetze, 1);
   assert.equal(plan.summen.planMin, 60);
   assert.equal(plan.summen.ohneDauer, 0, 'Urlaub ohne Uhrzeit ist kein „Einsatz ohne Dauer“');
   assert.deepEqual(plan.summen.abwesenheiten, [
     { datum: '2026-11-09', art: 'Urlaub', min: null },
-    { datum: '2026-11-10', art: 'Abwesend', min: 360 },
+    { datum: '2026-11-10', art: 'Abwesend', min: null },
+    { datum: '2026-11-12', art: 'Gleitzeit', min: 462 },
+    { datum: '2026-11-13', art: 'Krank', min: null },
   ]);
-  assert.equal(abwesenheitNotiz(plan), 'Abwesenheit: Mo 09.11. Urlaub, Di 10.11. Abwesend (6:00 Std.) – kein Einsatz, nicht in der geplanten Zeit.');
+  assert.equal(abwesenheitNotiz(plan),
+    'Abwesenheit: Mo 09.11. Urlaub, Di 10.11. Abwesend, Do 12.11. Gleitzeit (7:42 Std.), Fr 13.11. Krank – kein Einsatz, nicht in der geplanten Zeit (Stunden siehe Stundenzettel).');
   assert.equal(abwesenheitNotiz(wochenplan([], w)), '');
   assert.equal(abwesenheitNotiz(undefined), '');
 });
@@ -442,10 +456,12 @@ test('PDF: Urlaub steht am Tag, im Tageskopf und unter der Wochensumme; Legende 
   assert.ok(texte.includes('Woche gesamt: 1 Einsatz · geplante Zeit 1:00 Std.'));
   assert.ok(texte.includes('Abwesenheit: Mo 09.11. Urlaub – kein Einsatz, nicht in der geplanten Zeit.'));
   assert.equal(LEGENDE.length, 3);
-  assert.ok(LEGENDE[2].startsWith('Urlaub/Abwesend: vom Büro eingetragen – kein Einsatz'));
+  assert.ok(LEGENDE[2].startsWith('Urlaub/Gleitzeit/Krank/Abwesend: vom Büro eingetragen – kein Einsatz, zählt nie zur geplanten Zeit'));
+  assert.match(LEGENDE[2], /eingetragene Stunden stehen nur auf dem Stundenzettel/);
 });
 
-test('Endpoint: liest die Spalte „Abwesend/Urlaub“ und den Klient-Link mit', () => {
+test('Endpoint: liest die Spalten „Abwesend/Urlaub“, „Stunden Urlaub/Gleitzeit“ und den Klient-Link mit', () => {
   assert.ok(BESUCHE_FELDER.includes('Abwesend/Urlaub'));
+  assert.ok(BESUCHE_FELDER.includes('Stunden Urlaub/Gleitzeit'));
   assert.ok(BESUCHE_FELDER.includes('Patient'));
 });

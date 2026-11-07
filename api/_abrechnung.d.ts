@@ -16,3 +16,15 @@ export declare function imZeitraum(datum: unknown, zeitraum: Zeitraum | null | u
 export declare function zeitraumText(zeitraum: Zeitraum): string;
 export declare function ersterTagDesZeitraums(heute: string): boolean;
 export declare function abgeschlossenerMonat(heute: string): string;
+
+/** Spalte mit den Stunden eines Urlaubs- oder Gleitzeittags. */
+export declare const ABWESENHEIT_STUNDEN_FELD: string;
+export declare const ABWESENHEIT_STUNDEN_MAX_MIN: number;
+/** Arten, für die das Büro Stunden einträgt (Urlaub, Gleitzeit). */
+export declare const ABWESENHEIT_MIT_STUNDEN: string[];
+/** Arten, deren Stunden zur Monatssumme zählen (Urlaub). */
+export declare const ABWESENHEIT_BEZAHLT: string[];
+export declare function abwesenheitMitStunden(art: unknown): boolean;
+export declare function abwesenheitBezahlt(art: unknown): boolean;
+/** Minuten laut „Stunden Urlaub/Gleitzeit“; null = Art ohne Stunden oder nicht (gültig) eingetragen. */
+export declare function abwesenheitsMinuten(fields: unknown, abwesenheitsArt: unknown): number | null;

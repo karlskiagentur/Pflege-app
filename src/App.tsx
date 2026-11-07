@@ -20,7 +20,7 @@ import {
   gesehenErgaenzen, datumMs, anzeigeZeit, type PushZiel, type EinsatzMarke,
 } from './neuigkeiten';
 // Abrechnungszeitraum (27. bis 26.) – dieselbe Regel wie Stundenzettel und Monatslauf auf dem Server.
-import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText } from '../api/_abrechnung';
+import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText, abwesenheitsMinuten, abwesenheitBezahlt } from '../api/_abrechnung';
 
 // Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
 const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
@@ -205,6 +205,12 @@ const zeitpunktMs = (t: any): number => {
 // Vom Büro wieder abgesagt (Status „Abgesagt“) - gleiche Regel wie bei Einsätzen in der App.
 const abwesenheitAbgesagt = (t: any) => getValue(t, 'Status') === 'Abgesagt';
 
+// Stunden eines Urlaubs- oder Gleitzeittags in Minuten (Spalte „Stunden Urlaub/Gleitzeit“, vom Büro
+// eingetragen); null = Krank/Abwesend (nie Stunden) oder nicht eingetragen. Gleiche Regel wie der
+// Stundenzettel (api/_abrechnung.js) - Von/Bis einer Abwesenheit ist nur das Zeitfenster.
+const abwesenheitsStundenMin = (t: any): number | null =>
+  abwesenheitVon(t) ? abwesenheitsMinuten(t && t.fields ? t.fields : t, abwesenheitVon(t)) : null;
+
 function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompakt?: boolean; marke?: React.ReactNode }) {
   const art = abwesenheitVon(t);
   const grund = abwesenheitsGrundVon(t);
@@ -212,6 +218,10 @@ function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompak
   const von = getValue(t, 'Von');
   const bis = getValue(t, 'Bis');
   const zeit = von && bis ? `${von} – ${bis} Uhr` : von ? `ab ${von} Uhr` : 'ganztägig';
+  // vom Büro eingetragene Stunden (nur Urlaub/Gleitzeit, z. B. „8:00 Std.“) – Krank: nie eine Zahl
+  const stundenMin = abwesenheitsStundenMin(t);
+  const stunden = !abgesagt && stundenMin ? `${stdMin(stundenMin * 60)} Std.` : '';
+  const stundenLang = abwesenheitBezahlt(art) ? `Auf dem Stundenzettel: ${stunden}` : `${stunden} aus dem Zeitkonto`;
   const ms = zeitpunktMs(t);
   const datum = Number.isFinite(ms) ? new Date(ms).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }) : '';
   const rahmen = abgesagt ? 'bg-gray-50 border border-gray-200' : 'bg-[#EAF2FB] border border-[#C9DDF2]';
@@ -226,7 +236,7 @@ function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompak
           </div>
           <div className={`flex-1 border-l pl-3 text-left ${abgesagt ? 'border-gray-200' : 'border-[#C9DDF2]'}`}>
             <p className={`text-sm font-black ${artFarbe}`}>{art}</p>
-            <p className="text-xs text-gray-500">{grund ? `${grund} · ${zeit}` : zeit}</p>
+            <p className="text-xs text-gray-500">{[grund, zeit, stunden].filter(Boolean).join(' · ')}</p>
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
             {marke}
@@ -243,6 +253,7 @@ function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompak
         <p className={`text-[11px] font-black uppercase tracking-wide ${abgesagt ? 'text-gray-400' : 'text-[#335F8F]'}`}>{zeit}</p>
         <p className={`font-black text-2xl mt-1 ${abgesagt ? 'text-gray-400 line-through' : 'text-[#3A3A3A]'}`}>{art}</p>
         {grund && <p className="text-sm text-gray-500 mt-1">{grund}</p>}
+        {stunden && <p className="text-sm font-bold text-[#335F8F] mt-1">{stundenLang}</p>}
         <p className="text-sm text-gray-500 mt-3">{abgesagt ? 'Vom Büro abgesagt.' : 'Kein Einsatz – vom Büro eingetragen.'}</p>
       </div>
     </div>
@@ -1717,19 +1728,28 @@ export default function App() {
     const zeitZeitraumLabel = zeitraumText(zeitZeitraum);
     // Nur ERFASSTE Einsätze zählen (Erledigt_Am gesetzt + Dauer_Ist vorhanden);
     // geplante Termine erscheinen nicht. Zuordnung über das Datum des Einsatzes.
-    // Urlaub/Abwesenheit ist nie Arbeitszeit - wie auf dem Stundenzettel (api/_zeitkonto.js, Regel 5).
+    // Urlaub/Krank/Abwesenheit ist nie Arbeitszeit - wie auf dem Stundenzettel (api/_zeitkonto.js, Regel 5).
+    const zeitReihenfolge = (a: any, b: any) => {
+      const ka = `${getValue(a, 'Datum') || ''} ${getValue(a, 'Von') || formatTime(getValue(a, 'Uhrzeit'))}`;
+      const kb = `${getValue(b, 'Datum') || ''} ${getValue(b, 'Von') || formatTime(getValue(b, 'Uhrzeit'))}`;
+      return ka.localeCompare(kb);
+    };
     const zeitEinsaetze = (zeitTermine || [])
       .filter((t) => !abwesenheitVon(t))
       .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
+      .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum));
+    // Vom Büro eingetragene Urlaubsstunden („Stunden Urlaub/Gleitzeit“) zählen wie auf dem
+    // Stundenzettel zur Summe (Vorgabe 07.11.2026): nur bezahlter Urlaub (nicht Gleitzeit/Krank),
+    // nicht abgesagt, im Zeitraum und - wie auf dem Zettel - erst, wenn der Tag vorbei ist.
+    const zeitAbwesenheiten = (zeitTermine || [])
+      .filter((t) => abwesenheitBezahlt(abwesenheitVon(t)) && !abwesenheitAbgesagt(t) && (abwesenheitsStundenMin(t) || 0) > 0)
       .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum))
-      .sort((a, b) => {
-        const ka = `${getValue(a, 'Datum') || ''} ${getValue(a, 'Von') || formatTime(getValue(a, 'Uhrzeit'))}`;
-        const kb = `${getValue(b, 'Datum') || ''} ${getValue(b, 'Von') || formatTime(getValue(b, 'Uhrzeit'))}`;
-        return ka.localeCompare(kb);
-      });
-    const zeitSummeSec = zeitEinsaetze.reduce((s, t) => s + (Number(getValue(t, 'Dauer_Ist')) || 0), 0);
+      .filter((t) => String(getValue(t, 'Datum') || '').slice(0, 10) < zeitHeute);
+    const zeitZeilen = [...zeitEinsaetze, ...zeitAbwesenheiten].sort(zeitReihenfolge);
+    const zeitSummeSec = zeitEinsaetze.reduce((s, t) => s + (Number(getValue(t, 'Dauer_Ist')) || 0), 0)
+      + zeitAbwesenheiten.reduce((s, t) => s + (abwesenheitsStundenMin(t) || 0) * 60, 0);
     const zeitTage: { datum: string; rows: any[] }[] = [];
-    for (const t of zeitEinsaetze) {
+    for (const t of zeitZeilen) {
       const d = String(getValue(t, 'Datum') || getValue(t, 'Uhrzeit') || '').slice(0, 10);
       const g = zeitTage.find((x) => x.datum === d);
       if (g) g.rows.push(t); else zeitTage.push({ datum: d, rows: [t] });
@@ -2164,7 +2184,13 @@ export default function App() {
                           <p className="text-[11px] font-black uppercase text-gray-400 mb-2">
                             {new Date(`${tag.datum}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' })}
                           </p>
-                          {tag.rows.map((t) => (
+                          {tag.rows.map((t) => (abwesenheitVon(t) ? (
+                            // bezahlter Urlaub: Art + vom Büro eingetragene Stunden (kein Einsatz)
+                            <div key={t.id} className="flex items-center justify-between py-1.5 border-t border-gray-50 first:border-t-0">
+                              <p className="text-sm font-bold text-[#335F8F]">{abwesenheitVon(t)}</p>
+                              <p className="text-sm font-black text-[#335F8F]">{stdMin((abwesenheitsStundenMin(t) || 0) * 60)} Std.</p>
+                            </div>
+                          ) : (
                             <div key={t.id} className="flex items-center justify-between py-1.5 border-t border-gray-50 first:border-t-0">
                               <p className="text-sm text-gray-600">
                                 {getValue(t, 'Von') && getValue(t, 'Bis')
@@ -2173,7 +2199,7 @@ export default function App() {
                               </p>
                               <p className="text-sm font-black text-[#3A3A3A]">{stdMin(getValue(t, 'Dauer_Ist'))} Std.</p>
                             </div>
-                          ))}
+                          )))}
                         </div>
                       ))
                     )}
