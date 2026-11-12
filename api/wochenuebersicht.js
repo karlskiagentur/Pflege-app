@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
 import { wochenBereich, wocheZuDatum, BESUCHE_FELDER } from './_dienstplan.js';
-import { baueWoche, erstelleWochenuebersichtPdf } from './_wochenuebersicht.js';
+import { baueWoche, erstelleWochenuebersichtPdf, mitVollemNamen, NAME_VOLLSTAENDIG_FELD } from './_wochenuebersicht.js';
 import { neuesteZuerst } from './stundenzettel.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN Session-Token-Flow:
@@ -60,8 +60,18 @@ export default async function handler(req, res) {
       fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Name&fields%5B%5D=Aktiv'),
     ]);
 
+    // Vollständiger Name der Klienten (Feld „Name vollständig“) – nur dieses eine Feld, nur
+    // gelesen, nur für dieses Blatt. Scheitert die Abfrage, entsteht das Blatt trotzdem (dann
+    // mit dem Namen aus dem Dienstplan) und der Betreiber bekommt einen Alarm.
+    let patienten = [];
+    try {
+      patienten = (await fetchAll(TABLES.PATIENTEN, `fields%5B%5D=${encodeURIComponent(NAME_VOLLSTAENDIG_FELD)}`)) || [];
+    } catch (e) {
+      try { reportError('api/wochenuebersicht', 'Feld "Name vollständig" nicht lesbar - Blatt mit dem Namen aus dem Dienstplan erzeugt', { status: e && e.status }); } catch (_) { /* Alarm darf das Blatt nicht verhindern */ }
+    }
+
     const jetzt = Date.now();
-    const daten = baueWoche(besuche, personal, bereich, jetzt);
+    const daten = baueWoche(mitVollemNamen(besuche, patienten), personal, bereich, jetzt);
     const stand = new Date(jetzt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
       timeZone: 'Europe/Berlin',

@@ -113,6 +113,17 @@ test('interne Felder werden nicht an das Gerät übertragen', async () => {
   assert.equal('Login_Code' in d.patienten_daten.fields, false);
 });
 
+test('vollständiger Klientenname (Wochendienstplan) geht nie an die App - auch nicht umbenannt', async () => {
+  const p = patient(veraltet());
+  p.fields['Name vollständig'] = 'Erika Mustermann';
+  p.fields['Vollstaendiger Name'] = 'Erika Mustermann';   // umbenannt/ähnlich: Namensmuster greift
+  standard(p);
+  const res = antwortObjekt();
+  await handler(anfrage({ token: TOKEN }), res);
+  assert.equal(res.statusCode, 200);
+  assert.ok(!JSON.stringify(res.body).includes('Mustermann'), 'voller Name darf nicht in der Antwort stehen');
+});
+
 test('alle übrigen Felder bleiben unverändert erhalten', async () => {
   const p = patient(veraltet());
   standard(p);

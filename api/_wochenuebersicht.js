@@ -67,20 +67,40 @@ const feldText = (v) => {
 // Hervorhebung des Büros: Neu/Geändert/Zusatz = markiert (gelb), Storniert = abgesagt.
 const MARKIERT = ['Neu', 'Geändert', 'Zusatz'];
 
+// Feld der Klienten-Tabelle mit dem vollständigen Namen NUR für dieses Blatt (ID fldcwttUCVJCSCRni).
+// Es geht nie an eine App: api/app-data.js sperrt es (INTERNE_FELDER.patient + Namensmuster).
+export const NAME_VOLLSTAENDIG_FELD = 'Name vollständig';
+
 /**
- * Klientenname fürs Blatt: „Fr. Müller“ / „Hr. Müller“, wenn eine Anrede mitkommt
- * (Lookup auf dem Besuch), sonst der volle Patient_Name. Mehr Daten als der Name
- * stehen bewusst nicht auf dem Blatt.
+ * Klientenname fürs Blatt: der vollständige Name aus „Name vollständig“ (pflegt das Büro in der
+ * Klienten-Tabelle), sonst der Name, den auch der Dienstplan zeigt (Patient_Name). Die Apps
+ * bleiben davon unberührt – sie zeigen weiter nur Patient_Name.
  */
 export function klientName(fields) {
   const f = fields || {};
-  const voll = feldText(f.Patient_Name).trim();
-  const anrede = feldText(f.Anrede_Klient || f.Anrede).trim();
-  if (!voll) return '';
-  const kurz = { Frau: 'Fr.', Herr: 'Hr.' }[anrede];
-  if (!kurz) return voll;
-  const nachname = voll.split(/\s+/).filter(Boolean).pop();
-  return nachname ? `${kurz} ${nachname}` : voll;
+  return feldText(f.Name_Vollstaendig).trim() || feldText(f.Patient_Name).trim();
+}
+
+/**
+ * Ergänzt an jedem Besuch den vollständigen Namen des verknüpften Klienten (Feld „Patient“ =
+ * Verknüpfung). Rein lesend: Die Besuche-Tabelle bekommt KEIN neues Feld, die Apps sehen davon
+ * nichts. Gibt neue Records zurück (Originale bleiben unverändert).
+ * @param {Array<{id?: string, fields: object}>} besuche
+ * @param {Array<{id: string, fields: object}>} patienten  Klienten mit Feld „Name vollständig“
+ */
+export function mitVollemNamen(besuche, patienten) {
+  const namen = new Map();
+  for (const p of patienten || []) {
+    const n = feldText(p && p.fields && p.fields[NAME_VOLLSTAENDIG_FELD]).trim();
+    if (p && p.id && n) namen.set(String(p.id), n);
+  }
+  return (besuche || []).map((r) => {
+    const f = (r && r.fields) || {};
+    const link = Array.isArray(f.Patient) ? f.Patient[0] : f.Patient;
+    const id = String((link && typeof link === 'object' ? link.id : link) || '');
+    const n = namen.get(id);
+    return n ? { ...r, fields: { ...f, Name_Vollstaendig: n } } : r;
+  });
 }
 
 /**

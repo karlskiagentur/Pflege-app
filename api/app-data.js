@@ -11,6 +11,7 @@ export const INTERNE_FELDER = {
     'Login_Code', 'Session_Token', 'Failed_Attempts', 'Locked_Until', // Zugang & Sperre
     'Push_Subscription', 'invite_qr', 'invite_requested',              // Systemfelder
     'Geo_Lat', 'Geo_Lng', 'Geo_Adresse', 'Zuletzt_aktiv',               // interne Auswertung
+    'Name vollständig',                                                 // voller Name NUR für den gedruckten Wochendienstplan
   ],
   besuch: [
     'Notiz_Intern', 'Hervorhebung', 'Plan_Tag_Key',                     // interne Dienstplanung
@@ -32,6 +33,14 @@ export const INTERNE_FELDER = {
 export const NUR_MITARBEITER_FELDER = {
   besuch: ['Abwesend/Urlaub', 'Stunden Urlaub/Gleitzeit'],
 };
+
+// Zweite Sicherung für den vollständigen Klientennamen (Wochendienstplan): Jedes Feld, dessen
+// Name auf „vollständig“ passt, wird entfernt – auch wenn es in Airtable umbenannt wurde oder
+// ein ähnliches dazukommt (z. B. „Name_vollstaendig“, „Vollständiger Name“).
+const VOLLNAME_MUSTER = /vollst(ä|ae)ndig/i;
+export function vollNameFelder(record) {
+  return Object.keys((record && record.fields) || {}).filter((k) => VOLLNAME_MUSTER.test(k));
+}
 
 // Kopie des Records ohne die genannten Felder (Original bleibt unverändert).
 export function ohneFelder(record, felder) {
@@ -96,7 +105,7 @@ export default async function handler(req, res) {
     // Format exakt wie der bisherige Aggregator get_full_app_data (nur ohne interne Felder)
     res.status(200).json({
       data: {
-        patienten_daten: ohneFelder(patient, INTERNE_FELDER.patient),
+        patienten_daten: ohneFelder(patient, [...INTERNE_FELDER.patient, ...vollNameFelder(patient)]),
         kontakte,
         // Sperrliste + Schutznetz für Druck-Links (auch unter anderem Feldnamen)
         besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, [...INTERNE_FELDER.besuch, ...NUR_MITARBEITER_FELDER.besuch]))),

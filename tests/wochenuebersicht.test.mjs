@@ -8,7 +8,7 @@ import { airtableAttrappe, antwort, antwortObjekt, pdfTexte } from './_hilfen.mj
 process.env.STUNDENZETTEL_SECRET = 'test-secret-1234567890';
 process.env.AIRTABLE_TOKEN = 'test-key';
 
-const { baueWoche, erstelleWochenuebersichtPdf, stundenDe, summen, klientName } =
+const { baueWoche, erstelleWochenuebersichtPdf, stundenDe, summen, klientName, mitVollemNamen } =
   await import('../api/_wochenuebersicht.js');
 const { wocheZuDatum } = await import('../api/_dienstplan.js');
 
@@ -101,11 +101,25 @@ test('nur aktive Mitarbeiter mit Zeile in der Woche, nach Name sortiert', () => 
   assert.deepEqual(d.mitarbeiter.map((m) => m.name), ['Anna B.', 'Zoe Z.'], 'sortiert, ohne Inaktive');
 });
 
-test('Klientenname: mit Anrede "Fr./Hr. Nachname", sonst voller Name', () => {
-  assert.equal(klientName({ Patient_Name: 'Erika Muster', Anrede_Klient: 'Frau' }), 'Fr. Muster');
-  assert.equal(klientName({ Patient_Name: 'Otto von Beispiel', Anrede_Klient: 'Herr' }), 'Hr. Beispiel');
-  assert.equal(klientName({ Patient_Name: 'Erika Muster' }), 'Erika Muster', 'ohne Anrede: voller Name');
+test('Klientenname: „Name vollständig“ hat Vorrang, sonst der Name aus dem Dienstplan', () => {
+  assert.equal(klientName({ Patient_Name: 'Fr. Muster', Name_Vollstaendig: 'Erika Muster' }), 'Erika Muster');
+  assert.equal(klientName({ Patient_Name: 'Erika Muster' }), 'Erika Muster', 'ohne Eintrag: Name aus dem Dienstplan');
+  assert.equal(klientName({ Patient_Name: 'Fr. Muster', Name_Vollstaendig: '   ' }), 'Fr. Muster', 'nur Leerzeichen zählt nicht');
   assert.equal(klientName({}), '');
+});
+
+test('mitVollemNamen: Name kommt aus der Klienten-Tabelle, Originale bleiben unverändert', () => {
+  const besuche = [
+    { id: 'recB1', fields: { Patient: ['recP1'], Patient_Name: 'Fr. Muster' } },
+    { id: 'recB2', fields: { Patient: ['recP2'], Patient_Name: 'Max Muster' } },   // Klient ohne Eintrag
+    { id: 'recB3', fields: { Patient_Name: 'Ohne Verknüpfung' } },
+    { id: 'recB4', fields: {} },                                                    // Urlaubszeile
+  ];
+  const patienten = [{ id: 'recP1', fields: { 'Name vollständig': 'Erika Muster' } }, { id: 'recP2', fields: {} }];
+  const neu = mitVollemNamen(besuche, patienten);
+  assert.deepEqual(neu.map((r) => klientName(r.fields)), ['Erika Muster', 'Max Muster', 'Ohne Verknüpfung', '']);
+  assert.equal(besuche[0].fields.Name_Vollstaendig, undefined, 'Original unverändert');
+  assert.equal(klientName(mitVollemNamen(besuche, undefined)[0].fields), 'Fr. Muster', 'ohne Klientenliste: Name aus dem Dienstplan');
 });
 
 test('Seitenumbruch: 4 Mitarbeiter je Seite -> Seitenzahl = ceil(n/4)', async () => {
