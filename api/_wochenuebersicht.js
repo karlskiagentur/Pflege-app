@@ -67,47 +67,39 @@ const feldText = (v) => {
 // Hervorhebung des Büros: Neu/Geändert/Zusatz = markiert (gelb), Storniert = abgesagt.
 const MARKIERT = ['Neu', 'Geändert', 'Zusatz'];
 
-// Namenszusätze, die zum Nachnamen gehören („von Beispiel“, „van der Muster“).
-const NAMENSZUSATZ = new Set(['von', 'van', 'de', 'der', 'den', 'zu', 'zur', 'vom', 'di', 'da', 'del', 'la', 'le', 'ten', 'ter']);
+// Feld der Klienten-Tabelle mit dem vollständigen Namen NUR für dieses Blatt (ID fldcwttUCVJCSCRni).
+// Es geht nie an eine App: api/app-data.js sperrt es (INTERNE_FELDER.patient + Namensmuster).
+export const NAME_VOLLSTAENDIG_FELD = 'Name vollständig';
 
 /**
- * Klientenname fürs Blatt: „Fr. Müller“ / „Hr. von Beispiel“, wenn eine Anrede bekannt ist
- * (Anrede_Klient, vom Endpoint aus der Klienten-Tabelle ergänzt – siehe mitAnrede), sonst der
- * volle Patient_Name. Mehr Daten als der Name stehen bewusst nicht auf dem Blatt.
+ * Klientenname fürs Blatt: der vollständige Name aus „Name vollständig“ (pflegt das Büro in der
+ * Klienten-Tabelle), sonst der Name, den auch der Dienstplan zeigt (Patient_Name). Die Apps
+ * bleiben davon unberührt – sie zeigen weiter nur Patient_Name.
  */
 export function klientName(fields) {
   const f = fields || {};
-  const voll = feldText(f.Patient_Name).trim();
-  const anrede = feldText(f.Anrede_Klient || f.Anrede).trim();
-  if (!voll) return '';
-  const kurz = { Frau: 'Fr.', Herr: 'Hr.' }[anrede];
-  if (!kurz) return voll;
-  const teile = voll.split(/\s+/).filter(Boolean);
-  let ab = teile.length - 1;
-  while (ab > 1 && NAMENSZUSATZ.has(teile[ab - 1].toLowerCase())) ab--;
-  const nachname = teile.slice(ab).join(' ');
-  return nachname ? `${kurz} ${nachname}` : voll;
+  return feldText(f.Name_Vollstaendig).trim() || feldText(f.Patient_Name).trim();
 }
 
 /**
- * Ergänzt an jedem Besuch die Anrede des verknüpften Klienten (Feld „Patient“ = Verknüpfung).
- * Rein lesend und ohne Änderung an Airtable: Die Besuche-Tabelle bekommt KEIN neues Feld, die
- * Apps sehen davon nichts. Gibt neue Records zurück (Originale bleiben unverändert).
+ * Ergänzt an jedem Besuch den vollständigen Namen des verknüpften Klienten (Feld „Patient“ =
+ * Verknüpfung). Rein lesend: Die Besuche-Tabelle bekommt KEIN neues Feld, die Apps sehen davon
+ * nichts. Gibt neue Records zurück (Originale bleiben unverändert).
  * @param {Array<{id?: string, fields: object}>} besuche
- * @param {Array<{id: string, fields: object}>} patienten  Klienten mit Feld Anrede
+ * @param {Array<{id: string, fields: object}>} patienten  Klienten mit Feld „Name vollständig“
  */
-export function mitAnrede(besuche, patienten) {
-  const anrede = new Map();
+export function mitVollemNamen(besuche, patienten) {
+  const namen = new Map();
   for (const p of patienten || []) {
-    const a = feldText(p && p.fields && p.fields.Anrede).trim();
-    if (p && p.id && a) anrede.set(String(p.id), a);
+    const n = feldText(p && p.fields && p.fields[NAME_VOLLSTAENDIG_FELD]).trim();
+    if (p && p.id && n) namen.set(String(p.id), n);
   }
   return (besuche || []).map((r) => {
     const f = (r && r.fields) || {};
     const link = Array.isArray(f.Patient) ? f.Patient[0] : f.Patient;
     const id = String((link && typeof link === 'object' ? link.id : link) || '');
-    const a = anrede.get(id);
-    return a && !f.Anrede_Klient ? { ...r, fields: { ...f, Anrede_Klient: a } } : r;
+    const n = namen.get(id);
+    return n ? { ...r, fields: { ...f, Name_Vollstaendig: n } } : r;
   });
 }
 
