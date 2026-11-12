@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
 import { wochenBereich, wocheZuDatum, BESUCHE_FELDER } from './_dienstplan.js';
-import { baueWoche, erstelleWochenuebersichtPdf, mitVollemNamen, NAME_VOLLSTAENDIG_FELD } from './_wochenuebersicht.js';
+import { baueWoche, erstelleWochenuebersichtPdf, MA_NAME_VOLLSTAENDIG_FELD } from './_wochenuebersicht.js';
 import { neuesteZuerst } from './stundenzettel.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN Session-Token-Flow:
@@ -55,23 +55,25 @@ export default async function handler(req, res) {
     // 2) Besuche der Woche (alle Mitarbeiter) + Personal. Nur die Felder, die das Blatt braucht.
     const felder = [...BESUCHE_FELDER, 'Pfleger_ID', 'Dauer_Ist', 'Ist_Stunden_Monat']
       .map((f) => `fields%5B%5D=${encodeURIComponent(f)}`).join('&');
+    // Personal mit vollem Namen (nur für dieses Blatt). Fehlt das Feld (umbenannt/gelöscht),
+    // entsteht das Blatt trotzdem mit den Kurznamen und der Betreiber bekommt einen Alarm.
+    const personalFelder = 'fields%5B%5D=Name&fields%5B%5D=Aktiv';
+    const personalLaden = async () => {
+      try {
+        return await fetchAll(TABLES.PERSONAL, `${personalFelder}&fields%5B%5D=${encodeURIComponent(MA_NAME_VOLLSTAENDIG_FELD)}`);
+      } catch (e) {
+        if (!e || e.status !== 422) throw e;
+        try { reportError('api/wochenuebersicht', 'Feld "Name_Vollständig" (Personal) nicht lesbar - Blatt mit Kurznamen erzeugt', { status: e.status }); } catch (_) { /* Alarm darf das Blatt nicht verhindern */ }
+        return fetchAll(TABLES.PERSONAL, personalFelder);
+      }
+    };
     const [besuche, personal] = await Promise.all([
       fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(wochenFormel(bereich))}&${felder}`),
-      fetchAll(TABLES.PERSONAL, 'fields%5B%5D=Name&fields%5B%5D=Aktiv'),
+      personalLaden(),
     ]);
 
-    // Vollständiger Name der Klienten (Feld „Name vollständig“) – nur dieses eine Feld, nur
-    // gelesen, nur für dieses Blatt. Scheitert die Abfrage, entsteht das Blatt trotzdem (dann
-    // mit dem Namen aus dem Dienstplan) und der Betreiber bekommt einen Alarm.
-    let patienten = [];
-    try {
-      patienten = (await fetchAll(TABLES.PATIENTEN, `fields%5B%5D=${encodeURIComponent(NAME_VOLLSTAENDIG_FELD)}`)) || [];
-    } catch (e) {
-      try { reportError('api/wochenuebersicht', 'Feld "Name vollständig" nicht lesbar - Blatt mit dem Namen aus dem Dienstplan erzeugt', { status: e && e.status }); } catch (_) { /* Alarm darf das Blatt nicht verhindern */ }
-    }
-
     const jetzt = Date.now();
-    const daten = baueWoche(mitVollemNamen(besuche, patienten), personal, bereich, jetzt);
+    const daten = baueWoche(besuche, personal, bereich, jetzt);
     const stand = new Date(jetzt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
       timeZone: 'Europe/Berlin',
