@@ -8,7 +8,7 @@ import { airtableAttrappe, antwort, antwortObjekt, pdfTexte } from './_hilfen.mj
 process.env.STUNDENZETTEL_SECRET = 'test-secret-1234567890';
 process.env.AIRTABLE_TOKEN = 'test-key';
 
-const { baueWoche, erstelleWochenuebersichtPdf, stundenDe, summen, klientName } =
+const { baueWoche, erstelleWochenuebersichtPdf, stundenDe, summen, klientName, mitAnrede } =
   await import('../api/_wochenuebersicht.js');
 const { wocheZuDatum } = await import('../api/_dienstplan.js');
 
@@ -103,9 +103,25 @@ test('nur aktive Mitarbeiter mit Zeile in der Woche, nach Name sortiert', () => 
 
 test('Klientenname: mit Anrede "Fr./Hr. Nachname", sonst voller Name', () => {
   assert.equal(klientName({ Patient_Name: 'Erika Muster', Anrede_Klient: 'Frau' }), 'Fr. Muster');
-  assert.equal(klientName({ Patient_Name: 'Otto von Beispiel', Anrede_Klient: 'Herr' }), 'Hr. Beispiel');
+  assert.equal(klientName({ Patient_Name: 'Otto von Beispiel', Anrede_Klient: 'Herr' }), 'Hr. von Beispiel');
+  assert.equal(klientName({ Patient_Name: 'Erika Muster-Probe', Anrede_Klient: 'Frau' }), 'Fr. Muster-Probe');
+  assert.equal(klientName({ Patient_Name: 'Van Muster', Anrede_Klient: 'Herr' }), 'Hr. Muster', 'Vorname bleibt nie stehen');
   assert.equal(klientName({ Patient_Name: 'Erika Muster' }), 'Erika Muster', 'ohne Anrede: voller Name');
   assert.equal(klientName({}), '');
+});
+
+test('mitAnrede: Anrede kommt aus der Klienten-Tabelle, Originale bleiben unverändert', () => {
+  const besuche = [
+    { id: 'recB1', fields: { Patient: ['recP1'], Patient_Name: 'Erika Muster' } },
+    { id: 'recB2', fields: { Patient: ['recP2'], Patient_Name: 'Max Muster' } },   // Klient ohne Anrede
+    { id: 'recB3', fields: { Patient_Name: 'Ohne Verknüpfung' } },
+    { id: 'recB4', fields: {} },                                                    // Urlaubszeile
+  ];
+  const patienten = [{ id: 'recP1', fields: { Anrede: 'Frau' } }, { id: 'recP2', fields: {} }];
+  const neu = mitAnrede(besuche, patienten);
+  assert.deepEqual(neu.map((r) => klientName(r.fields)), ['Fr. Muster', 'Max Muster', 'Ohne Verknüpfung', '']);
+  assert.equal(besuche[0].fields.Anrede_Klient, undefined, 'Original unverändert');
+  assert.deepEqual(mitAnrede(besuche, undefined).map((r) => klientName(r.fields))[0], 'Erika Muster', 'ohne Klientenliste: voller Name');
 });
 
 test('Seitenumbruch: 4 Mitarbeiter je Seite -> Seitenzahl = ceil(n/4)', async () => {

@@ -67,10 +67,13 @@ const feldText = (v) => {
 // Hervorhebung des Büros: Neu/Geändert/Zusatz = markiert (gelb), Storniert = abgesagt.
 const MARKIERT = ['Neu', 'Geändert', 'Zusatz'];
 
+// Namenszusätze, die zum Nachnamen gehören („von Beispiel“, „van der Muster“).
+const NAMENSZUSATZ = new Set(['von', 'van', 'de', 'der', 'den', 'zu', 'zur', 'vom', 'di', 'da', 'del', 'la', 'le', 'ten', 'ter']);
+
 /**
- * Klientenname fürs Blatt: „Fr. Müller“ / „Hr. Müller“, wenn eine Anrede mitkommt
- * (Lookup auf dem Besuch), sonst der volle Patient_Name. Mehr Daten als der Name
- * stehen bewusst nicht auf dem Blatt.
+ * Klientenname fürs Blatt: „Fr. Müller“ / „Hr. von Beispiel“, wenn eine Anrede bekannt ist
+ * (Anrede_Klient, vom Endpoint aus der Klienten-Tabelle ergänzt – siehe mitAnrede), sonst der
+ * volle Patient_Name. Mehr Daten als der Name stehen bewusst nicht auf dem Blatt.
  */
 export function klientName(fields) {
   const f = fields || {};
@@ -79,8 +82,33 @@ export function klientName(fields) {
   if (!voll) return '';
   const kurz = { Frau: 'Fr.', Herr: 'Hr.' }[anrede];
   if (!kurz) return voll;
-  const nachname = voll.split(/\s+/).filter(Boolean).pop();
+  const teile = voll.split(/\s+/).filter(Boolean);
+  let ab = teile.length - 1;
+  while (ab > 1 && NAMENSZUSATZ.has(teile[ab - 1].toLowerCase())) ab--;
+  const nachname = teile.slice(ab).join(' ');
   return nachname ? `${kurz} ${nachname}` : voll;
+}
+
+/**
+ * Ergänzt an jedem Besuch die Anrede des verknüpften Klienten (Feld „Patient“ = Verknüpfung).
+ * Rein lesend und ohne Änderung an Airtable: Die Besuche-Tabelle bekommt KEIN neues Feld, die
+ * Apps sehen davon nichts. Gibt neue Records zurück (Originale bleiben unverändert).
+ * @param {Array<{id?: string, fields: object}>} besuche
+ * @param {Array<{id: string, fields: object}>} patienten  Klienten mit Feld Anrede
+ */
+export function mitAnrede(besuche, patienten) {
+  const anrede = new Map();
+  for (const p of patienten || []) {
+    const a = feldText(p && p.fields && p.fields.Anrede).trim();
+    if (p && p.id && a) anrede.set(String(p.id), a);
+  }
+  return (besuche || []).map((r) => {
+    const f = (r && r.fields) || {};
+    const link = Array.isArray(f.Patient) ? f.Patient[0] : f.Patient;
+    const id = String((link && typeof link === 'object' ? link.id : link) || '');
+    const a = anrede.get(id);
+    return a && !f.Anrede_Klient ? { ...r, fields: { ...f, Anrede_Klient: a } } : r;
+  });
 }
 
 /**
