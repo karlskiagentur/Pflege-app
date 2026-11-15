@@ -15,7 +15,8 @@ const SPALTEN_JE_SEITE = 4;
 const TAG_SPALTE = 78;
 
 const F = {
-  gruen: rgb(0.573, 0.776, 0.365),
+  // Markenfarbe Wunschlos Pflege: Sand #dccfbc (wie Kopfzeile der App und Briefkopf)
+  marke: rgb(220 / 255, 207 / 255, 188 / 255),
   linie: rgb(0.25, 0.25, 0.25),
   schwarz: rgb(0.12, 0.12, 0.12),
   blau: rgb(0.11, 0.42, 0.68),
@@ -218,7 +219,7 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     const top = y;
 
     // Kopfzeile der Tabelle (grün): KW + Namen
-    page.drawRectangle({ x: x0, y: top - KOPF_H, width: W - 2 * M, height: KOPF_H, color: F.gruen });
+    page.drawRectangle({ x: x0, y: top - KOPF_H, width: W - 2 * M, height: KOPF_H, color: F.marke });
     page.drawText(pdfText(`KW ${kw}`), { x: x0 + 8, y: top - 19, size: 12, font: bold, color: F.schwarz });
     gruppe.forEach((ma, i) => {
       page.drawText(kuerzen(ma.name, bold, 10.5, colW - 12), { x: xSp(i) + 6, y: top - 19, size: 10.5, font: bold, color: F.schwarz });
@@ -228,7 +229,7 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     let yr = top - KOPF_H;
     zeilen.forEach((z, r) => {
       const h = rowH[r];
-      page.drawRectangle({ x: x0, y: yr - h, width: TAG_SPALTE, height: h, color: F.gruen });
+      page.drawRectangle({ x: x0, y: yr - h, width: TAG_SPALTE, height: h, color: F.marke });
       page.drawText(pdfText(z.kopf[0]), { x: x0 + 8, y: yr - 17, size: 11, font: bold, color: F.schwarz });
       page.drawText(pdfText(z.kopf[1]), { x: x0 + 8, y: yr - 31, size: 10, font, color: F.schwarz });
       gruppe.forEach((ma, i) => {
@@ -242,7 +243,7 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     });
 
     // Summenzeile
-    page.drawRectangle({ x: x0, y: yr - SUMME_H, width: TAG_SPALTE, height: SUMME_H, color: F.gruen });
+    page.drawRectangle({ x: x0, y: yr - SUMME_H, width: TAG_SPALTE, height: SUMME_H, color: F.marke });
     page.drawText(pdfText('Summe'), { x: x0 + 8, y: yr - 15, size: 10, font: bold, color: F.schwarz });
     gruppe.forEach((ma, i) => {
       const { min, offen } = summen(ma);
