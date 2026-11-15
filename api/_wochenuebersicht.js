@@ -7,6 +7,7 @@
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pdfText } from './_pdftext.js';
+import { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } from './_logo.js';
 import { termin, vorbei, abwesenheitsGrund, berlin } from './_zeitkonto.js';
 
 const A4_QUER = [841.89, 595.28];
@@ -175,6 +176,9 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  // Logo klein unten rechts. Lässt es sich nicht einbetten, entsteht das Blatt ohne Logo.
+  let logo = null;
+  try { logo = await pdf.embedPng(Buffer.from(LOGO_B64, 'base64')); } catch (_) { logo = null; }
 
   // Zeilen: Mo–Fr einzeln, Sa/So zusammen (wie in der Word-Tabelle)
   const zeilen = [0, 1, 2, 3, 4].map((i) => ({ kopf: [TAGE_KURZ[i], kurzDe(tage[i])], isos: [tage[i]] }));
@@ -265,6 +269,11 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     const leg = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
     page.drawText(pdfText(leg), { x: M, y: bottom - 13, size: 7.5, font, color: F.grau });
     page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24, size: 7.5, font, color: F.grau });
+    if (logo) {
+      const h = 16;
+      const w = h * (LOGO_BREITE / LOGO_HOEHE);
+      page.drawImage(logo, { x: W - M - w, y: bottom - 6 - h, width: w, height: h });
+    }
   });
 
   return pdf.save();

@@ -266,3 +266,24 @@ test('Dateiname und Wochenformel', () => {
   const f = wochenFormel(BEREICH);
   assert.ok(f.includes('2026-11-09') && f.includes('2026-11-15'), 'Woche steht in der Formel');
 });
+
+test('Logo: gültiges PNG, klein, auf jeder Seite eingebettet', async () => {
+  const { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } = await import('../api/_logo.js');
+  const png = Buffer.from(LOGO_B64, 'base64');
+  assert.equal(png.subarray(1, 4).toString('latin1'), 'PNG');
+  assert.equal(png.readUInt32BE(16), LOGO_BREITE);
+  assert.equal(png.readUInt32BE(20), LOGO_HOEHE);
+  assert.ok(png.length < 40000, 'Logo bleibt klein');
+  const tage = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'];
+  const mitarbeiter = Array.from({ length: 5 }, (_, i) => ({ name: `Test ${i}`, tage: {} }));
+  const ohne = await erstelleWochenuebersichtPdf({ kw: 46, jahr: 2026, tage, stand: 'x', mitarbeiter: [] });
+  const mit = await erstelleWochenuebersichtPdf({ kw: 46, jahr: 2026, tage, stand: 'x', mitarbeiter });
+  const { PDFDocument, PDFName } = await import('pdf-lib');
+  const doc = await PDFDocument.load(mit);
+  assert.equal(doc.getPageCount(), 2);
+  for (const page of doc.getPages()) {
+    const xo = page.node.Resources().lookup(PDFName.of('XObject'));
+    assert.ok(xo && xo.keys().length === 1, 'genau ein Bild (Logo) je Seite');
+  }
+  assert.ok(ohne.length > 1000);
+});
