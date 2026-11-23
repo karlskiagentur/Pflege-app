@@ -27,12 +27,18 @@
 //    zur Monatssumme; Gleitzeit steht mit Stunden auf dem Zettel, zählt aber nicht (Freizeitausgleich
 //    aus dem Zeitkonto); Krank und Abwesend stehen nur als Tag („–“) da. Von/Bis ist bei einer
 //    Abwesenheit nur das Zeitfenster und zählt nie.
+// 6. „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026, Regel:
+//    api/_abrechnung.js): Ein so markierter Einsatz MIT Klient wird dem Klienten berechnet, ist aber
+//    keine Arbeitszeit. Er zählt nie als Einsatz, nie zu Soll oder Ist, bekommt keine
+//    Kunden-Anfahrt und steht nicht unter „nicht bestätigt“ – auch eine dort eingetragene Ist-Zeit
+//    zählt nicht. Er steht getrennt als „ohne Arbeitszeit“ auf dem Zettel. Ohne Haken gilt alles
+//    wie bisher; „Abgesagt“ geht vor.
 //
 // Zeitachse je Tag: Ein Termin beginnt zur geplanten Von-Zeit und dauert so lange wie seine
 // angerechnete Zeit. Dauert ein Termin länger, verschiebt sich der nächste entsprechend
 // (niemand ist an zwei Orten gleichzeitig) - so wird keine Minute doppelt gezählt.
 
-import { abwesenheitsMinuten, abwesenheitBezahlt, abwesenheitMitStunden } from './_abrechnung.js';
+import { abwesenheitsMinuten, abwesenheitBezahlt, abwesenheitMitStunden, abrechnenOhneLohn } from './_abrechnung.js';
 
 // Bezahlte Kunden-Anfahrt je Lücke zwischen zwei Terminen: bis 30 Min die ganze Lücke,
 // bei längerer Lücke genau 30 Min (der Rest ist Pause).
@@ -138,6 +144,8 @@ export function termin(fields, id = '') {
     abwesenheit: abw, // '' = normaler Einsatz
     // nur bei Urlaub/Gleitzeit: Minuten laut „Stunden Urlaub/Gleitzeit“ (null = Krank/Abwesend oder nicht eingetragen)
     stundenMin: abw ? abwesenheitsMinuten(f, abw) : null,
+    // Regel 6: „Abrechnen ohne Lohn“ – nur an einem Einsatz mit Klient (sonst ohne Bedeutung)
+    ohneLohn: mitKlient(f) && abrechnenOhneLohn(f),
   };
 }
 
@@ -161,11 +169,13 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   const termine = [];
   const offen = []; // vorbei, aber ohne bestätigte Ist-Zeit -> nicht berechnet
   const abwesend = []; // Urlaub/Gleitzeit/Krank/Abwesenheit -> kein Einsatz, getrennt ausgewiesen (Regel 5)
+  const markiert = []; // „Abrechnen ohne Lohn“ -> keine Arbeitszeit, getrennt ausgewiesen (Regel 6)
   for (const r of besuche || []) {
     const t = termin(r && r.fields, r && r.id);
     if (t.status === 'Abgesagt') { ausgelassen.abgesagt++; continue; }
     if (!vorbei(t, jetzt)) { ausgelassen.zukunft++; continue; }
     if (t.abwesenheit) { abwesend.push(t); continue; } // auch eine eingetragene Ist-Zeit zählt hier nicht
+    if (t.ohneLohn) { markiert.push(t); continue; }    // ebenso: weder Ist noch „nicht bestätigt“
     if (t.istMin === null) { offen.push(t); continue; }
     termine.push(t);
   }
@@ -186,6 +196,19 @@ export function berechneZeitnachweis(besuche, opt = {}) {
       min: t.stundenMin,
     }));
   const nichtBestaetigt = offen
+    .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
+    .map((t) => ({
+      id: t.id,
+      datum: t.datum,
+      von: t.vonText || (t.start !== null ? uhr(t.start) : ''),
+      bis: t.bisText || (t.planEnde !== null ? uhr(t.planEnde) : ''),
+      sollMin: t.planMin,
+      klient: t.klient,
+      taetigkeit: t.taetigkeit,
+    }));
+  // Regel 6: vom Büro mit „Abrechnen ohne Lohn“ markierte Einsätze – nur zur Information, zählen
+  // nirgends mit (bewusst NICHT in `summen`: Deren Aufbau bleibt unverändert).
+  const ohneLohn = markiert
     .sort((a, b) => String(a.datum).localeCompare(String(b.datum)) || reihenfolge(a, b))
     .map((t) => ({
       id: t.id,
@@ -289,7 +312,7 @@ export function berechneZeitnachweis(besuche, opt = {}) {
   }
   // Monatssumme = bestätigte Einsätze + Kunden-Anfahrt + eingetragene Urlaubsstunden (Regel 5)
   summen.bezahltMin = summen.einsatzMin + summen.anfahrtMin + summen.abwesenheitBezahltMin;
-  return { jetzt, tage, summen, ausgelassen, nichtBestaetigt, abwesenheiten };
+  return { jetzt, tage, summen, ausgelassen, nichtBestaetigt, abwesenheiten, ohneLohn };
 }
 
 // Reihenfolge auf dem Zettel: bezahlt (Urlaub), Zeitkonto (Gleitzeit), dann Tage ohne Stunden.

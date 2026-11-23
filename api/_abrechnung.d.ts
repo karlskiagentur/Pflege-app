@@ -28,3 +28,10 @@ export declare function abwesenheitMitStunden(art: unknown): boolean;
 export declare function abwesenheitBezahlt(art: unknown): boolean;
 /** Minuten laut „Stunden Urlaub/Gleitzeit“; null = Art ohne Stunden oder nicht (gültig) eingetragen. */
 export declare function abwesenheitsMinuten(fields: unknown, abwesenheitsArt: unknown): number | null;
+
+/** Spalte „Abrechnen ohne Lohn“: Einsatz wird berechnet, ist aber keine Arbeitszeit. */
+export declare const ABRECHNEN_OHNE_LOHN_FELD: string;
+/** Feldnamen eines Einsatzes, die „Abrechnen ohne Lohn“ bedeuten (auch umbenannt mit „ohne Lohn“). */
+export declare function ohneLohnFelder(fields: unknown): string[];
+/** true, wenn „Abrechnen ohne Lohn“ angekreuzt ist (nur ein gesetztes Ankreuzfeld zählt). */
+export declare function abrechnenOhneLohn(fields: unknown): boolean;

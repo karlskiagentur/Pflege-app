@@ -107,3 +107,44 @@ export function abwesenheitsMinuten(fields, abwesenheitsArt) {
   const min = Math.round(v / 60);
   return min <= ABWESENHEIT_STUNDEN_MAX_MIN ? min : null;
 }
+
+// „Abrechnen ohne Lohn“ (Wunsch Geschäftsleitung 23.11.2026): Das Büro kreuzt die Spalte an einem
+// Einsatz MIT Klient an, wenn der Einsatz dem Klienten berechnet wird, die Mitarbeiterin dafür aber
+// keine Stunden bekommt – z. B. hat der Klient kurzfristig abgesagt und sie war stattdessen bei
+// einem anderen Klienten, oder zwei Einsätze laufen gleichzeitig.
+// - Planung/Abrechnung: Der Einsatz bleibt ein Einsatz. Er zählt weiter zu „Geplant (Std.)“ und den
+//   verplanten Stunden, steht im Wochendienstplan mit der geplanten Zeit und gilt als geklärt (nicht
+//   mehr „offen“).
+// - Lohn: Er ist NIE Arbeitszeit – keine Ist-Zeit (auch keine schon eingetragene), keine
+//   Kunden-Anfahrt, nicht unter „nicht bestätigt“; in der App gibt es dafür keine Zeiterfassung.
+// - Ohne Haken ändert sich nichts. „Abgesagt“ geht vor (Abgesagtes wird nicht berechnet); an einer
+//   Zeile ohne Klient hat der Haken keine Bedeutung – beides prüft der Aufrufer
+//   (api/_zeitkonto.js, src/App.tsx).
+export const ABRECHNEN_OHNE_LOHN_FELD = 'Abrechnen ohne Lohn';
+// Zweite Sicherung: Wird die Spalte in Airtable umbenannt und behält „ohne Lohn“ im Namen (z. B.
+// „Berechnen ohne Lohn“), gilt sie weiter – überall, wo alle Felder gelesen werden (Stundenzettel,
+// Apps). So zählt ein markierter Einsatz nie versehentlich als Arbeitszeit und die Markierung geht
+// nie an Klienten.
+const OHNE_LOHN_MUSTER = /ohne[\s_-]*lohn/i;
+
+/**
+ * Namen der Felder eines Einsatzes, die „Abrechnen ohne Lohn“ bedeuten (für das Lesen und für das
+ * Entfernen aus Antworten an Klienten).
+ * @param {object} fields  Airtable-Felder der Dienstplan-Zeile
+ * @returns {string[]}
+ */
+export function ohneLohnFelder(fields) {
+  const f = fields && typeof fields === 'object' ? fields : {};
+  return Object.keys(f).filter((k) => k === ABRECHNEN_OHNE_LOHN_FELD || OHNE_LOHN_MUSTER.test(k));
+}
+
+/**
+ * Ist „Abrechnen ohne Lohn“ angekreuzt? Nur ein gesetztes Ankreuzfeld (true) zählt – Texte, Zahlen
+ * oder ein leeres Feld nie.
+ * @param {object} fields  Airtable-Felder der Dienstplan-Zeile
+ * @returns {boolean}
+ */
+export function abrechnenOhneLohn(fields) {
+  const f = fields && typeof fields === 'object' ? fields : {};
+  return ohneLohnFelder(f).some((k) => f[k] === true);
+}

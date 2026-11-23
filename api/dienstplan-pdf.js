@@ -1,8 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { airtable, fetchAll, reportError, TABLES } from './_lib.js';
+import { airtable, fetchAllOptional, reportError, TABLES } from './_lib.js';
 import {
-  PERSONAL_FELDER as PF, BESUCHE_FELDER, wochenBereich, wocheZuDatum, datumGueltig, dienstplanFormel,
-  wochenplan, erstelleDienstplanPdf, dateiname,
+  PERSONAL_FELDER as PF, BESUCHE_PFLICHTFELDER, BESUCHE_FELDER_OPTIONAL, wochenBereich, wocheZuDatum, datumGueltig,
+  dienstplanFormel, wochenplan, erstelleDienstplanPdf, dateiname,
 } from './_dienstplan.js';
 
 // Wochendienstplan eines Mitarbeiters als PDF - für den Druck im Büro.
@@ -110,9 +110,11 @@ export default async function handler(req, res) {
     // 3) Woche und Einsätze genau zum Zeitpunkt des Klicks (nichts zwischengespeichert)
     const jetzt = Date.now();
     const bereich = datum ? wocheZuDatum(datum) : wochenBereich(jetzt, Number(woche));
-    const query = `filterByFormula=${encodeURIComponent(dienstplanFormel(rec.id, bereich))}&`
-      + BESUCHE_FELDER.map((n) => `fields%5B%5D=${encodeURIComponent(n)}`).join('&');
-    const besuche = await fetchAll(TABLES.BESUCHE, query);
+    // Optionale Spalten (z. B. „Abrechnen ohne Lohn“): fehlen sie, entsteht der Plan trotzdem.
+    const besuche = await fetchAllOptional(
+      TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(dienstplanFormel(rec.id, bereich))}`,
+      BESUCHE_PFLICHTFELDER, BESUCHE_FELDER_OPTIONAL, QUELLE,
+    );
     const plan = wochenplan(besuche, bereich);
     const maName = String(f[PF.NAME] || '').trim() || 'Mitarbeiter';
     const bytes = await erstelleDienstplanPdf({ maName, bereich, plan, jetzt });

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
-import { wochenBereich, wocheZuDatum, BESUCHE_FELDER } from './_dienstplan.js';
+import { airtable, fetchAll, fetchAllOptional, sendError, reportError, esc, TABLES } from './_lib.js';
+import { wochenBereich, wocheZuDatum, BESUCHE_PFLICHTFELDER, BESUCHE_FELDER_OPTIONAL } from './_dienstplan.js';
 import { baueWoche, erstelleWochenuebersichtPdf, MA_NAME_VOLLSTAENDIG_FELD } from './_wochenuebersicht.js';
 import { neuesteZuerst } from './stundenzettel.js';
 
@@ -53,8 +53,9 @@ export default async function handler(req, res) {
     const bereich = /^\d{4}-\d{2}-\d{2}$/.test(woche) ? wocheZuDatum(woche) : wochenBereich(Date.now(), 0);
 
     // 2) Besuche der Woche (alle Mitarbeiter) + Personal. Nur die Felder, die das Blatt braucht.
-    const felder = [...BESUCHE_FELDER, 'Pfleger_ID', 'Dauer_Ist', 'Ist_Stunden_Monat']
-      .map((f) => `fields%5B%5D=${encodeURIComponent(f)}`).join('&');
+    //    Optionale Spalten (z. B. „Abrechnen ohne Lohn“): fehlen sie in Airtable, entsteht das
+    //    Blatt trotzdem – ohne diese Markierung, mit Alarm an den Betreiber.
+    const besucheFelder = [...BESUCHE_PFLICHTFELDER, 'Pfleger_ID', 'Dauer_Ist', 'Ist_Stunden_Monat'];
     // Personal mit vollem Namen (nur für dieses Blatt). Fehlt das Feld (umbenannt/gelöscht),
     // entsteht das Blatt trotzdem mit den Kurznamen und der Betreiber bekommt einen Alarm.
     const personalFelder = 'fields%5B%5D=Name&fields%5B%5D=Aktiv';
@@ -68,7 +69,10 @@ export default async function handler(req, res) {
       }
     };
     const [besuche, personal] = await Promise.all([
-      fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(wochenFormel(bereich))}&${felder}`),
+      fetchAllOptional(
+        TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(wochenFormel(bereich))}`,
+        besucheFelder, BESUCHE_FELDER_OPTIONAL, 'api/wochenuebersicht',
+      ),
       personalLaden(),
     ]);
 

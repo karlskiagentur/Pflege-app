@@ -4,6 +4,9 @@
 //
 // Stunden = BESTÄTIGTE Ist-Zeit. Nicht bestätigte Einsätze stehen als "offen" da und zählen
 // nicht; abgesagte sind durchgestrichen; Urlaub/Gleitzeit/Krank/Abwesend laut Dienstplan.
+// „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026): Der Einsatz
+// gilt als geklärt – er steht mit der GEPLANTEN Zeit und einem * da (wird abgerechnet), zählt aber
+// nicht zur Summe der Mitarbeiterin (keine Arbeitszeit) und nicht als "offen".
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pdfText } from './_pdftext.js';
@@ -23,6 +26,7 @@ const F = {
   blau: rgb(0.11, 0.42, 0.68),
   rot: rgb(0.78, 0.16, 0.12),
   orange: rgb(0.78, 0.4, 0.05),
+  violett: rgb(0.42, 0.25, 0.63), // „Abrechnen ohne Lohn“
   grau: rgb(0.5, 0.5, 0.5),
   gelb: rgb(1, 0.92, 0.2),
   weiss: rgb(1, 1, 1),
@@ -42,6 +46,22 @@ const uhrKurz = (hhmm) => (hhmm ? `${Number(hhmm.slice(0, 2))}.${hhmm.slice(3, 5
 /** Minuten ab Mitternacht -> "08:30" */
 const uhrAus = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
+// Fußzeile. Der Zusatz zu „Abrechnen ohne Lohn“ steht nur auf Seiten, auf denen ein so markierter
+// Einsatz vorkommt – alle anderen Blätter bleiben, wie sie waren.
+export const LEGENDE = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
+export const LEGENDE_OHNE_LOHN = '  ·  * = Abrechnen ohne Lohn: geplante Zeit, nicht in der Summe';
+/** Kennzeichen hinter der geplanten Zeit eines Einsatzes mit „Abrechnen ohne Lohn“. */
+export const OHNE_LOHN_ZEICHEN = '*';
+
+/** Steht auf dieser Seite (Gruppe von Mitarbeitern) ein Einsatz mit „Abrechnen ohne Lohn“? */
+export function hatOhneLohn(gruppe) {
+  return (gruppe || []).some((ma) => Object.values((ma && ma.tage) || {})
+    .some((liste) => liste.some((e) => e.art === 'einsatz' && e.status === 'ohneLohn')));
+}
+
+/** Text rechts neben einem Einsatz mit „Abrechnen ohne Lohn“: geplante Stunden + *, z. B. „1,25*“. */
+export const ohneLohnAnzeige = (e) => `${e && e.planMin ? stundenDe(e.planMin) : ''}${OHNE_LOHN_ZEICHEN}`;
+
 /** Summen je Mitarbeiter: bestätigte Minuten, Zahl offener Einsätze. */
 export function summen(ma) {
   let min = 0;
@@ -49,6 +69,7 @@ export function summen(ma) {
   for (const liste of Object.values(ma.tage || {})) {
     for (const e of liste) {
       if (e.art !== 'einsatz' || e.status === 'abgesagt') continue;
+      if (e.status === 'ohneLohn') continue;        // geklärt, aber keine Arbeitszeit
       if (e.status === 'bestaetigt') min += e.istMin || 0;
       else offen++;
     }
@@ -134,12 +155,15 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
           istMin: t.istMin,
           planMin: t.planMin,
           // Bestätigungsregel 1:1 wie im Stundenzettel (api/_zeitkonto.js):
-          // abgesagt > (noch nicht vorbei | Ist-Zeit da) = bestätigt > vorbei ohne Ist = offen
+          // abgesagt > „Abrechnen ohne Lohn“ (geklärt, auch mit eingetragener Ist-Zeit keine
+          // Arbeitszeit) > Ist-Zeit da = bestätigt > vorbei ohne Ist = offen > geplant
           status: t.status === 'Abgesagt' || hervorhebung === 'Storniert'
             ? 'abgesagt'
-            : t.istMin !== null
-              ? 'bestaetigt'
-              : vorbei(t, nun) ? 'offen' : 'geplant',
+            : t.ohneLohn
+              ? 'ohneLohn'
+              : t.istMin !== null
+                ? 'bestaetigt'
+                : vorbei(t, nun) ? 'offen' : 'geplant',
           markiert: MARKIERT.includes(hervorhebung),
         };
 
@@ -169,7 +193,8 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
 /**
  * @param {{kw:number, jahr:number, tage:string[], stand:string, mitarbeiter:Array}} d
  *   tage = 7 ISO-Daten Mo–So · mitarbeiter[].tage = { iso: [eintrag] }
- *   eintrag: { art:'einsatz', klient, von, bis, istMin, status:'bestaetigt'|'offen'|'abgesagt', markiert }
+ *   eintrag: { art:'einsatz', klient, von, bis, istMin, planMin,
+ *              status:'bestaetigt'|'offen'|'geplant'|'abgesagt'|'ohneLohn', markiert }
  *          | { art:'abwesenheit', grund:'Krank'|'Urlaub'|'Gleitzeit'|'Abwesend', stundenMin }
  */
 export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitarbeiter }) {
@@ -266,7 +291,7 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     for (let i = 0; i <= SPALTEN_JE_SEITE; i++) linie(xSp(i), top, xSp(i), bottom);
 
     // Fuß: Legende + Vertraulichkeit
-    const leg = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
+    const leg = hatOhneLohn(gruppe) ? LEGENDE + LEGENDE_OHNE_LOHN : LEGENDE;
     page.drawText(pdfText(leg), { x: M, y: bottom - 13, size: 7.5, font, color: F.grau });
     page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24, size: 7.5, font, color: F.grau });
     if (logo) {
@@ -299,8 +324,10 @@ function zeichneEintrag(page, e, x, y, breite, size, lineH, font, bold) {
   }
   const abgesagt = e.status === 'abgesagt';
   const offen = e.status === 'offen';
-  const farbe = abgesagt ? F.grau : offen ? F.orange : F.blau;
-  const rechts = pdfText(abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen' : stundenDe(e.istMin || 0));
+  const ohneLohn = e.status === 'ohneLohn';
+  const farbe = abgesagt ? F.grau : offen ? F.orange : ohneLohn ? F.violett : F.blau;
+  const rechts = pdfText(abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen'
+    : ohneLohn ? ohneLohnAnzeige(e) : stundenDe(e.istMin || 0));
   const rw = font.widthOfTextAtSize(rechts, size);
   const links = kuerzen(`${e.praefix}${e.klient} ${uhrKurz(e.von)}–${uhrKurz(e.bis)}`, font, size, breite - rw - 8);
   if (e.markiert && !abgesagt) {

@@ -1,5 +1,6 @@
 import { airtable, fetchAll, sendError, reportError, esc, readToken, handledPreflight, ohneDruckLinks, TABLES } from './_lib.js';
 import { mitteilungenFuer } from './_mitteilungen.js';
+import { ohneLohnFelder } from './_abrechnung.js';
 
 // Datensparsamkeit: Diese Felder braucht die Klienten-App nicht (keine Anzeige, keine Logik).
 // Sie bleiben in Airtable unverändert, werden aber nicht mehr an das Endgerät übertragen.
@@ -33,6 +34,11 @@ export const INTERNE_FELDER = {
 export const NUR_MITARBEITER_FELDER = {
   besuch: ['Abwesend/Urlaub', 'Stunden Urlaub/Gleitzeit'],
 };
+
+// „Abrechnen ohne Lohn“ (Spalte im Dienstplan): interne Angabe des Büros zur Abrechnung und zur
+// Arbeitszeit der Pflegekraft. Sie geht NIE an Klienten – entfernt wird die Spalte über ihren Namen
+// und über das Muster „ohne Lohn“ (auch nach einer Umbenennung): ohneLohnFelder in _abrechnung.js.
+// Die Mitarbeiter-App bekommt sie über /api/ma-termine (dort steht „Ohne Zeiterfassung“).
 
 // Zweite Sicherung für den vollständigen Klientennamen (Wochendienstplan): Jedes Feld, dessen
 // Name auf „vollständig“ passt, wird entfernt – auch wenn es in Airtable umbenannt wurde oder
@@ -108,7 +114,9 @@ export default async function handler(req, res) {
         patienten_daten: ohneFelder(patient, [...INTERNE_FELDER.patient, ...vollNameFelder(patient)]),
         kontakte,
         // Sperrliste + Schutznetz für Druck-Links (auch unter anderem Feldnamen)
-        besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, [...INTERNE_FELDER.besuch, ...NUR_MITARBEITER_FELDER.besuch]))),
+        besuche: besuche.map((b) => ohneDruckLinks(ohneFelder(b, [
+          ...INTERNE_FELDER.besuch, ...NUR_MITARBEITER_FELDER.besuch, ...ohneLohnFelder(b && b.fields),
+        ]))),
         tasks,
         dokumente: dokumente.map((d) => ohneFelder(d, INTERNE_FELDER.dokument)),
         ...(mitteilungen ? { mitteilungen } : {}),
