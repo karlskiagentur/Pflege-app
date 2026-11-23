@@ -22,6 +22,9 @@ Die Rechenregeln werden **nicht nachgebaut**, sondern aus dem Stundenzettel übe
 - `Status = Abgesagt` **oder** `Hervorhebung = Storniert` → durchgestrichen, zählt nicht.
 - **Urlaub / Gleitzeit / Krank / Abwesend** (Zeile ohne Klient): eigener Eintrag. Stunden aus
   „Stunden Urlaub/Gleitzeit" nur bei Urlaub und Gleitzeit; Krank/Abwesend nie.
+- **„Abrechnen ohne Lohn"** (Ankreuzfeld am Einsatz, seit 23.11.2026): geplante Zeit mit `*` in
+  Violett (z. B. `1,25*`), zählt weder zur Summe noch als `offen`; die Legende nennt das `*` nur
+  auf Seiten, auf denen es vorkommt. „Abgesagt" geht vor. Details: `claude/Abrechnen_ohne_Lohn.md`.
 - `Hervorhebung` Neu/Geändert/Zusatz → gelb hinterlegt.
 - Zuordnung über **`Pfleger_ID`** (wie `/api/ma-termine` und `api/_dienstplan.js`).
 - Spalten: **aktive** Mitarbeiter mit mindestens einer Zeile in der Woche, nach Name sortiert.
@@ -60,7 +63,8 @@ bleiben erhalten, die neue steht vorne) und setzt `Titel`, `Stand`, `Status = Er
 
 Genutzte Felder der Tabelle **Besuche**: `Datum`, `Von`, `Bis`, `Uhrzeit`, `Dauer_Soll`,
 `Dauer_Ist`, `Ist_Stunden_Monat`, `Status`, `Hervorhebung`, `Patient_Name`, `Pfleger_ID`,
-`Abwesend/Urlaub`, `Stunden Urlaub/Gleitzeit`.
+`Abwesend/Urlaub`, `Stunden Urlaub/Gleitzeit`; optional `Abrechnen ohne Lohn` (fehlt die Spalte,
+entsteht das Blatt ohne die Markierung und der Betreiber wird alarmiert).
 Aus **Personal**: `Name`, `Aktiv`.
 
 ## Noch offen (nicht Teil dieses Branches)

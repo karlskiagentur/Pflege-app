@@ -1,5 +1,5 @@
 import { airtable, sendError, requireMitarbeiter, handledPreflight, TABLES } from './_lib.js';
-import { abwesenheit } from './_zeitkonto.js';
+import { abwesenheit, termin } from './_zeitkonto.js';
 
 // Der Pfleger erfasst nach dem Termin die TATSÄCHLICHE Dauer (Minuten).
 // JSON: { token, besuchId, minuten }. Grundlage für die Monatsabrechnung.
@@ -32,6 +32,12 @@ export default async function handler(req, res) {
     // erfasst (die App zeigt dort kein Eingabefeld; das hier ist die Sicherung auf dem Server).
     if (abwesenheit(f)) {
       res.status(409).json({ error: 'abwesenheit', message: 'Für Urlaub oder Abwesenheit wird keine Zeit erfasst.' }); return;
+    }
+
+    // „Abrechnen ohne Lohn“ (Spalte im Dienstplan, vom Büro angekreuzt): Der Einsatz ist keine
+    // Arbeitszeit – dafür wird keine Zeit erfasst (auch nicht, wenn die App noch den alten Stand zeigt).
+    if (termin(f).ohneLohn) {
+      res.status(409).json({ error: 'ohne_zeiterfassung', message: 'Für diesen Einsatz wird keine Zeit erfasst – das Büro hat ihn so eingetragen.' }); return;
     }
 
     // Sperre: Einmal bestätigt = unveränderbar. Korrekturen macht nur noch das

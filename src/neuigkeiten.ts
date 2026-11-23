@@ -66,6 +66,12 @@ export function einsatzSignatur(t: any): string {
   // der Abwesenheit gilt dagegen als Änderung.
   const abwesend = feld(t, 'Abwesend/Urlaub');
   if (abwesend) angaben.push(abwesend);
+  // „Abrechnen ohne Lohn“ (Spalte im Dienstplan, vom Büro angekreuzt) ebenso nur anhängen, wenn
+  // gesetzt: Das Ankreuzen gilt als Änderung („Geändert“), alle übrigen Fingerabdrücke bleiben
+  // gleich. Diese Datei ist frei von Importen – Feldname und Muster stehen deshalb hier als Text;
+  // maßgeblich ist api/_abrechnung.js (tests/abrechnen-ohne-lohn.test.mjs prüft den Gleichlauf).
+  const felder = (t && t.fields) || {};
+  if (Object.keys(felder).some((k) => /ohne[\s_-]*lohn/i.test(k) && felder[k] === true)) angaben.push('ohne-lohn');
   return `${feld(t, 'Status')}|${pruefwert(angaben.join('\u0001'))}`;
 }
 

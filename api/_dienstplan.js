@@ -16,10 +16,14 @@
 //    nicht mit eingetragenen Stunden („Stunden Urlaub/Gleitzeit“, nur für den Stundenzettel; die
 //    Notiz unter der Wochensumme nennt sie, Krank hat nie Stunden). An einem Einsatz MIT Klient
 //    bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“.
+// 6. „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026; Regel:
+//    api/_abrechnung.js): Der Einsatz bleibt im Plan und in der geplanten Zeit (er ist verplant und
+//    wird abgerechnet), bekommt aber den Hinweis „Ohne Zeiterfassung“ und eine Notiz unter der
+//    Wochensumme – er ist keine Arbeitszeit. Ohne Haken bleibt der Plan, wie er war.
 
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { ABWESENHEIT_FELD, abwesenheitsAuswahl, abwesenheitsGrund, berlin, hm, termin, uhr } from './_zeitkonto.js';
-import { ABWESENHEIT_STUNDEN_FELD } from './_abrechnung.js';
+import { ABWESENHEIT_STUNDEN_FELD, ABRECHNEN_OHNE_LOHN_FELD } from './_abrechnung.js';
 import { pdfText } from './_pdftext.js';
 
 // Felder der Tabelle Personal über ihre IDs (umbenennungsfest).
@@ -31,10 +35,16 @@ export const PERSONAL_FELDER = {
 
 // Besuche-Felder, die der Dienstplan braucht (Datenminimierung: keine internen Notizen,
 // keine Zeiterfassung, keine Kontaktdaten).
+// Optionale Spalten stehen am Ende: Fehlt eine in Airtable (umbenannt/gelöscht), fragen die
+// Endpoints ohne sie erneut ab (fetchAllOptional in _lib.js) – der Plan entsteht trotzdem, nur
+// ohne diese Markierung, und der Betreiber wird alarmiert.
+export const BESUCHE_FELDER_OPTIONAL = [ABRECHNEN_OHNE_LOHN_FELD];
 export const BESUCHE_FELDER = [
   'Datum', 'Uhrzeit', 'Von', 'Bis', 'Dauer_Soll', 'Status', 'Patient', 'Patient_Name', 'Tätigkeit',
   'Adresse_Klient', 'Hervorhebung', 'Pfleger_Ersatz_Name', ABWESENHEIT_FELD, ABWESENHEIT_STUNDEN_FELD,
+  ...BESUCHE_FELDER_OPTIONAL,
 ];
+export const BESUCHE_PFLICHTFELDER = BESUCHE_FELDER.filter((f) => !BESUCHE_FELDER_OPTIONAL.includes(f));
 
 const WOCHENTAGE = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 const WOCHENTAGE_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -169,6 +179,8 @@ export function wochenplan(besuche, bereich) {
       // dem Plan, z. B. der Vertretung) – der Hinweis zeigt, dass das Büro die Planung klären muss.
       const auswahl = abwesenheitsAuswahl(f);
       if (auswahl) hinweise.push({ text: `${auswahl} eingetragen`, art: 'konflikt' });
+      // „Abrechnen ohne Lohn“: bleibt ein Einsatz im Plan, ist aber keine Arbeitszeit.
+      if (t.ohneLohn) hinweise.push({ text: OHNE_LOHN_HINWEIS, art: 'ohnelohn' });
     }
     tag.eintraege.push({
       id: t.id,
@@ -182,6 +194,8 @@ export function wochenplan(besuche, bereich) {
       abgesagt,
       abwesenheit: '',
       hinweise,
+      // nur gesetzt, wenn markiert und nicht abgesagt (alle übrigen Einträge bleiben unverändert)
+      ...(t.ohneLohn && !abgesagt ? { ohneLohn: true } : {}),
     });
   }
 
@@ -251,6 +265,25 @@ export function abwesenheitNotiz(plan) {
   return `Abwesenheit: ${liste.join(', ')} – kein Einsatz, nicht in der geplanten Zeit${mitStunden ? ' (Stunden siehe Stundenzettel)' : ''}.`;
 }
 
+// Hinweis am Einsatz und Notiz unter der Wochensumme für „Abrechnen ohne Lohn“. Für die
+// Mitarbeiterin neutral formuliert: Sie muss dafür keine Zeit erfassen.
+export const OHNE_LOHN_HINWEIS = 'Ohne Zeiterfassung';
+
+/**
+ * Notiz zu „Abrechnen ohne Lohn“ unter der Wochensumme ('' wenn kein Einsatz markiert ist), z. B.
+ * „Ohne Zeiterfassung: Fr 20.11. 13:45 – 15:00 – vom Büro so eingetragen, keine Arbeitszeit.“
+ */
+export function ohneLohnNotiz(plan) {
+  const liste = [];
+  ((plan && plan.tage) || []).forEach((tag, i) => {
+    for (const e of tag.eintraege || []) {
+      if (e.ohneLohn && !e.abgesagt) liste.push(`${WOCHENTAGE_KURZ[i] || ''} ${kurzDe(tag.datum)} ${e.zeit}`.trim());
+    }
+  });
+  if (!liste.length) return '';
+  return `${OHNE_LOHN_HINWEIS}: ${liste.join(', ')} – vom Büro so eingetragen, keine Arbeitszeit.`;
+}
+
 /**
  * Rendert den Wochendienstplan (A4 hoch). Rein, ohne Netz - auch für Tests und Vorschau.
  * @param {{maName: string, bereich: object, plan: {tage: object[], summen: object}, jetzt: number|Date, drucken?: boolean}} d
@@ -276,6 +309,7 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
     vertretung: rgb(0.76, 0.25, 0.05),
     abwesenheit: rgb(0.2, 0.4, 0.62),
     konflikt: rgb(0.71, 0.28, 0.24),
+    ohnelohn: rgb(0.42, 0.25, 0.63),
   };
 
   const A4 = [595.28, 841.89];
@@ -434,6 +468,8 @@ export async function erstelleDienstplanPdf({ maName, bereich, plan, jetzt, druc
   const notizTexte = [];
   const abwNotiz = abwesenheitNotiz(plan);
   if (abwNotiz) notizTexte.push(abwNotiz);
+  const ohneNotiz = ohneLohnNotiz(plan);
+  if (ohneNotiz) notizTexte.push(ohneNotiz);
   if (s.ohneDauer > 0) notizTexte.push(`${s.ohneDauer} ${s.ohneDauer === 1 ? 'Einsatz' : 'Einsätze'} ohne geplante Dauer – in der Zeit nicht enthalten.`);
   notizTexte.push(`Stand ${standText}. Spätere Änderungen im Dienstplan sind nicht enthalten – aktuell ist immer die App.`);
   const notizen = notizTexte.flatMap((t) => umbrechen(t, font, 8, SP.rechts - M, 3));

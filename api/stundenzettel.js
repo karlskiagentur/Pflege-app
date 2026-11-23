@@ -9,7 +9,7 @@ import { abrechnungszeitraum, imZeitraum, zeitraumText, abwesenheitBezahlt } fro
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
 // Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
 // Rechenregeln (nur Vergangenes, nur bestätigte Ist-Zeit, Kunden-Anfahrt, Pausen, Urlaub/Gleitzeit/
-// Krank): api/_zeitkonto.js und api/_abrechnung.js
+// Krank, „Abrechnen ohne Lohn“): api/_zeitkonto.js und api/_abrechnung.js
 // Abrechnungszeitraum (seit November 2026 vom 27. bis 26.): api/_abrechnung.js
 
 const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
@@ -113,6 +113,42 @@ export function nichtBestaetigtText(summen) {
   return `Nicht bestätigt: ${n} ${n === 1 ? 'Einsatz' : 'Einsätze'} (geplant ${hm(summen.ohneIstSollMin || 0)} Std.) – nicht berechnet, Liste oben.`;
 }
 
+// „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026; Regel 6 in
+// api/_zeitkonto.js): Der Einsatz ist keine Arbeitszeit. Auf dem Zettel der Mitarbeiterin steht das
+// bewusst neutral („ohne Arbeitszeit“) – ob und wie das Büro den Einsatz abrechnet, gehört nicht
+// hierher. Alles Folgende erscheint NUR, wenn es solche Einsätze gibt; sonst bleibt der Zettel,
+// wie er war.
+export const OHNE_LOHN_TITEL = 'Ohne Arbeitszeit – vom Büro so eingetragen';
+export const OHNE_LOHN_ERLAEUTERUNG = `Ohne Arbeitszeit: Einsätze, die das Büro im Dienstplan so eingetragen hat (z. B. weil ein Einsatz ausgefallen ist oder zwei Einsätze gleichzeitig liefen). Sie stehen gesammelt unter „${OHNE_LOHN_TITEL}“ und zählen nicht als Arbeitszeit: kein Ist, keine Kunden-Anfahrt, nicht in der Monatssumme. Stimmt das bei einem Einsatz nicht, bitte beim Büro melden.`;
+
+/**
+ * Zeilen der Einsätze „ohne Arbeitszeit“ (rein - testbar): Datum | Zeitfenster | Soll | Ist | Klient.
+ * Ist bleibt leer ("–"): Diese Einsätze zählen nicht zur Summe – auch nicht mit eingetragener Ist-Zeit.
+ */
+export function ohneLohnZeilen(nachweis) {
+  return ((nachweis && nachweis.ohneLohn) || []).map((t) => ({
+    datum: t.datum ? datumDe(t.datum) : '–',
+    fenster: t.von && t.bis ? `${t.von} – ${t.bis}` : (t.von || '–'),
+    soll: typeof t.sollMin === 'number' ? hm(t.sollMin) : '–',
+    ist: '–',
+    klient: t.klient || '–',
+  }));
+}
+
+/** Hinweis im Summenblock, wenn es Einsätze „ohne Arbeitszeit“ gibt ('' wenn keine). */
+export function ohneLohnText(nachweis) {
+  const liste = (nachweis && nachweis.ohneLohn) || [];
+  const n = liste.length;
+  if (!n) return '';
+  const geplant = liste.reduce((s, t) => s + (t.sollMin || 0), 0);
+  return `Ohne Arbeitszeit (vom Büro eingetragen): ${n} ${n === 1 ? 'Einsatz' : 'Einsätze'}, geplant ${hm(geplant)} Std. – nicht in der Summe.`;
+}
+
+/** Erläuterung am Ende des Zettels; der Absatz „Ohne Arbeitszeit“ nur, wenn es solche Einsätze gibt. */
+export function erlaeuterungFuer(nachweis) {
+  return ((nachweis && nachweis.ohneLohn) || []).length ? [...ERLAEUTERUNG, OHNE_LOHN_ERLAEUTERUNG] : ERLAEUTERUNG;
+}
+
 // Überschrift der Liste Urlaub/Gleitzeit/Krank/Abwesenheit (nach den Tagen, vor „nicht bestätigt“).
 export const ABWESENHEIT_TITEL = 'Urlaub / Gleitzeit / Krank / Abwesenheit – vom Büro eingetragen';
 
@@ -213,6 +249,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   const schwarz = rgb(0.2, 0.2, 0.2);
   const orange = rgb(0.7, 0.33, 0.08);
   const blau = rgb(0.2, 0.4, 0.62); // Urlaub/Abwesenheit
+  const violett = rgb(0.42, 0.25, 0.63); // „ohne Arbeitszeit“ (Spalte „Abrechnen ohne Lohn“)
   const A4 = [595.28, 841.89];
   const M = 50;
   const SP = SPALTEN;
@@ -325,8 +362,9 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   }
   const offen = nichtBestaetigtZeilen(nachweis);
   const abwesend = abwesenheitZeilen(nachweis);
+  const ohneArbeitszeit = ohneLohnZeilen(nachweis);
   if (nachweis.tage.length === 0) {
-    text(page, offen.length || abwesend.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
+    text(page, offen.length || abwesend.length || ohneArbeitszeit.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
     y -= 16;
   }
   // Urlaub/Gleitzeit/Krank/Abwesenheit: getrennt aufgeführt. Ist: Urlaub fett (zählt zur
@@ -365,13 +403,31 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     }
     y -= 4;
   }
+  // „Abrechnen ohne Lohn“: zur Kontrolle aufgeführt, keine Arbeitszeit (kein Ist, keine Anfahrt).
+  if (ohneArbeitszeit.length) {
+    platz(40);
+    y -= 6;
+    text(page, OHNE_LOHN_TITEL, SP.datum, y, 10, bold, violett);
+    y -= 15;
+    for (const z of ohneArbeitszeit) {
+      platz(14);
+      text(page, z.datum, SP.datum, y, 10, font, grau);
+      text(page, z.fenster, SP.fenster, y, 10, font, grau);
+      rechts(page, z.soll, SP.sollR, y, 10, font, grau);
+      rechts(page, z.ist, SP.istR, y, 10, font, grau);
+      page.drawText(gekuerzt(z.klient, font, 10, KLIENT_MAX), { x: SP.klient, y, size: 10, font, color: grau });
+      y -= 14;
+    }
+    y -= 4;
+  }
 
   // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Geschäftsleitung –
   // auch, wenn im Monat nur bezahlter Urlaub anfiel.
   const s = nachweis.summen;
   const abwSummen = abwesenheitSummen(nachweis);
   const mitUnterschrift = final && (s.einsaetze > 0 || s.abwesenheitBezahltMin > 0);
-  platz((mitUnterschrift ? 245 : 135) + abwSummen.length * 16, false);
+  const ohneArbeitszeitText = ohneLohnText(nachweis);
+  platz((mitUnterschrift ? 245 : 135) + abwSummen.length * 16 + (ohneArbeitszeitText ? 14 : 0), false);
   y -= 4;
   page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.8, color: grau });
   y -= 18;
@@ -396,6 +452,10 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     text(page, offenText, M, y, 9, bold, orange);
     y -= 14;
   }
+  if (ohneArbeitszeitText) {
+    text(page, ohneArbeitszeitText, M, y, 9, bold, violett);
+    y -= 14;
+  }
 
   if (mitUnterschrift) {
     y -= 18;
@@ -412,7 +472,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   }
 
   // Erläuterung für die Mitarbeiter (auf jedem Zettel, notfalls auf eigener Seite).
-  const absaetze = ERLAEUTERUNG.map((t) => umbrechen(t, font, 8, BREITE - 10));
+  const absaetze = erlaeuterungFuer(nachweis).map((t) => umbrechen(t, font, 8, BREITE - 10));
   platz(24 + absaetze.reduce((h, z) => h + z.length * 10 + 3, 0), false);
   y -= 10;
   text(page, 'So ist der Stundennachweis zu lesen', M, y, 9, bold, schwarz);
@@ -529,6 +589,7 @@ export default async function handler(req, res) {
     res.status(200).json({
       status: 'success', einsaetze: nachweis.summen.einsaetze, summe, vorlaeufig: !final,
       ohneIst: nachweis.summen.ohneIst, abwesenheiten: nachweis.abwesenheiten.length,
+      ohneLohn: nachweis.ohneLohn.length,
       urlaubStunden: hm(nachweis.summen.abwesenheitBezahltMin), gleitzeitStunden: hm(nachweis.summen.abwesenheitZeitkontoMin),
       ausgelassen: nachweis.ausgelassen,
     });

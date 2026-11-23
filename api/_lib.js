@@ -163,6 +163,26 @@ export async function fetchAll(table, params = '') {
   return records;
 }
 
+// Abfrage mit OPTIONALEN Spalten. Airtable lehnt die ganze Abfrage ab (422), wenn eine
+// angeforderte Spalte nicht (mehr) existiert – z. B. nach einer Umbenennung im Büro. Dann wird
+// einmal ohne die optionalen Spalten abgefragt und der Betreiber alarmiert: Das Ergebnis entsteht
+// trotzdem, nur ohne die Angaben dieser Spalten. Andere Fehler (auch ein 422 der Pflichtabfrage)
+// laufen wie gewohnt in den Fehlerpfad des Aufrufers.
+// basis: fertiger Query-Teil ohne Felder (z. B. "filterByFormula=…"); Reihenfolge der Felder in
+// der Abfrage: erst die Pflichtfelder, dann die optionalen.
+export async function fetchAllOptional(table, basis, pflichtFelder, optionaleFelder, quelle = 'api') {
+  const query = (felder) => [basis, ...felder.map((f) => `fields%5B%5D=${encodeURIComponent(f)}`)].filter(Boolean).join('&');
+  const optional = Array.isArray(optionaleFelder) ? optionaleFelder : [];
+  if (!optional.length) return fetchAll(table, query(pflichtFelder));
+  try {
+    return await fetchAll(table, query([...pflichtFelder, ...optional]));
+  } catch (e) {
+    if (!e || e.status !== 422) throw e;
+    reportError(quelle, `Spalte nicht lesbar (${optional.join(', ')}) - ohne diese Angabe erzeugt. Wurde die Spalte in Airtable umbenannt oder gelöscht?`, { status: e.status });
+    return fetchAll(table, query(pflichtFelder));
+  }
+}
+
 // Einheitliche Fehlerantwort: Rate-Limit -> 503, sonst 500.
 // Client bekommt NIE interne Airtable-Details (Info-Leak vermeiden),
 // echte Details gehen in Log + Alarm.

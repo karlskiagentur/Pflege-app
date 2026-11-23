@@ -20,7 +20,7 @@ import {
   gesehenErgaenzen, datumMs, anzeigeZeit, type PushZiel, type EinsatzMarke,
 } from './neuigkeiten';
 // Abrechnungszeitraum (27. bis 26.) – dieselbe Regel wie Stundenzettel und Monatslauf auf dem Server.
-import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText, abwesenheitsMinuten, abwesenheitBezahlt } from '../api/_abrechnung';
+import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText, abwesenheitsMinuten, abwesenheitBezahlt, abrechnenOhneLohn } from '../api/_abrechnung';
 
 // Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
 const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
@@ -204,6 +204,15 @@ const zeitpunktMs = (t: any): number => {
 
 // Vom Büro wieder abgesagt (Status „Abgesagt“) - gleiche Regel wie bei Einsätzen in der App.
 const abwesenheitAbgesagt = (t: any) => getValue(t, 'Status') === 'Abgesagt';
+
+// --- „ABRECHNEN OHNE LOHN“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026) ---
+// Das Büro kreuzt die Spalte an einem Einsatz MIT Klient an: Der Einsatz bleibt im Plan, ist aber
+// keine Arbeitszeit. Die App zeigt dort statt der Zeiterfassung „Ohne Zeiterfassung“ und zählt ihn
+// in „Lohn / Zeit“ nie mit - auch nicht mit einer schon eingetragenen Zeit (Server-Sicherung:
+// /api/besuch-dauer lehnt die Erfassung ab). Gleiche Regel wie der Stundenzettel
+// (api/_zeitkonto.js, Regel 6; Feld und Prüfung: api/_abrechnung.js).
+const ohneZeiterfassung = (t: any) =>
+  !!(getValue(t, 'Patient') || getValue(t, 'Patient_Name')) && abrechnenOhneLohn(t && t.fields ? t.fields : t);
 
 // Stunden eines Urlaubs- oder Gleitzeittags in Minuten (Spalte „Stunden Urlaub/Gleitzeit“, vom Büro
 // eingetragen); null = Krank/Abwesend (nie Stunden) oder nicht eingetragen. Gleiche Regel wie der
@@ -1439,7 +1448,12 @@ export default function App() {
       if (res.status === 401) { logoutMitarbeiterAuth(); return; }
       if (res.status === 409) {
         // Bereits bestätigt (z.B. zweites Gerät / Doppel-Tap): kein Fehler, nur Hinweis + Sperre anzeigen.
-        setDauerHinweis(prev => ({ ...prev, [besuchId]: 'Bereits bestätigt. Änderungen nur über das Büro.' }));
+        // Hat das Büro den Einsatz inzwischen auf „ohne Zeiterfassung“ gestellt (Spalte „Abrechnen ohne
+        // Lohn“), zeigt die Karte das nach dem Neuladen selbst - „Bereits bestätigt“ wäre dann falsch.
+        const grund = await res.json().then((j: any) => String((j && j.error) || '')).catch(() => '');
+        if (grund !== 'ohne_zeiterfassung') {
+          setDauerHinweis(prev => ({ ...prev, [besuchId]: 'Bereits bestätigt. Änderungen nur über das Büro.' }));
+        }
         setDauerInput(prev => { const n = { ...prev }; delete n[besuchId]; return n; });
         setDauerConfirm(null);
         await fetchMitarbeiterTermine();
@@ -1736,6 +1750,7 @@ export default function App() {
     };
     const zeitEinsaetze = (zeitTermine || [])
       .filter((t) => !abwesenheitVon(t))
+      .filter((t) => !ohneZeiterfassung(t)) // „Abrechnen ohne Lohn“: nie Arbeitszeit, auch mit eingetragener Zeit
       .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
       .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum));
     // Vom Büro eingetragene Urlaubsstunden („Stunden Urlaub/Gleitzeit“) zählen wie auf dem
@@ -2299,6 +2314,15 @@ export default function App() {
                     {/* IST-DAUER: der Pfleger erfasst nach dem Termin die tatsächliche Dauer */}
                     <div className="border-t border-gray-100 px-6 py-4">
                       {(() => {
+                        // „Abrechnen ohne Lohn“ (vom Büro angekreuzt): keine Zeiterfassung für diesen Einsatz.
+                        if (ohneZeiterfassung(t)) {
+                          return (
+                            <div>
+                              <p className="text-sm font-black text-[#6B40A1]">Ohne Zeiterfassung</p>
+                              <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">Das Büro hat diesen Einsatz so eingetragen. Hier ist keine Zeit einzugeben.</p>
+                            </div>
+                          );
+                        }
                         const istMin = Math.round((Number(getValue(t, 'Dauer_Ist')) || 0) / 60);
                         const planMin = getPlanMinuten(t);
                         // Gesperrt, sobald bestätigt (Dauer_Ist ODER Erledigt_Am gesetzt) - Korrekturen nur übers Büro.
