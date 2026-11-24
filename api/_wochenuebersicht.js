@@ -7,6 +7,11 @@
 // „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026): Der Einsatz
 // gilt als geklärt – er steht mit der GEPLANTEN Zeit und einem * da (wird abgerechnet), zählt aber
 // nicht zur Summe der Mitarbeiterin (keine Arbeitszeit) und nicht als "offen".
+// Das Büro überträgt von diesem Blatt die Stunden der Klienten in die Abrechnung (Hinweis
+// Geschäftsleitung 24.11.2026). Deshalb gilt das * auch für einen ABGESAGTEN Einsatz mit Haken
+// (z. B. kurzfristige Absage, die berechnet wird): Klient und Zeit bleiben durchgestrichen (für die
+// Mitarbeiterin fällt er aus), die Zahl mit * bleibt lesbar, und unter der Summe der Mitarbeiterin
+// steht „* abrechnen ohne Lohn: … Std.“. Ein abgesagter Einsatz OHNE Haken bleibt, wie er war.
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pdfText } from './_pdftext.js';
@@ -49,18 +54,63 @@ const uhrAus = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:$
 // Fußzeile. Der Zusatz zu „Abrechnen ohne Lohn“ steht nur auf Seiten, auf denen ein so markierter
 // Einsatz vorkommt – alle anderen Blätter bleiben, wie sie waren.
 export const LEGENDE = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
-export const LEGENDE_OHNE_LOHN = '  ·  * = Abrechnen ohne Lohn: geplante Zeit, nicht in der Summe';
+export const LEGENDE_OHNE_LOHN = '  ·  * = Abrechnen ohne Lohn: geplante Zeit abrechnen, zählt nicht';
 /** Kennzeichen hinter der geplanten Zeit eines Einsatzes mit „Abrechnen ohne Lohn“. */
 export const OHNE_LOHN_ZEICHEN = '*';
+
+/**
+ * Trägt der Einsatz „Abrechnen ohne Lohn“? Gilt für den geklärten Einsatz (status 'ohneLohn') und für
+ * den ABGESAGTEN Einsatz mit Haken (status bleibt 'abgesagt', zusätzlich ohneLohn: true) – beide
+ * werden dem Klienten berechnet und sind keine Arbeitszeit.
+ */
+export const istOhneLohn = (e) => !!e && e.art === 'einsatz' && (e.status === 'ohneLohn' || e.ohneLohn === true);
 
 /** Steht auf dieser Seite (Gruppe von Mitarbeitern) ein Einsatz mit „Abrechnen ohne Lohn“? */
 export function hatOhneLohn(gruppe) {
   return (gruppe || []).some((ma) => Object.values((ma && ma.tage) || {})
-    .some((liste) => liste.some((e) => e.art === 'einsatz' && e.status === 'ohneLohn')));
+    .some((liste) => liste.some(istOhneLohn)));
 }
 
 /** Text rechts neben einem Einsatz mit „Abrechnen ohne Lohn“: geplante Stunden + *, z. B. „1,25*“. */
 export const ohneLohnAnzeige = (e) => `${e && e.planMin ? stundenDe(e.planMin) : ''}${OHNE_LOHN_ZEICHEN}`;
+
+/** Nur abzurechnende Zeit je Mitarbeiter: geplante Minuten aller Einsätze mit „Abrechnen ohne Lohn“. */
+export function summeOhneLohn(ma) {
+  let min = 0;
+  let anzahl = 0;
+  for (const liste of Object.values((ma && ma.tage) || {})) {
+    for (const e of liste) {
+      if (!istOhneLohn(e)) continue;
+      min += e.planMin || 0;
+      anzahl++;
+    }
+  }
+  return { min, anzahl };
+}
+
+/** Zweite Zeile in der Summe der Mitarbeiterin ('' ohne solche Einsätze), z. B. „* abrechnen ohne Lohn: 1,25 Std.“ */
+export function ohneLohnSummenText(ma) {
+  const s = summeOhneLohn(ma);
+  return s.anzahl ? `${OHNE_LOHN_ZEICHEN} abrechnen ohne Lohn: ${stundenDe(s.min)} Std.` : '';
+}
+
+/**
+ * Darstellung eines Einsatzes (rein – testbar): Farbe, Text rechts, Schrift der Zahl, Durchstreichung.
+ * strich: 'ganz' = abgesagt wie bisher (Zeile samt Zahl) · 'text' = abgesagt + „Abrechnen ohne Lohn“
+ * (nur Klient und Zeit – die Zahl mit * bleibt lesbar, sie wird abgerechnet) · '' = keine.
+ */
+export function eintragStil(e) {
+  const abgesagt = e.status === 'abgesagt';
+  const offen = e.status === 'offen';
+  const ohneLohn = istOhneLohn(e);
+  return {
+    farbe: ohneLohn ? 'violett' : abgesagt ? 'grau' : offen ? 'orange' : 'blau',
+    rechts: ohneLohn ? ohneLohnAnzeige(e)
+      : abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen' : stundenDe(e.istMin || 0),
+    fett: ohneLohn,
+    strich: abgesagt ? (ohneLohn ? 'text' : 'ganz') : '',
+  };
+}
 
 /** Summen je Mitarbeiter: bestätigte Minuten, Zahl offener Einsätze. */
 export function summen(ma) {
@@ -157,6 +207,8 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
           // Bestätigungsregel 1:1 wie im Stundenzettel (api/_zeitkonto.js):
           // abgesagt > „Abrechnen ohne Lohn“ (geklärt, auch mit eingetragener Ist-Zeit keine
           // Arbeitszeit) > Ist-Zeit da = bestätigt > vorbei ohne Ist = offen > geplant
+          // Abgesagt + Haken: Status bleibt „abgesagt“ (für die Mitarbeiterin fällt er aus);
+          // dass er trotzdem abgerechnet wird, trägt das Feld ohneLohn weiter unten.
           status: t.status === 'Abgesagt' || hervorhebung === 'Storniert'
             ? 'abgesagt'
             : t.ohneLohn
@@ -165,6 +217,9 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
                 ? 'bestaetigt'
                 : vorbei(t, nun) ? 'offen' : 'geplant',
           markiert: MARKIERT.includes(hervorhebung),
+          // „Abrechnen ohne Lohn“ – auch am abgesagten Einsatz. Nur gesetzt, wenn angekreuzt
+          // (alle übrigen Einträge behalten ihren Aufbau).
+          ...(t.ohneLohn ? { ohneLohn: true } : {}),
         };
 
     for (const id of ids) {
@@ -194,7 +249,8 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
  * @param {{kw:number, jahr:number, tage:string[], stand:string, mitarbeiter:Array}} d
  *   tage = 7 ISO-Daten Mo–So · mitarbeiter[].tage = { iso: [eintrag] }
  *   eintrag: { art:'einsatz', klient, von, bis, istMin, planMin,
- *              status:'bestaetigt'|'offen'|'geplant'|'abgesagt'|'ohneLohn', markiert }
+ *              status:'bestaetigt'|'offen'|'geplant'|'abgesagt'|'ohneLohn', markiert,
+ *              ohneLohn?: true (mit Haken „Abrechnen ohne Lohn“ – auch bei status 'abgesagt') }
  *          | { art:'abwesenheit', grund:'Krank'|'Urlaub'|'Gleitzeit'|'Abwesend', stundenMin }
  */
 export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitarbeiter }) {
@@ -231,7 +287,10 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
 
     // Zeilenhöhen (dynamisch) – bei sehr vollen Wochen wird die Schrift verkleinert
     const KOPF_H = 30;
-    const SUMME_H = 22;
+    // Zweite Zeile in der Summe („* abrechnen ohne Lohn: … Std.“) nur auf Seiten mit so markierten
+    // Einsätzen – alle anderen Blätter behalten ihre Maße.
+    const mitOhneLohn = hatOhneLohn(gruppe);
+    const SUMME_H = mitOhneLohn ? 34 : 22;
     const FUSS_H = 30;
     const verfuegbar = y - M - FUSS_H - KOPF_H - SUMME_H;
     const anzahl = zeilen.map((z) => Math.max(1, ...gruppe.map((ma) => eintraege(ma, z).length)));
@@ -279,6 +338,10 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
       const t = pdfText(`${stundenDe(min)} Std. bestätigt`);
       page.drawText(t, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(t, 9.5), y: yr - 15, size: 9.5, font: bold, color: F.schwarz });
       if (offen) page.drawText(pdfText(`${offen} offen`), { x: xSp(i) + 6, y: yr - 15, size: 9, font: bold, color: F.orange });
+      const nurAbrechnen = mitOhneLohn ? pdfText(ohneLohnSummenText(ma)) : '';
+      if (nurAbrechnen) {
+        page.drawText(nurAbrechnen, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(nurAbrechnen, 9), y: yr - 27, size: 9, font: bold, color: F.violett });
+      }
     });
     const bottom = yr - SUMME_H;
 
@@ -291,7 +354,7 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     for (let i = 0; i <= SPALTEN_JE_SEITE; i++) linie(xSp(i), top, xSp(i), bottom);
 
     // Fuß: Legende + Vertraulichkeit
-    const leg = hatOhneLohn(gruppe) ? LEGENDE + LEGENDE_OHNE_LOHN : LEGENDE;
+    const leg = mitOhneLohn ? LEGENDE + LEGENDE_OHNE_LOHN : LEGENDE;
     page.drawText(pdfText(leg), { x: M, y: bottom - 13, size: 7.5, font, color: F.grau });
     page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24, size: 7.5, font, color: F.grau });
     if (logo) {
@@ -323,19 +386,20 @@ function zeichneEintrag(page, e, x, y, breite, size, lineH, font, bold) {
     return;
   }
   const abgesagt = e.status === 'abgesagt';
-  const offen = e.status === 'offen';
-  const ohneLohn = e.status === 'ohneLohn';
-  const farbe = abgesagt ? F.grau : offen ? F.orange : ohneLohn ? F.violett : F.blau;
-  const rechts = pdfText(abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen'
-    : ohneLohn ? ohneLohnAnzeige(e) : stundenDe(e.istMin || 0));
-  const rw = font.widthOfTextAtSize(rechts, size);
+  const stil = eintragStil(e);
+  const farbe = F[stil.farbe];
+  const rechts = pdfText(stil.rechts);
+  const fontRechts = stil.fett ? bold : font; // Zahl mit * fett: fällt beim Übertragen in die Abrechnung auf
+  const rw = fontRechts.widthOfTextAtSize(rechts, size);
   const links = kuerzen(`${e.praefix}${e.klient} ${uhrKurz(e.von)}–${uhrKurz(e.bis)}`, font, size, breite - rw - 8);
   if (e.markiert && !abgesagt) {
     page.drawRectangle({ x: x - 2, y: y - 2.5, width: breite + 4, height: lineH - 1, color: F.gelb });
   }
   page.drawText(links, { x, y, size, font, color: farbe });
-  page.drawText(rechts, { x: x + breite - rw, y, size, font, color: farbe });
-  if (abgesagt) {
-    page.drawLine({ start: { x, y: y + size * 0.3 }, end: { x: x + breite, y: y + size * 0.3 }, thickness: 0.6, color: F.grau });
+  page.drawText(rechts, { x: x + breite - rw, y, size, font: fontRechts, color: farbe });
+  if (stil.strich) {
+    // 'ganz': abgesagt wie bisher · 'text': nur Klient und Zeit, die Zahl mit * bleibt lesbar
+    const ende = stil.strich === 'text' ? x + font.widthOfTextAtSize(links, size) : x + breite;
+    page.drawLine({ start: { x, y: y + size * 0.3 }, end: { x: ende, y: y + size * 0.3 }, thickness: 0.6, color: farbe });
   }
 }

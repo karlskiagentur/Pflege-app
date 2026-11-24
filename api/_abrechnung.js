@@ -117,9 +117,13 @@ export function abwesenheitsMinuten(fields, abwesenheitsArt) {
 //   mehr „offen“).
 // - Lohn: Er ist NIE Arbeitszeit – keine Ist-Zeit (auch keine schon eingetragene), keine
 //   Kunden-Anfahrt, nicht unter „nicht bestätigt“; in der App gibt es dafür keine Zeiterfassung.
-// - Ohne Haken ändert sich nichts. „Abgesagt“ geht vor (Abgesagtes wird nicht berechnet); an einer
-//   Zeile ohne Klient hat der Haken keine Bedeutung – beides prüft der Aufrufer
-//   (api/_zeitkonto.js, src/App.tsx).
+// - Ohne Haken ändert sich nichts. An einer Zeile ohne Klient hat der Haken keine Bedeutung – das
+//   prüft der Aufrufer (api/_zeitkonto.js, src/App.tsx).
+// - Abgesagt + Haken (Hinweis Geschäftsleitung 24.11.2026, z. B. kurzfristige Absage, die berechnet
+//   wird): Für die Mitarbeiterin bleibt der Einsatz abgesagt – „Abgesagt“ geht dort vor (Stundenzettel,
+//   Wochenplan je Mitarbeiter, App). Abgerechnet wird er trotzdem: Der Wochendienstplan aller
+//   Mitarbeiter, von dem das Büro die Stunden der Klienten in die Abrechnung überträgt, zeigt ihn mit *
+//   (api/_wochenuebersicht.js).
 export const ABRECHNEN_OHNE_LOHN_FELD = 'Abrechnen ohne Lohn';
 // Zweite Sicherung: Wird die Spalte in Airtable umbenannt und behält „ohne Lohn“ im Namen (z. B.
 // „Berechnen ohne Lohn“), gilt sie weiter – überall, wo alle Felder gelesen werden (Stundenzettel,

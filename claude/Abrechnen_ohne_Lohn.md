@@ -21,15 +21,28 @@ Ein Einsatz **mit Klient** und Haken
 - ist **nie Arbeitszeit**: kein Ist (auch kein schon eingetragenes), keine Kunden-Anfahrt dorthin
   oder von dort, nicht in der Monatssumme, keine Zeiterfassung in der App.
 
-„Abgesagt" bzw. „Storniert" geht vor (Abgesagtes wird nicht berechnet). An einer Zeile **ohne**
-Klient (Urlaub, Krank …) hat der Haken keine Bedeutung. **Ohne Haken ändert sich nichts.**
+An einer Zeile **ohne** Klient (Urlaub, Krank …) hat der Haken keine Bedeutung. **Ohne Haken ändert
+sich nichts.**
+
+### Abgesagt + Haken (Ergänzung 24.11.2026)
+
+Das Büro überträgt vom **Wochendienstplan aller Mitarbeiter** die Stunden der Klienten in die
+Abrechnung (PflegeX). Der häufigste Fall für den Haken ist deshalb ein **abgesagter** Einsatz, der
+trotzdem berechnet wird (z. B. kurzfristige Absage):
+
+- Für die Mitarbeiterin bleibt er abgesagt – dort geht „Abgesagt" bzw. „Storniert" vor: nicht auf dem
+  Stundenzettel, im Wochenplan je Mitarbeiter und in der App als „Abgesagt".
+- Im Wochendienstplan aller Mitarbeiter ist er als „abrechnen" erkennbar: Klient und Zeit sind
+  durchgestrichen (violett), die Zahl mit `*` steht fett daneben und ist **nicht** durchgestrichen;
+  unter der Summe der Mitarbeiterin steht `* abrechnen ohne Lohn: 1,25 Std.`
+- Ein abgesagter Einsatz **ohne** Haken bleibt grau und ganz durchgestrichen wie bisher.
 
 ## Wo es wirkt
 
 | Ausgabe | Mit Haken | Datei |
 |---|---|---|
 | Stundenzettel (PDF) | eigener Abschnitt „Ohne Arbeitszeit – vom Büro so eingetragen", Zeile im Summenblock, ein Absatz in der Erläuterung; **nicht** in Soll/Ist/Anfahrt/Summe, **nicht** unter „Nicht bestätigt" | `api/_zeitkonto.js` (Regel 6), `api/stundenzettel.js` |
-| Wochendienstplan aller Mitarbeiter (PDF) | geplante Zeit mit `*` in Violett, z. B. `1,25*`; nicht in „Std. bestätigt", nicht „offen"; Legende bekommt auf dieser Seite den Zusatz `* = Abrechnen ohne Lohn …` | `api/_wochenuebersicht.js` |
+| Wochendienstplan aller Mitarbeiter (PDF) | geplante Zeit mit `*` in Violett und fett, z. B. `1,25*` – auch am abgesagten Einsatz; nicht in „Std. bestätigt", nicht „offen"; unter der Summe `* abrechnen ohne Lohn: … Std.`; Legende bekommt auf dieser Seite den Zusatz `* = Abrechnen ohne Lohn …` | `api/_wochenuebersicht.js` |
 | Wochenplan je Mitarbeiter (PDF, „Dienstplan drucken") | Hinweis „Ohne Zeiterfassung" am Einsatz, Notiz unter der Wochensumme; Einsatz und geplante Zeit zählen wie bisher | `api/_dienstplan.js` |
 | Mitarbeiter-App, Karte „Heute" | statt der Eingabe „Tatsächliche Dauer" steht „Ohne Zeiterfassung" | `src/App.tsx` |
 | Mitarbeiter-App, „Lohn / Zeit" | Einsatz zählt nie mit | `src/App.tsx` |
@@ -80,5 +93,6 @@ ihn.
 
 ```
 npm run build                                   # tsc + alle Tests + vite build
-node --test tests/abrechnen-ohne-lohn.test.mjs  # nur die neuen 34 Tests
+node --test tests/abrechnen-ohne-lohn.test.mjs            # 34 Tests zur Regel
+node --test tests/abgesagt-trotzdem-abrechnen.test.mjs    # 12 Tests zu „abgesagt + Haken"
 ```
