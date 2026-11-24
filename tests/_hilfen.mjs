@@ -10,14 +10,39 @@ delete process.env.RESEND_API_KEY; // Alarm-Mails in Tests nie verschicken
 const CP1252_80_9F = '€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ';
 const cp1252 = (buf) => [...buf].map((x) => (x >= 0x80 && x <= 0x9f ? CP1252_80_9F[x - 0x80] : String.fromCharCode(x))).join('');
 export function pdfTexte(bytes) {
-  const roh = Buffer.from(bytes).toString('latin1');
   const texte = [];
-  for (const m of roh.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    let inhalt = Buffer.from(m[1], 'latin1');
-    try { inhalt = zlib.inflateSync(inhalt); } catch { /* unkomprimiert */ }
-    for (const t of inhalt.toString('latin1').matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) texte.push(cp1252(Buffer.from(t[1], 'hex')));
+  for (const inhalt of pdfStreams(bytes)) {
+    for (const t of inhalt.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g)) texte.push(cp1252(Buffer.from(t[1], 'hex')));
   }
   return texte;
+}
+
+// Alle Streams eines von pdf-lib erzeugten PDFs, entpackt, in Dateireihenfolge. Die Länge kommt aus
+// /Length des Stream-Wörterbuchs – nicht aus der Suche nach "endstream": Endet ein gepackter Stream
+// zufällig auf das Byte 0x0D (1 von 256 Fällen), hielte ein Muster "\r?\nendstream" dieses Byte für
+// einen Zeilenumbruch; der Stream wäre um ein Byte zu kurz, ließe sich nicht entpacken und sein Text
+// ginge stillschweigend verloren (Prüfungen „steht NICHT im PDF“ wären dann grundlos grün). Ein
+// gepackter Stream, der sich nicht entpacken lässt, ist deshalb ein Fehler und kein leeres Ergebnis.
+export function pdfStreams(bytes) {
+  const roh = Buffer.from(bytes).toString('latin1');
+  const streams = [];
+  let pos = 0;
+  for (;;) {
+    const m = /stream\r?\n/g;
+    m.lastIndex = pos;
+    const treffer = m.exec(roh);
+    if (!treffer) break;
+    const start = treffer.index + treffer[0].length;
+    const kopf = roh.slice(Math.max(roh.lastIndexOf(' obj', treffer.index), 0), treffer.index); // Wörterbuch dieses Objekts
+    const laenge = /\/Length (\d+)/.exec(kopf);
+    const ende = laenge ? start + Number(laenge[1]) : roh.indexOf('endstream', start);
+    if (ende < start) break;
+    let inhalt = Buffer.from(roh.slice(start, ende), 'latin1');
+    if (/\/FlateDecode/.test(kopf)) inhalt = zlib.inflateSync(inhalt); // wirft, wenn nicht lesbar
+    streams.push(inhalt.toString('latin1'));
+    pos = ende + 'endstream'.length;
+  }
+  return streams;
 }
 
 export function antwort(status, body) {

@@ -24,7 +24,10 @@ Die Rechenregeln werden **nicht nachgebaut**, sondern aus dem Stundenzettel übe
   „Stunden Urlaub/Gleitzeit" nur bei Urlaub und Gleitzeit; Krank/Abwesend nie.
 - **„Abrechnen ohne Lohn"** (Ankreuzfeld am Einsatz, seit 23.11.2026): geplante Zeit mit `*` in
   Violett (z. B. `1,25*`), zählt weder zur Summe noch als `offen`; die Legende nennt das `*` nur
-  auf Seiten, auf denen es vorkommt. „Abgesagt" geht vor. Details: `claude/Abrechnen_ohne_Lohn.md`.
+  auf Seiten, auf denen es vorkommt. Seit 24.11.2026 auch am **abgesagten** Einsatz mit Haken: Klient
+  und Zeit durchgestrichen, die Zahl mit `*` nicht; unter der Summe steht `* abrechnen ohne Lohn: …
+  Std.` (das Büro überträgt von diesem Blatt die Stunden der Klienten in die Abrechnung).
+  Details: `claude/Abrechnen_ohne_Lohn.md`.
 - `Hervorhebung` Neu/Geändert/Zusatz → gelb hinterlegt.
 - Zuordnung über **`Pfleger_ID`** (wie `/api/ma-termine` und `api/_dienstplan.js`).
 - Spalten: **aktive** Mitarbeiter mit mindestens einer Zeile in der Woche, nach Name sortiert.
