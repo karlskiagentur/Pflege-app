@@ -56,7 +56,7 @@ test('Vorfall 01.11.: Klient speichert Abo -> dasselbe Gerät verschwindet bei a
       { id: 'recKlient0000002', fields: { Push_Subscription: JSON.stringify(abo(1)) } },
     ],
     personal: [
-      { id: 'recPfleger000001', fields: { Push_Subscription: JSON.stringify(abo(1)) } }, // z. B. Huong
+      { id: 'recPfleger000001', fields: { Push_Subscription: JSON.stringify(abo(1)) } }, // Gerät einer Pflegekraft
       { id: 'recPfleger000002', fields: { Push_Subscription: JSON.stringify(abo(2)) } }, // anderes Gerät
     ],
   });
