@@ -224,7 +224,7 @@ test('besucheFormel: Kandidaten über die berührten Kalendermonate, Mitarbeiter
 test('Kopfzeile mit Zeitraum passt auch bei langem Namen auf die Seite', async () => {
   const doc = await PDFDocument.create();
   const normal = await doc.embedFont(StandardFonts.Helvetica);
-  const kopf = pdfText('Huong Thi Xuan N. Mustermann · Nr. 90123 · September 2027 · 27.12.2026–26.01.2027');
+  const kopf = pdfText('Maximiliane Sophie M. Mustermann · Nr. 90123 · September 2027 · 27.12.2026–26.01.2027');
   assert.ok(normal.widthOfTextAtSize(kopf, 11) <= 595.28 - 2 * 50, `zu breit: ${normal.widthOfTextAtSize(kopf, 11)}`);
 });
 

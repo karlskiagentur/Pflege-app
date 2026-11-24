@@ -442,7 +442,7 @@ test('PDF: Urlaub steht am Tag, im Tageskopf und unter der Wochensumme; Legende 
     besuch('rec0000000000042', { Datum: '2026-11-10', Von: '08:00', Bis: '09:00', 'Tätigkeit': 'Grundpflege' }),
     abwesend('rec0000000000043', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt' }),
   ], w);
-  const bytes = await erstelleDienstplanPdf({ maName: 'Monika B.', bereich: w, plan, jetzt });
+  const bytes = await erstelleDienstplanPdf({ maName: 'Erika M.', bereich: w, plan, jetzt });
   const doc = await PDFDocument.load(bytes);
   assert.equal(doc.getPageCount(), 1);
   const texte = pdfTexte(bytes);
