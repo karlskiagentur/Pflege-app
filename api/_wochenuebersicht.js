@@ -17,9 +17,13 @@
 // (z. B. kurzfristige Absage, die berechnet wird): Klient und Zeit bleiben durchgestrichen (für die
 // Mitarbeiterin fällt er aus), die Zahl mit * bleibt lesbar, und unter der Summe der Mitarbeiterin
 // steht „* abrechnen ohne Lohn: … Std.“. Ein abgesagter Einsatz OHNE Haken bleibt, wie er war.
+// Abweichende Ist-Zeit (Wunsch Geschäftsleitung 25.11.2026): Hat die Mitarbeiterin eine andere Zeit
+// bestätigt als geplant (z. B. 2 Std. bei 14.45–16.00), steht die Zahl FETT da – wie auf dem
+// Stundenzettel („fett = weicht von der Planung ab“). So wundert sich niemand, dass Zahl und
+// Zeitfenster nicht zusammenpassen. Die Legende nennt es nur auf Seiten, auf denen es vorkommt.
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { pdfText } from './_pdftext.js';
+import { pdfText, druckbreite } from './_pdftext.js';
 import { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } from './_logo.js';
 import { termin, vorbei, abwesenheitsGrund, abwesenheitsEintraege, berlin } from './_zeitkonto.js';
 
@@ -60,6 +64,26 @@ const uhrAus = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:$
 // Einsatz vorkommt – alle anderen Blätter bleiben, wie sie waren.
 export const LEGENDE = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
 export const LEGENDE_OHNE_LOHN = '  ·  * = Abrechnen ohne Lohn: geplante Zeit abrechnen, zählt nicht';
+// Zusatz zur abweichenden Ist-Zeit – ebenfalls nur auf Seiten, auf denen sie vorkommt.
+export const LEGENDE_ABWEICHUNG = '  ·  fett = Ist-Zeit weicht vom Plan ab';
+const LEGENDE_TRENNER = '  ·  ';
+
+/**
+ * Zeilen der Legende einer Seite. Passt alles in eine Zeile, bleibt es bei einer (wie bisher); kommen
+ * abweichende Ist-Zeit UND „Abrechnen ohne Lohn“ auf derselben Seite vor, steht der Zusatz zum * in
+ * einer zweiten Zeile.
+ * @param {{abweichung: boolean, ohneLohn: boolean}} inhalt  was auf der Seite vorkommt
+ * @param {(text: string) => number} breiteVon  gedruckte Breite eines Textes
+ * @param {number} platz  verfügbare Breite
+ * @returns {string[]}
+ */
+export function legendeZeilen(inhalt, breiteVon, platz) {
+  const erste = LEGENDE + (inhalt && inhalt.abweichung ? LEGENDE_ABWEICHUNG : '');
+  if (!inhalt || !inhalt.ohneLohn) return [erste];
+  const zusammen = erste + LEGENDE_OHNE_LOHN;
+  if (breiteVon(zusammen) <= platz) return [zusammen];
+  return [erste, LEGENDE_OHNE_LOHN.slice(LEGENDE_TRENNER.length)];
+}
 /** Kennzeichen hinter der geplanten Zeit eines Einsatzes mit „Abrechnen ohne Lohn“. */
 export const OHNE_LOHN_ZEICHEN = '*';
 
@@ -100,6 +124,20 @@ export function ohneLohnSummenText(ma) {
 }
 
 /**
+ * Hat die Mitarbeiterin eine andere Zeit bestätigt als geplant? Gleiche Regel wie auf dem
+ * Stundenzettel (dort ist die Ist-Zeit dann fett): bestätigter Einsatz, geplante Dauer bekannt, Ist
+ * (im 15-Minuten-Takt) ungleich Plan. Auch eine bewusst bestätigte 0 ist eine Abweichung.
+ */
+export const istAbweichend = (e) => !!e && e.art === 'einsatz' && e.status === 'bestaetigt'
+  && typeof e.istMin === 'number' && typeof e.planMin === 'number' && e.istMin !== e.planMin;
+
+/** Steht auf dieser Seite (Gruppe von Mitarbeitern) ein Einsatz mit abweichender Ist-Zeit? */
+export function hatAbweichung(gruppe) {
+  return (gruppe || []).some((ma) => Object.values((ma && ma.tage) || {})
+    .some((liste) => liste.some(istAbweichend)));
+}
+
+/**
  * Darstellung eines Einsatzes (rein – testbar): Farbe, Text rechts, Schrift der Zahl, Durchstreichung.
  * strich: 'ganz' = abgesagt wie bisher (Zeile samt Zahl) · 'text' = abgesagt + „Abrechnen ohne Lohn“
  * (nur Klient und Zeit – die Zahl mit * bleibt lesbar, sie wird abgerechnet) · '' = keine.
@@ -112,7 +150,8 @@ export function eintragStil(e) {
     farbe: ohneLohn ? 'violett' : abgesagt ? 'grau' : offen ? 'orange' : 'blau',
     rechts: ohneLohn ? ohneLohnAnzeige(e)
       : abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen' : stundenDe(e.istMin || 0),
-    fett: ohneLohn,
+    // fett: Zahl mit * („Abrechnen ohne Lohn“) oder bestätigte Zeit, die vom Plan abweicht
+    fett: ohneLohn || istAbweichend(e),
     strich: abgesagt ? (ohneLohn ? 'text' : 'ganz') : '',
   };
 }
@@ -320,7 +359,14 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     // Einsätzen – alle anderen Blätter behalten ihre Maße.
     const mitOhneLohn = hatOhneLohn(gruppe);
     const SUMME_H = mitOhneLohn ? 34 : 22;
-    const FUSS_H = 30;
+    // Legende: in der Regel eine Zeile; eine zweite nur, wenn abweichende Ist-Zeit UND * vorkommen.
+    const logoBreite = logo ? 16 * (LOGO_BREITE / LOGO_HOEHE) : 0;
+    const legende = legendeZeilen(
+      { abweichung: hatAbweichung(gruppe), ohneLohn: mitOhneLohn },
+      (t) => druckbreite(pdfText(t), font, 7.5),
+      W - 2 * M - logoBreite - 6,
+    );
+    const FUSS_H = 30 + 11 * (legende.length - 1);
     const verfuegbar = y - M - FUSS_H - KOPF_H - SUMME_H;
     const anzahl = zeilen.map((z) => Math.max(1, ...gruppe.map((ma) => eintraege(ma, z).length)));
     let size = 8.5;
@@ -383,9 +429,10 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     for (let i = 0; i <= SPALTEN_JE_SEITE; i++) linie(xSp(i), top, xSp(i), bottom);
 
     // Fuß: Legende + Vertraulichkeit
-    const leg = mitOhneLohn ? LEGENDE + LEGENDE_OHNE_LOHN : LEGENDE;
-    page.drawText(pdfText(leg), { x: M, y: bottom - 13, size: 7.5, font, color: F.grau });
-    page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24, size: 7.5, font, color: F.grau });
+    legende.forEach((zeile, n) => {
+      page.drawText(pdfText(zeile), { x: M, y: bottom - 13 - 11 * n, size: 7.5, font, color: F.grau });
+    });
+    page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24 - 11 * (legende.length - 1), size: 7.5, font, color: F.grau });
     if (logo) {
       const h = 16;
       const w = h * (LOGO_BREITE / LOGO_HOEHE);

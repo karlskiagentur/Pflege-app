@@ -1,5 +1,5 @@
-// Text für die PDF-Standardschriften (Helvetica & Co.) - gemeinsam genutzt von Stundenzettel
-// und Dienstplan.
+// Text für die PDF-Standardschriften (Helvetica & Co.) - gemeinsam genutzt von Stundenzettel,
+// Dienstplan und Wochendienstplan.
 //
 // Die Standardschriften kennen nur den Windows-1252-Zeichensatz. Namen mit anderen Zeichen
 // (z. B. ł, ğ, ő) würden das Erstellen abbrechen -> auf den Grundbuchstaben zurückführen;
@@ -20,4 +20,13 @@ export function pdfText(s) {
     out += basis && [...basis].every(darstellbar) ? basis : '?';
   }
   return out;
+}
+
+// Breite eines Textes so, wie er gedruckt wird. pdf-lib rechnet bei widthOfTextAtSize die
+// Unterschneidung (Kerning) der Standardschrift mit ein, schreibt den Text aber ohne sie – eine
+// nur so gemessene Zeile ist gedruckt bis zu einigen Punkt breiter und ragt über den rechten Rand.
+export function druckbreite(s, f, size) {
+  let breite = 0;
+  for (const zeichen of String(s)) breite += f.widthOfTextAtSize(zeichen, size);
+  return breite;
 }

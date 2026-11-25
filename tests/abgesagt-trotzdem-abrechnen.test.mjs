@@ -153,7 +153,9 @@ test('Darstellung: abgesagt + Haken = violett, Zahl mit * fett, nur Klient und Z
   assert.deepEqual(wu.eintragStil(e({ status: 'abgesagt' })), { farbe: 'grau', rechts: '1,25', fett: false, strich: 'ganz' });
   assert.deepEqual(wu.eintragStil(e({ status: 'abgesagt', planMin: null })), { farbe: 'grau', rechts: '', fett: false, strich: 'ganz' });
   assert.deepEqual(wu.eintragStil(e({ status: 'offen' })), { farbe: 'orange', rechts: 'offen', fett: false, strich: '' });
-  assert.deepEqual(wu.eintragStil(e({ status: 'bestaetigt', istMin: 90 })), { farbe: 'blau', rechts: '1,5', fett: false, strich: '' });
+  assert.deepEqual(wu.eintragStil(e({ status: 'bestaetigt', istMin: 75 })), { farbe: 'blau', rechts: '1,25', fett: false, strich: '' });
+  // bestätigte Zeit weicht vom Plan ab (1,5 statt 1,25): Zahl fett – seit 25.11.2026 (tests/wochendienstplan-abweichung-summe.test.mjs)
+  assert.deepEqual(wu.eintragStil(e({ status: 'bestaetigt', istMin: 90 })), { farbe: 'blau', rechts: '1,5', fett: true, strich: '' });
   assert.deepEqual(wu.eintragStil(e({ status: 'geplant' })), { farbe: 'blau', rechts: '0', fett: false, strich: '' });
   // ohneLohn: false oder ein anderer Wert ist kein Haken
   assert.deepEqual(wu.eintragStil(e({ status: 'abgesagt', ohneLohn: false })), { farbe: 'grau', rechts: '1,25', fett: false, strich: 'ganz' });
