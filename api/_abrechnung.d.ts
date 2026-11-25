@@ -31,6 +31,8 @@ export declare function abwesenheitStundenFreiwillig(art: unknown): boolean;
 export declare function abwesenheitBezahlt(art: unknown): boolean;
 /** Minuten laut „Stunden Urlaub/Gleitzeit“; null = Art ohne Stunden, nicht (gültig) eingetragen oder Krank mit 0:00. */
 export declare function abwesenheitsMinuten(fields: unknown, abwesenheitsArt: unknown): number | null;
+/** „1 Einsatz abgesagt“ / „3 Einsätze abgesagt“ – Zusatz zu einem Abwesenheitstag aus abgesagten Einsätzen. */
+export declare function einsaetzeAbgesagtText(anzahl: number): string;
 
 /** Spalte „Abrechnen ohne Lohn“: Einsatz wird berechnet, ist aber keine Arbeitszeit. */
 export declare const ABRECHNEN_OHNE_LOHN_FELD: string;

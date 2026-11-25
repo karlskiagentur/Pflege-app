@@ -44,7 +44,8 @@
 //    ihnen eingetragenen „Stunden Urlaub/Gleitzeit“ (Regel: api/_abrechnung.js). Gibt es für den Tag
 //    schon eine eigene Zeile derselben Art (Regel 5), gilt nur diese – nichts zählt doppelt. Der
 //    Einsatz selbst bleibt abgesagt. Ein NICHT abgesagter Einsatz mit der Auswahl bleibt ein Einsatz
-//    (er kann z. B. inzwischen bei der Vertretung liegen).
+//    (er kann z. B. inzwischen bei der Vertretung liegen). Die Mitarbeiter-App zählt die so
+//    eingetragenen Stunden in der Ansicht „Zeit“ nach derselben Regel (bezahlteAusfallTage).
 //
 // Zeitachse je Tag: Ein Termin beginnt zur geplanten Von-Zeit und dauert so lange wie seine
 // angerechnete Zeit. Dauert ein Termin länger, verschiebt sich der nächste entsprechend
@@ -255,6 +256,30 @@ export function abwesenheitsEintraege(eigene, ausfaelle, jetzt = null) {
     });
   }
   return liste.sort(nachDatum); // stabil: eigene Zeilen bleiben vor den abgeleiteten des Tages
+}
+
+/**
+ * Regel 7 für die Mitarbeiter-App (Ansicht „Zeit“): Abwesenheitstage aus abgesagten Einsätzen, deren
+ * eingetragene Stunden zur Monatssumme zählen (Krank mit Stunden, Urlaub) – dieselbe Regel wie auf
+ * dem Stundenzettel, damit die App dieselben Stunden zeigt. Eigene Abwesenheitszeilen (Regel 5)
+ * zeigt die App selbst; sie gehen hier nur ein, damit nichts doppelt zählt.
+ * @param {Array<{id?: string, fields?: object}>} zeilen  rohe Dienstplan-Zeilen EINES Mitarbeiters
+ * @returns {Array<{id: string, datum: string, art: string, min: number, einsaetze: number,
+ *   von: string, bis: string}>}  nach Datum sortiert; min > 0
+ */
+export function bezahlteAusfallTage(zeilen) {
+  const eigene = [];
+  const ausfaelle = [];
+  for (const r of Array.isArray(zeilen) ? zeilen : []) {
+    const f = r && r.fields && typeof r.fields === 'object' ? r.fields : r;
+    if (!f || typeof f !== 'object' || !abwesenheitsAuswahl(f)) continue; // fast alle Zeilen: keine Auswahl
+    const t = termin(f, String((r && r.id) || ''));
+    if (t.status === 'Abgesagt') { if (t.ausfall) ausfaelle.push(t); continue; }
+    if (t.abwesenheit) eigene.push(t);
+  }
+  return abwesenheitsEintraege(eigene, ausfaelle)
+    .filter((a) => a.einsaetze && abwesenheitBezahlt(a.art) && typeof a.min === 'number' && a.min > 0)
+    .map(({ id, datum, art, min, einsaetze, von, bis }) => ({ id, datum, art, min, einsaetze, von, bis }));
 }
 
 const tagDanach = (iso) => {

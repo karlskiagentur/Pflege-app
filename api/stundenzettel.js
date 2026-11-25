@@ -3,7 +3,7 @@ import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 import { berechneZeitnachweis, abwesenheitNachArt, hm } from './_zeitkonto.js';
 import { pdfText } from './_pdftext.js';
-import { abrechnungszeitraum, imZeitraum, zeitraumText, abwesenheitBezahlt } from './_abrechnung.js';
+import { abrechnungszeitraum, imZeitraum, zeitraumText, abwesenheitBezahlt, einsaetzeAbgesagtText } from './_abrechnung.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
@@ -163,7 +163,7 @@ export function abwesenheitZeilen(nachweis) {
   return ((nachweis && nachweis.abwesenheiten) || []).map((a) => {
     let ist = '–';
     if (typeof a.min === 'number') ist = abwesenheitBezahlt(a.art) ? hm(a.min) : `(${hm(a.min)})`;
-    const zusatz = a.einsaetze ? `${a.einsaetze} ${a.einsaetze === 1 ? 'Einsatz' : 'Einsätze'} abgesagt` : a.grund;
+    const zusatz = a.einsaetze ? einsaetzeAbgesagtText(a.einsaetze) : a.grund;
     return {
       datum: a.datum ? datumDe(a.datum) : '–',
       fenster: a.von && a.bis ? `${a.von} – ${a.bis}` : (a.von ? `ab ${a.von}` : 'ganztägig'),

@@ -17,9 +17,9 @@ process.env.CRON_SECRET = 'cron-secret-test-123';
 process.env.AIRTABLE_TOKEN = 'test-key';
 
 const {
-  berechneZeitnachweis, abwesenheitNachArt, abwesenheitsEintraege, ausfallWegen, termin, berlin, hm,
+  berechneZeitnachweis, abwesenheitNachArt, abwesenheitsEintraege, bezahlteAusfallTage, ausfallWegen, termin, berlin, hm,
 } = await import('../api/_zeitkonto.js');
-const { abrechnungszeitraum, imZeitraum } = await import('../api/_abrechnung.js');
+const { abrechnungszeitraum, imZeitraum, einsaetzeAbgesagtText } = await import('../api/_abrechnung.js');
 const sz = await import('../api/stundenzettel.js');
 const wu = await import('../api/_wochenuebersicht.js');
 const { wocheZuDatum } = await import('../api/_dienstplan.js');
@@ -511,6 +511,76 @@ test('Texte: darstellbar, passen gedruckt in die Breite; die Erläuterung ist so
   for (const zeilen of absaetze) {
     for (const z of zeilen) assert.ok(sz.druckbreite(z, normal, 8) <= breite - 10, `Zeile zu breit: ${z}`);
   }
+});
+
+// ================================================================ Mitarbeiter-App, Ansicht „Zeit“
+test('App „Zeit“: Krank-Stunden an abgesagten Einsätzen zählen wie auf dem Stundenzettel – ein Eintrag je Tag', () => {
+  const zeilen = [
+    einsatz('2026-11-18', '08:00', '16:00'),
+    // Do 19.11.: zwei Einsätze abgesagt + „Krank“, Stunden an beiden
+    ausfall('2026-11-19', '08:00', '12:00', 'Krank', std(5)), ausfall('2026-11-19', '13:00', '16:00', 'Krank', std(3)),
+    // Fr 20.11.: abgesagt + „Krank“, Stunden nur an einem der beiden
+    ausfall('2026-11-20', '09:00', '10:00', 'Krank'), ausfall('2026-11-20', '10:30', '12:00', 'Krank', std(4)),
+    // Mo 23.11.: abgesagt + „Krank“ OHNE Stunden (Minijob) -> nichts für die Ansicht „Zeit“
+    ausfall('2026-11-23', '09:00', '12:00', 'Krank'),
+    // Di 24.11.: abgesagt + „Gleitzeit“ mit Stunden -> zählt nicht zur Summe, also auch hier nicht
+    ausfall('2026-11-24', '09:00', '12:00', 'Gleitzeit', std(3)),
+    // Mi 25.11.: abgesagt + „Urlaub“ mit Stunden -> bezahlt
+    ausfall('2026-11-25', '09:00', '12:00', 'Urlaub', std(6)),
+  ];
+  const tage = bezahlteAusfallTage(zeilen);
+  assert.deepEqual(tage.map((a) => [a.datum, a.art, a.min, a.einsaetze, a.von, a.bis]), [
+    ['2026-11-19', 'Krank', 480, 2, '08:00', '16:00'],
+    ['2026-11-20', 'Krank', 240, 2, '09:00', '12:00'],
+    ['2026-11-25', 'Urlaub', 360, 1, '09:00', '12:00'],
+  ]);
+  // genau die Felder, die die App braucht – und dieselben Zahlen wie der Stundenzettel
+  assert.deepEqual(Object.keys(tage[0]), ['id', 'datum', 'art', 'min', 'einsaetze', 'von', 'bis']);
+  const n = berechneZeitnachweis(zeilen, { jetzt: FINAL });
+  const zettel = n.abwesenheiten.filter((a) => a.einsaetze && typeof a.min === 'number' && a.art !== 'Gleitzeit');
+  assert.deepEqual(zettel.map((a) => [a.datum, a.art, a.min]), tage.map((a) => [a.datum, a.art, a.min]));
+  assert.equal(n.summen.abwesenheitBezahltMin, tage.reduce((s, a) => s + a.min, 0));
+  // Wortlaut des Zusatzes: derselbe wie auf dem Stundenzettel
+  assert.equal(einsaetzeAbgesagtText(1), '1 Einsatz abgesagt');
+  assert.equal(einsaetzeAbgesagtText(2), '2 Einsätze abgesagt');
+  assert.ok(sz.abwesenheitZeilen(n).some((z) => z.klient === `Krank · ${einsaetzeAbgesagtText(2)}`));
+});
+
+test('App „Zeit“: eigene Zeile geht vor, nicht abgesagte Einsätze zählen nie; jede Form der Eingabe ist ungefährlich', () => {
+  // eigene Krank-Zeile mit Stunden am selben Tag: die App zeigt sie selbst – der Ausfall zählt nicht noch einmal
+  assert.deepEqual(bezahlteAusfallTage([
+    zeile('2026-11-19', 'Krank', std(8)), ausfall('2026-11-19', '08:00', '12:00', 'Krank', std(4)),
+  ]), []);
+  // eine wieder ABGESAGTE eigene Zeile geht nicht vor (sie zählt selbst nicht)
+  assert.deepEqual(bezahlteAusfallTage([
+    zeile('2026-11-19', 'Krank', { ...std(8), Status: 'Abgesagt' }), ausfall('2026-11-19', '08:00', '12:00', 'Krank', std(4)),
+  ]).map((a) => [a.datum, a.min]), [['2026-11-19', 240]]);
+  // nicht abgesagter Einsatz mit Auswahl und Stunden: bleibt ein Einsatz (z. B. bei der Vertretung)
+  assert.deepEqual(bezahlteAusfallTage([einsatz('2026-11-19', '08:00', '12:00', { 'Abwesend/Urlaub': 'Krank', ...std(4) })]), []);
+  // abgesagter Einsatz OHNE Auswahl: nur abgesagt
+  assert.deepEqual(bezahlteAusfallTage([einsatz('2026-11-19', '08:00', '12:00', { Status: 'Abgesagt', ...std(4) })]), []);
+  // mehr als ein ganzer Tag an einem Tag = Tippfehler -> zählt nicht
+  assert.deepEqual(bezahlteAusfallTage([
+    ausfall('2026-11-19', '08:00', '12:00', 'Krank', std(20)), ausfall('2026-11-19', '13:00', '16:00', 'Krank', std(20)),
+  ]), []);
+  // Zeilen ohne „fields“ (flach) werden genauso gelesen; Reihenfolge der Eingabe ist egal
+  const a = ausfall('2026-11-20', '09:00', '10:00', 'Krank', std(2));
+  const b = ausfall('2026-11-19', '09:00', '10:00', 'Krank', std(1));
+  assert.deepEqual(bezahlteAusfallTage([{ id: a.id, ...a.fields }, b]).map((x) => [x.datum, x.min]), [['2026-11-19', 60], ['2026-11-20', 120]]);
+  // Einsatz ohne Datum: kein Tag, dem er zugeordnet werden könnte
+  assert.deepEqual(bezahlteAusfallTage([ausfall('', '09:00', '10:00', 'Krank', std(2))]), []);
+  // Urlaub mit bewusst eingetragenen 0:00 am abgesagten Einsatz: steht auf dem Zettel (0:00), hier nichts zu zählen
+  assert.deepEqual(bezahlteAusfallTage([ausfall('2026-11-19', '09:00', '10:00', 'Urlaub', std(0))]), []);
+  assert.deepEqual(kurz(berechneZeitnachweis([ausfall('2026-11-19', '09:00', '10:00', 'Urlaub', std(0))], { jetzt: FINAL })), [['2026-11-19', 'Urlaub', '09:00', '10:00', 0, 1]]);
+  // nichts davon wirft: leer, kein Array, kaputte Zeilen
+  for (const eingabe of [undefined, null, [], {}, 'x', 7, [null, undefined, 7, 'x', {}, { fields: null }, { fields: 'x' }, { id: 1, fields: {} }]]) {
+    assert.deepEqual(bezahlteAusfallTage(eingabe), [], JSON.stringify(eingabe));
+  }
+  // die Eingabe bleibt unverändert
+  const eingabe = [ausfall('2026-11-19', '08:00', '12:00', 'Krank', std(4))];
+  const vorher = JSON.stringify(eingabe);
+  bezahlteAusfallTage(eingabe);
+  assert.equal(JSON.stringify(eingabe), vorher);
 });
 
 // ================================================================ Endpoint /api/stundenzettel

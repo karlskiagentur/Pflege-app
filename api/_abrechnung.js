@@ -120,6 +120,14 @@ export function abwesenheitsMinuten(fields, abwesenheitsArt) {
   return freiwillig && min === 0 ? null : min;
 }
 
+/**
+ * Zusatz zu einem Abwesenheitstag, der aus abgesagten Einsätzen stammt (Regel 7 in api/_zeitkonto.js),
+ * z. B. „3 Einsätze abgesagt“ – derselbe Wortlaut auf dem Stundenzettel und in der App.
+ * @param {number} anzahl
+ * @returns {string}
+ */
+export const einsaetzeAbgesagtText = (anzahl) => `${anzahl} ${anzahl === 1 ? 'Einsatz' : 'Einsätze'} abgesagt`;
+
 // „Abrechnen ohne Lohn“ (Wunsch Geschäftsleitung 23.11.2026): Das Büro kreuzt die Spalte an einem
 // Einsatz MIT Klient an, wenn der Einsatz dem Klienten berechnet wird, die Mitarbeiterin dafür aber
 // keine Stunden bekommt – z. B. hat der Klient kurzfristig abgesagt und sie war stattdessen bei

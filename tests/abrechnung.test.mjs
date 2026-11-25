@@ -178,7 +178,7 @@ test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 
   assert.equal(abwesenheitsMinuten({ 'Stunden Urlaub/Krank': 8 * 3600 }, 'Urlaub'), null); // alter Arbeitsname, nie live
 });
 
-test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; in „Lohn / Zeit“ nur eingetragener Urlaub', () => {
+test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; in „Lohn / Zeit“ nur eingetragene Stunden (Urlaub, Krank)', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   // gleiche Regel wie api/_zeitkonto.js: nur eine Zeile OHNE Klient ist eine Abwesenheit
   assert.ok(app.includes("getValue(t, 'Patient') || getValue(t, 'Patient_Name') ? '' : getValue(t, 'Abwesend/Urlaub').trim()"));
@@ -201,8 +201,19 @@ test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; 
   assert.ok(app.includes("abwesenheitVon(t) ? abwesenheitsMinuten(t && t.fields ? t.fields : t, abwesenheitVon(t)) : null"));
   assert.ok(app.includes('.filter((t) => abwesenheitBezahlt(abwesenheitVon(t)) && !abwesenheitAbgesagt(t) && (abwesenheitsStundenMin(t) || 0) > 0)'));
   assert.ok(app.includes(".filter((t) => String(getValue(t, 'Datum') || '').slice(0, 10) < zeitHeute);"));
-  assert.ok(app.includes('+ zeitAbwesenheiten.reduce((s, t) => s + (abwesenheitsStundenMin(t) || 0) * 60, 0);'));
-  assert.ok(app.includes('const zeitZeilen = [...zeitEinsaetze, ...zeitAbwesenheiten].sort(zeitReihenfolge);'));
+  assert.ok(app.includes('+ zeitAbwesenheiten.reduce((s, t) => s + (abwesenheitsStundenMin(t) || 0) * 60, 0)'));
+  // ebenso Stunden an ABGESAGTEN Einsätzen mit „Krank“ (Regel 7 in api/_zeitkonto.js, 25.11.2026): eine
+  // Regel für App und Stundenzettel, gleiche Zeitregel, gesichert gegen einen Fehler (App bleibt nie stehen)
+  assert.match(app, /import \{ bezahlteAusfallTage, type BezahlterAusfallTag \} from '\.\.\/api\/_zeitkonto';/);
+  assert.match(app, /const zeitAusfallTage = ausfallTageSicher\(zeitTermine \|\| \[\]\)\s*\.filter\(\(a\) => imZeitraum\(a\.datum, zeitZeitraum\) && a\.datum < zeitHeute\)/);
+  const sicher = app.slice(app.indexOf('const ausfallTageSicher = ')).replace(/\s+/g, ' ');
+  assert.ok(sicher.startsWith("const ausfallTageSicher = (zeilen: any[]): BezahlterAusfallTag[] => { try { return bezahlteAusfallTage(zeilen); } "
+    + "catch (err) { if (!ausfallTageFehlerGemeldet) { ausfallTageFehlerGemeldet = true; reportClientError('zeitnachweis-ausfalltage', err, {}); } return []; } };"),
+    'Absicherung der Regel in der App verändert');
+  assert.ok(app.includes('+ zeitAusfallTage.reduce((s, t) => s + t.ausfallTag.min * 60, 0);'));
+  assert.ok(app.includes('const zeitZeilen = [...zeitEinsaetze, ...zeitAbwesenheiten, ...zeitAusfallTage].sort(zeitReihenfolge);'));
+  assert.ok(app.includes('{t.ausfallTag.art} · {einsaetzeAbgesagtText(t.ausfallTag.einsaetze)}'));
+  assert.ok(app.includes('{stdMin(t.ausfallTag.min * 60)} Std.'));
   assert.ok(app.includes('for (const t of zeitZeilen) {'));
   // die Karte nennt eingetragene Stunden (nicht bei abgesagtem Urlaub; Krank hat nie welche):
   // Urlaub „Auf dem Stundenzettel“, Gleitzeit „aus dem Zeitkonto“
