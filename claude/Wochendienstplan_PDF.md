@@ -11,7 +11,7 @@ Word-Tabelle des Büros: Zeilen = Tage (Mo–Fr einzeln, Sa/So zusammen), Spalte
 | `api/_wochenuebersicht.js` | Renderer (Layout, von Karl abgenommen) + `baueWoche()` (Airtable-Records → Blatt) |
 | `api/wochenuebersicht.js` | Endpoint `POST /api/wochenuebersicht` (Hook der Airtable-Automation) |
 | `tests/wochenuebersicht.test.mjs` | 20 Tests: Fachregeln, Seitenumbruch, Jahreswechsel, Auth, Fehlerpfad |
-| `tests/wochendienstplan-abweichung-summe.test.mjs` | 7 Tests: abweichende Ist-Zeit fett, Legende |
+| `tests/wochendienstplan-abweichung-summe.test.mjs` | 12 Tests: abweichende Ist-Zeit fett, Wochensumme mit Urlaub/Krank, Legende |
 
 ## Fachregeln
 
@@ -24,8 +24,12 @@ Die Rechenregeln werden **nicht nachgebaut**, sondern aus dem Stundenzettel übe
 - **Urlaub / Gleitzeit / Krank / Abwesend**: eigener Eintrag über den Einsätzen des Tages – aus einer
   Zeile ohne Klient oder (seit 25.11.2026) aus **abgesagten Einsätzen** mit dieser Auswahl; so trägt das
   Büro Krankheit ein (ein Eintrag je Tag und Art, Regel 7 in `api/_zeitkonto.js`). Stunden aus
-  „Stunden Urlaub/Gleitzeit": Urlaub, Gleitzeit und Krank (wenn eingetragen); Abwesend nie. Eine wieder
-  abgesagte Abwesenheitszeile (z. B. abgelehnter Urlaub) steht nicht auf dem Blatt.
+  „Stunden Urlaub/Gleitzeit": Urlaub und Krank (wenn eingetragen) als Zahl, Gleitzeit in Klammern –
+  `(6)`, zählt wie auf dem Stundenzettel nicht –, Abwesend nie. Eine wieder abgesagte Abwesenheitszeile
+  (z. B. abgelehnter Urlaub) steht nicht auf dem Blatt.
+- **Wochensumme** (seit 25.11.2026): „… Std. bestätigt" bleibt die gearbeitete Zeit. Vom Büro
+  eingetragene Stunden für Urlaub und Krank stehen darunter und werden dazugezählt:
+  `+ 24 Urlaub = 48 Std.` (nur bei Mitarbeitern mit solchen Stunden).
 - **Abweichende Ist-Zeit** (seit 25.11.2026): Hat die Mitarbeiterin eine andere Zeit bestätigt als
   geplant (im 15-Minuten-Takt, z. B. 2 Std. bei 14.45–16.00), steht die Zahl **fett** da – wie auf dem
   Stundenzettel. Die Legende nennt es nur auf Seiten, auf denen es vorkommt („fett = Ist-Zeit weicht

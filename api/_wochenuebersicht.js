@@ -21,11 +21,17 @@
 // bestätigt als geplant (z. B. 2 Std. bei 14.45–16.00), steht die Zahl FETT da – wie auf dem
 // Stundenzettel („fett = weicht von der Planung ab“). So wundert sich niemand, dass Zahl und
 // Zeitfenster nicht zusammenpassen. Die Legende nennt es nur auf Seiten, auf denen es vorkommt.
+// Wochensumme (Wunsch Geschäftsleitung 25.11.2026): Vom Büro eingetragene Stunden für Urlaub und
+// Krank (bezahlt – Regel: api/_abrechnung.js) stehen unter der Summe und werden dazugezählt:
+// „+ 24 Urlaub = 48 Std.“. Die Zeile „… Std. bestätigt“ bleibt die gearbeitete Zeit. Gleitzeit zählt
+// wie auf dem Stundenzettel nicht dazu (Freizeitausgleich aus dem Zeitkonto) – ihre Stunden stehen
+// deshalb wie dort in Klammern am Tag, z. B. „(6)“.
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pdfText, druckbreite } from './_pdftext.js';
 import { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } from './_logo.js';
 import { termin, vorbei, abwesenheitsGrund, abwesenheitsEintraege, berlin } from './_zeitkonto.js';
+import { abwesenheitBezahlt } from './_abrechnung.js';
 
 const A4_QUER = [841.89, 595.28];
 const M = 26;
@@ -135,6 +141,64 @@ export const istAbweichend = (e) => !!e && e.art === 'einsatz' && e.status === '
 export function hatAbweichung(gruppe) {
   return (gruppe || []).some((ma) => Object.values((ma && ma.tage) || {})
     .some((liste) => liste.some(istAbweichend)));
+}
+
+// Reihenfolge der Arten in der Summenzeile (wie auf dem Stundenzettel), weitere alphabetisch.
+const ABWESENHEIT_REIHENFOLGE = ['Urlaub', 'Krank'];
+const artRang = (art) => { const i = ABWESENHEIT_REIHENFOLGE.indexOf(art); return i < 0 ? ABWESENHEIT_REIHENFOLGE.length : i; };
+
+/**
+ * Vom Büro eingetragene, bezahlte Abwesenheitsstunden der Woche je Mitarbeiter (Urlaub; Krank, wenn
+ * Stunden eingetragen sind – Regel: api/_abrechnung.js). Gleitzeit und Abwesend zählen nicht.
+ * @returns {{min: number, teile: Array<{art: string, min: number}>}}
+ */
+export function summeAbwesenheit(ma) {
+  const proArt = new Map();
+  for (const liste of Object.values((ma && ma.tage) || {})) {
+    for (const e of liste) {
+      if (!e || e.art !== 'abwesenheit' || !abwesenheitBezahlt(e.grund)) continue;
+      if (typeof e.stundenMin !== 'number' || !(e.stundenMin > 0)) continue;
+      proArt.set(e.grund, (proArt.get(e.grund) || 0) + e.stundenMin);
+    }
+  }
+  const teile = [...proArt.entries()]
+    .map(([art, min]) => ({ art, min }))
+    .sort((a, b) => artRang(a.art) - artRang(b.art) || a.art.localeCompare(b.art, 'de'));
+  return { min: teile.reduce((s, t) => s + t.min, 0), teile };
+}
+
+/**
+ * Stunden rechts neben einem Abwesenheitseintrag ('' ohne eingetragene Stunden): bezahlte Arten
+ * (Urlaub, Krank) als Zahl, z. B. „8“ – sie zählen zur Gesamtzahl der Woche; alle übrigen (Gleitzeit)
+ * in Klammern, z. B. „(6)“ – sie stehen nur da, wie auf dem Stundenzettel.
+ */
+export function abwesenheitAnzeige(e) {
+  if (!e || !e.stundenMin) return '';
+  const zahl = stundenDe(e.stundenMin);
+  return abwesenheitBezahlt(e.grund) ? zahl : `(${zahl})`;
+}
+
+/**
+ * Zeile unter „… Std. bestätigt“ ('' ohne bezahlte Abwesenheitsstunden): die eingetragenen Stunden
+ * und die Gesamtzahl der Woche, z. B. „+ 24 Urlaub = 48 Std.“ oder „+ 8 Urlaub + 16 Krank = 48 Std.“
+ */
+export function abwesenheitSummenText(ma) {
+  const a = summeAbwesenheit(ma);
+  if (!a.teile.length) return '';
+  const gesamt = summen(ma).min + a.min;
+  return `${a.teile.map((t) => `+ ${stundenDe(t.min)} ${t.art}`).join(' ')} = ${stundenDe(gesamt)} Std.`;
+}
+
+/**
+ * Zusatzzeilen unter „… Std. bestätigt“ einer Mitarbeiterin, in dieser Reihenfolge: bezahlte
+ * Abwesenheitsstunden mit der Gesamtzahl der Woche (blau), „* abrechnen ohne Lohn: … Std.“ (violett).
+ * @returns {Array<{text: string, farbe: 'blau'|'violett'}>}
+ */
+export function summenZusatz(ma) {
+  return [
+    { text: abwesenheitSummenText(ma), farbe: 'blau' },
+    { text: ohneLohnSummenText(ma), farbe: 'violett' },
+  ].filter((z) => z.text);
 }
 
 /**
@@ -358,7 +422,10 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     // Zweite Zeile in der Summe („* abrechnen ohne Lohn: … Std.“) nur auf Seiten mit so markierten
     // Einsätzen – alle anderen Blätter behalten ihre Maße.
     const mitOhneLohn = hatOhneLohn(gruppe);
-    const SUMME_H = mitOhneLohn ? 34 : 22;
+    // Ebenso die Zeile „+ 24 Urlaub = 48 Std.“ (bezahlte Abwesenheitsstunden): Die Summe ist so hoch
+    // wie die meisten Zusatzzeilen einer Mitarbeiterin auf der Seite.
+    const zusatz = gruppe.map(summenZusatz);
+    const SUMME_H = 22 + 12 * Math.max(0, ...zusatz.map((z) => z.length));
     // Legende: in der Regel eine Zeile; eine zweite nur, wenn abweichende Ist-Zeit UND * vorkommen.
     const logoBreite = logo ? 16 * (LOGO_BREITE / LOGO_HOEHE) : 0;
     const legende = legendeZeilen(
@@ -413,10 +480,14 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
       const t = pdfText(`${stundenDe(min)} Std. bestätigt`);
       page.drawText(t, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(t, 9.5), y: yr - 15, size: 9.5, font: bold, color: F.schwarz });
       if (offen) page.drawText(pdfText(`${offen} offen`), { x: xSp(i) + 6, y: yr - 15, size: 9, font: bold, color: F.orange });
-      const nurAbrechnen = mitOhneLohn ? pdfText(ohneLohnSummenText(ma)) : '';
-      if (nurAbrechnen) {
-        page.drawText(nurAbrechnen, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(nurAbrechnen, 9), y: yr - 27, size: 9, font: bold, color: F.violett });
-      }
+      // Zusatzzeilen direkt unter der Summe (rechtsbündig). Sie passen in aller Regel mit 9 pt; bei
+      // sehr vielen Stunden wird die Zeile kleiner, nie breiter als die Spalte.
+      zusatz[i].forEach((z, n) => {
+        const roh = pdfText(z.text);
+        const gr = passendeGroesse(roh, bold, 9, colW - 12);
+        const text = kuerzen(roh, bold, gr, colW - 12);
+        page.drawText(text, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(text, gr), y: yr - 27 - 12 * n, size: gr, font: bold, color: F[z.farbe] });
+      });
     });
     const bottom = yr - SUMME_H;
 
@@ -443,6 +514,13 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
   return pdf.save();
 }
 
+/** Größte Schriftgröße (in Viertelschritten, nie unter 6,5), mit der der Text gedruckt in die Breite passt. */
+export function passendeGroesse(s, f, size, max) {
+  let gr = size;
+  while (gr > 6.5 && druckbreite(s, f, gr) > max) gr -= 0.25;
+  return gr;
+}
+
 function kuerzen(s, f, size, max) {
   let t = pdfText(s);
   if (f.widthOfTextAtSize(t, size) <= max) return t;
@@ -455,10 +533,8 @@ function zeichneEintrag(page, e, x, y, breite, size, lineH, font, bold) {
     const farbe = e.grund === 'Krank' ? F.rot : F.blau;
     const t = pdfText(e.praefix + e.grund);
     page.drawText(t, { x, y, size: size + 0.5, font: bold, color: farbe });
-    if (e.stundenMin) {
-      const h = pdfText(stundenDe(e.stundenMin));
-      page.drawText(h, { x: x + breite - bold.widthOfTextAtSize(h, size), y, size, font: bold, color: farbe });
-    }
+    const h = pdfText(abwesenheitAnzeige(e));
+    if (h) page.drawText(h, { x: x + breite - bold.widthOfTextAtSize(h, size), y, size, font: bold, color: farbe });
     return;
   }
   const abgesagt = e.status === 'abgesagt';

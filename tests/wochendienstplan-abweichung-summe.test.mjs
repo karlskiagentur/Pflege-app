@@ -1,7 +1,10 @@
-// Wochendienstplan aller Mitarbeiter (Wunsch der Geschäftsleitung, 25.11.2026):
-// Hat die Mitarbeiterin eine andere Zeit bestätigt als geplant (z. B. 2 Std. bei 14.45–16.00), steht
-// die Zahl FETT da – wie auf dem Stundenzettel. So wundert sich niemand, dass Zahl und Zeitfenster
-// nicht zusammenpassen.
+// Wochendienstplan aller Mitarbeiter (Wünsche der Geschäftsleitung, 25.11.2026):
+// 1. Hat die Mitarbeiterin eine andere Zeit bestätigt als geplant (z. B. 2 Std. bei 14.45–16.00), steht
+//    die Zahl FETT da – wie auf dem Stundenzettel. So wundert sich niemand, dass Zahl und Zeitfenster
+//    nicht zusammenpassen.
+// 2. Vom Büro eingetragene Stunden für Urlaub und Krank stehen unter der Wochensumme und werden
+//    dazugezählt („+ 24 Urlaub = 48 Std.“). Die Zeile „… Std. bestätigt“ bleibt die gearbeitete Zeit.
+// 3. Gleitzeit zählt wie auf dem Stundenzettel nicht dazu – ihre Stunden stehen in Klammern.
 // Alle Daten frei erfunden. Aufruf: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,6 +64,7 @@ function texteMitStil(bytes) {
 
 // Farben des Blatts (api/_wochenuebersicht.js)
 const BLAU = '0.11 0.42 0.68';
+const VIOLETT = '0.42 0.25 0.63';
 
 // ================================================================ 1) abweichende Ist-Zeit
 test('Meldung 25.11.: 2 Std. bestätigt bei 14.45–16.00 -> die Zahl ist fett; bestätigt wie geplant bleibt normal', () => {
@@ -197,8 +201,137 @@ test('Legende: eine Zeile, solange alles passt; abweichende Zeit UND * auf einer
   assert.ok(Math.abs(v2.y - (vertraulich.y)) < 0.01, 'die unterste Zeile steht immer auf derselben Höhe über dem Rand');
 });
 
-// ================================================================ 3) alles andere bleibt
-test('Ohne abweichende Zeit bleibt das Blatt, wie es war: Einträge, Summe, Legende, Fußzeilen', async () => {
+// ================================================================ 3) Wochensumme mit Abwesenheitsstunden
+test('Meldung 25.11.: drei Urlaubstage mit je 8 Std. -> unter „24 Std. bestätigt“ steht „+ 24 Urlaub = 48 Std.“', async () => {
+  const d = woche([
+    einsatz('2026-11-23', '08:00', '16:00'), einsatz('2026-11-24', '08:00', '16:00'), einsatz('2026-11-25', '08:00', '16:00'),
+    zeile('2026-11-26', 'Urlaub', std(8)), zeile('2026-11-27', 'Urlaub', std(8)), zeile('2026-11-28', 'Urlaub', std(8)),
+  ]);
+  const ma = d.mitarbeiter[0];
+  assert.deepEqual(wu.summen(ma), { min: 1440, offen: 0 }, '„bestätigt“ bleibt die gearbeitete Zeit');
+  assert.deepEqual(wu.summeAbwesenheit(ma), { min: 1440, teile: [{ art: 'Urlaub', min: 1440 }] });
+  assert.equal(wu.abwesenheitSummenText(ma), '+ 24 Urlaub = 48 Std.');
+  assert.deepEqual(wu.summenZusatz(ma), [{ text: '+ 24 Urlaub = 48 Std.', farbe: 'blau' }]);
+  const texte = texteMitStil(await pdf(d));
+  const bestaetigt = texte.find((t) => t.text === '24 Std. bestätigt');
+  const zusatz = texte.find((t) => t.text === '+ 24 Urlaub = 48 Std.');
+  assert.ok(bestaetigt && zusatz, 'beide Zeilen stehen im PDF');
+  assert.ok(zusatz.fett && zusatz.size === 9);
+  assert.ok(Math.abs((bestaetigt.y - zusatz.y) - 12) < 0.01, 'direkt unter der Summe');
+  // rechtsbündig an derselben Kante
+  const doc = await PDFDocument.create();
+  const fett = await doc.embedFont(StandardFonts.HelveticaBold);
+  assert.ok(Math.abs((bestaetigt.x + fett.widthOfTextAtSize(bestaetigt.text, 9.5)) - (zusatz.x + fett.widthOfTextAtSize(zusatz.text, 9))) < 0.01);
+});
+
+test('Wochensumme: Krank zählt nur mit eingetragenen Stunden (eigene Zeile oder abgesagte Einsätze); Gleitzeit, Abwesend und Urlaub ohne Stunden nie', () => {
+  const d = woche([
+    einsatz('2026-11-23', '08:00', '16:00', 7.5),
+    ausfall('2026-11-24', '08:00', '12:00', 'Krank', std(5)), ausfall('2026-11-24', '13:00', '16:00', 'Krank', std(3)), // 8 Std. an zwei abgesagten Einsätzen
+    zeile('2026-11-25', 'Krank', std(8)),                                 // eigene Zeile mit Stunden
+    zeile('2026-11-26', 'Urlaub', std(7.7)),                              // 7:42
+    zeile('2026-11-27', 'Gleitzeit', std(6)),                             // Zeitkonto: zählt nicht
+    zeile('2026-11-28', 'Abwesend', std(4)),                              // nie Stunden
+    // Kollege: Minijob krank (ohne Stunden), Urlaub ohne Stunden und mit 0:00, abgesagter Urlaub mit Stunden
+    ausfall('2026-11-24', '09:00', '10:00', 'Krank', { Pfleger_ID: [MA2] }),
+    zeile('2026-11-25', 'Urlaub', { Pfleger_ID: [MA2] }),
+    zeile('2026-11-26', 'Urlaub', { Pfleger_ID: [MA2], ...std(0) }),
+    zeile('2026-11-27', 'Urlaub', { Pfleger_ID: [MA2], Status: 'Abgesagt', ...std(8) }),
+    einsatz('2026-11-23', '08:00', '10:00', undefined, { Pfleger_ID: [MA2] }),
+  ]);
+  const [erika, otto] = d.mitarbeiter;
+  assert.deepEqual(wu.summeAbwesenheit(erika), { min: 462 + 960, teile: [{ art: 'Urlaub', min: 462 }, { art: 'Krank', min: 960 }] });
+  // Reihenfolge wie auf dem Stundenzettel: Urlaub vor Krank; Gesamt = 7,5 + 7,7 + 16 = 31,2
+  assert.equal(wu.abwesenheitSummenText(erika), '+ 7,7 Urlaub + 16 Krank = 31,2 Std.');
+  assert.deepEqual(wu.summen(erika), { min: 450, offen: 0 });
+  // Kollege: nichts zu zählen -> keine Zusatzzeile, Summe wie bisher
+  assert.deepEqual(wu.summeAbwesenheit(otto), { min: 0, teile: [] });
+  assert.equal(wu.abwesenheitSummenText(otto), '');
+  assert.deepEqual(wu.summenZusatz(otto), []);
+  assert.deepEqual(wu.summen(otto), { min: 120, offen: 0 });
+  // nichts davon wirft
+  for (const x of [undefined, null, {}, { tage: null }, { tage: { a: [null, 7, {}] } }]) {
+    assert.deepEqual(wu.summeAbwesenheit(x), { min: 0, teile: [] });
+    assert.equal(wu.abwesenheitSummenText(x), '');
+  }
+});
+
+test('Gleitzeit-Stunden stehen in Klammern (zählen nicht), Urlaub und Krank als Zahl; ohne Stunden steht nur die Art da', async () => {
+  const a = (grund, stundenMin) => ({ art: 'abwesenheit', grund, stundenMin });
+  assert.equal(wu.abwesenheitAnzeige(a('Urlaub', 480)), '8');
+  assert.equal(wu.abwesenheitAnzeige(a('Krank', 210)), '3,5');
+  assert.equal(wu.abwesenheitAnzeige(a('Gleitzeit', 360)), '(6)');
+  assert.equal(wu.abwesenheitAnzeige(a('Gleitzeit', 462)), '(7,7)');
+  for (const leer of [a('Urlaub', null), a('Urlaub', 0), a('Krank', null), a('Abwesend', null), a('Gleitzeit', undefined), null, undefined, {}]) {
+    assert.equal(wu.abwesenheitAnzeige(leer), '');
+  }
+  const d = woche([zeile('2026-11-23', 'Urlaub', std(8)), zeile('2026-11-24', 'Gleitzeit', std(6)), zeile('2026-11-25', 'Krank')]);
+  const texte = texteMitStil(await pdf(d));
+  assert.ok(texte.some((t) => t.text === '8' && t.fett));
+  assert.ok(texte.some((t) => t.text === '(6)' && t.fett));
+  assert.ok(!texte.some((t) => t.text === '6'), 'Gleitzeit nie ohne Klammern');
+  // in der Wochensumme steht nur der Urlaub
+  assert.ok(texte.some((t) => t.text === '+ 8 Urlaub = 8 Std.'));
+});
+
+test('Summenblock: Zusatzzeilen direkt unter der Summe – erst Abwesenheit (blau), dann „* abrechnen ohne Lohn“ (violett); Höhe nach der längsten Spalte', async () => {
+  const d = woche([
+    // Erika: Urlaub UND ein Einsatz „Abrechnen ohne Lohn“ -> zwei Zusatzzeilen
+    einsatz('2026-11-23', '08:00', '16:00'),
+    zeile('2026-11-24', 'Urlaub', std(8)),
+    einsatz('2026-11-25', '13:45', '15:00', null, { 'Abrechnen ohne Lohn': true }),
+    // Otto: nur „Abrechnen ohne Lohn“ -> eine Zusatzzeile, direkt unter seiner Summe
+    einsatz('2026-11-23', '08:00', '10:00', undefined, { Pfleger_ID: [MA2] }),
+    einsatz('2026-11-24', '10:00', '11:00', null, { Pfleger_ID: [MA2], Status: 'Abgesagt', 'Abrechnen ohne Lohn': true }),
+  ]);
+  const [erika, otto] = d.mitarbeiter;
+  assert.deepEqual(wu.summenZusatz(erika), [
+    { text: '+ 8 Urlaub = 16 Std.', farbe: 'blau' },
+    { text: '* abrechnen ohne Lohn: 1,25 Std.', farbe: 'violett' },
+  ]);
+  assert.deepEqual(wu.summenZusatz(otto), [{ text: '* abrechnen ohne Lohn: 1 Std.', farbe: 'violett' }]);
+  const texte = texteMitStil(await pdf(d));
+  const y = (t) => texte.find((x) => x.text === t).y;
+  const summeErika = y('8 Std. bestätigt');
+  const summeOtto = y('2 Std. bestätigt');
+  assert.ok(Math.abs(summeErika - summeOtto) < 0.01);
+  assert.ok(Math.abs((summeErika - y('+ 8 Urlaub = 16 Std.')) - 12) < 0.01);
+  assert.ok(Math.abs((summeErika - y('* abrechnen ohne Lohn: 1,25 Std.')) - 24) < 0.01);
+  assert.ok(Math.abs((summeOtto - y('* abrechnen ohne Lohn: 1 Std.')) - 12) < 0.01, 'ohne Leerzeile');
+  const farbe = (t) => texte.find((x) => x.text === t).farbe;
+  assert.equal(farbe('+ 8 Urlaub = 16 Std.'), BLAU);
+  assert.equal(farbe('* abrechnen ohne Lohn: 1,25 Std.'), VIOLETT);
+  assert.equal(farbe('* abrechnen ohne Lohn: 1 Std.'), VIOLETT);
+  // alle Zusatzzeilen liegen über der unteren Tabellenlinie (Summe + 2 Zeilen = 46 pt hoch)
+  const legende = texte.find((t) => t.text.startsWith('Zahl rechts = '));
+  assert.ok(y('* abrechnen ohne Lohn: 1,25 Std.') > legende.y + 13, 'Zusatzzeile über der Tabellenunterkante');
+});
+
+test('Sehr viele Stunden: die Zusatzzeile wird kleiner, nie breiter als die Spalte', async () => {
+  const doc = await PDFDocument.create();
+  const fett = await doc.embedFont(StandardFonts.HelveticaBold);
+  const spalte = (841.89 - 2 * 26 - 78) / 4 - 12;
+  // üblich: passt mit 9 pt
+  for (const t of ['+ 24 Urlaub = 48 Std.', '+ 8 Urlaub + 16 Krank = 48 Std.', '+ 40 Urlaub + 40 Krank = 119,75 Std.']) {
+    assert.equal(wu.passendeGroesse(t, fett, 9, spalte), 9, t);
+    assert.ok(druckbreite(t, fett, 9) <= spalte);
+  }
+  // Tippfehler-Woche (jeden Tag 24 Std. Urlaub und 23,75 Std. Krank): kleiner, aber in der Spalte
+  const d = woche(BEREICH.tage.flatMap((tag) => [zeile(tag, 'Urlaub', std(24)), zeile(tag, 'Krank', std(23.75))]));
+  const text = wu.abwesenheitSummenText(d.mitarbeiter[0]);
+  assert.equal(text, '+ 168 Urlaub + 166,25 Krank = 334,25 Std.');
+  const gr = wu.passendeGroesse(text, fett, 9, spalte);
+  assert.ok(gr < 9 && gr >= 6.5, String(gr));
+  assert.ok(druckbreite(text, fett, gr) <= spalte);
+  const imPdf = texteMitStil(await pdf(d)).find((t) => t.text === text);
+  assert.ok(imPdf && imPdf.size === gr, 'im PDF mit der passenden Größe, ungekürzt');
+  // nie kleiner als 6,5 pt (dann kürzt der Renderer mit „…“)
+  assert.equal(wu.passendeGroesse('x'.repeat(400), fett, 9, spalte), 6.5);
+  assert.equal(wu.passendeGroesse('', fett, 9, spalte), 9);
+});
+
+// ================================================================ 4) alles andere bleibt
+test('Ohne abweichende Zeit und ohne Abwesenheitsstunden bleibt das Blatt, wie es war: Einträge, Summe, Legende, Fußzeilen', async () => {
   const d = woche([
     einsatz('2026-11-23', '08:00', '09:30'),
     einsatz('2026-11-24', '08:00', '09:00', null),                             // offen
@@ -211,6 +344,7 @@ test('Ohne abweichende Zeit bleibt das Blatt, wie es war: Einträge, Summe, Lege
   assert.deepEqual(Object.keys(ma.tage['2026-11-23'][0]), ['art', 'klient', 'von', 'bis', 'istMin', 'planMin', 'status', 'markiert']);
   assert.deepEqual(Object.keys(ma.tage['2026-11-25'][0]), ['art', 'grund', 'notiz', 'stundenMin']);
   assert.deepEqual(wu.summen(ma), { min: 90, offen: 2 });
+  assert.deepEqual(wu.summenZusatz(ma), []);
   assert.equal(wu.hatAbweichung(d.mitarbeiter), false);
   const texte = texteMitStil(await pdf(d));
   assert.deepEqual(texte.filter((t) => t.text.startsWith('Zahl rechts = ')).map((t) => t.text), [wu.LEGENDE]);
