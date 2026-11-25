@@ -103,12 +103,16 @@ test('Hervorhebung „Storniert“ + Haken zählt genauso; Haken ohne Absage ble
 });
 
 test('Haken an einer Zeile ohne Klient (Urlaub) hat weiter keine Bedeutung', () => {
-  const sp = freitag([{ id: 'recU', fields: { Pfleger_ID: ['recMA00000000001'], Datum: '2026-11-20', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt', [FELD]: true } }]);
+  const urlaub = (status) => [{ id: 'recU', fields: { Pfleger_ID: ['recMA00000000001'], Datum: '2026-11-20', 'Abwesend/Urlaub': 'Urlaub', Status: status, [FELD]: true } }];
+  const sp = freitag(urlaub('Bestätigt'));
   const eintrag = sp.tage['2026-11-20'][0];
   assert.equal(eintrag.art, 'abwesenheit');
   assert.equal('ohneLohn' in eintrag, false);
   assert.equal(wu.istOhneLohn(eintrag), false);
   assert.equal(wu.hatOhneLohn([sp]), false);
+  // Ein wieder abgesagter Urlaub steht seit 25.11.2026 nicht mehr auf dem Blatt (vorher weiter als
+  // „Urlaub“) – mit oder ohne Haken; der Mitarbeiter hat dann in dieser Woche keine Zeile.
+  assert.equal(freitag(urlaub('Abgesagt')), undefined);
 });
 
 // ================================================================ Summe „abrechnen ohne Lohn“

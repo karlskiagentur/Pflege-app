@@ -10,6 +10,7 @@ const {
   ERSTER_STICHTAG_MONAT, STICHTAG, monatPlus, abrechnungszeitraum, abrechnungsmonatFuer, imZeitraum, zeitraumText,
   ersterTagDesZeitraums, abgeschlossenerMonat, ABWESENHEIT_STUNDEN_FELD, ABWESENHEIT_STUNDEN_MAX_MIN, abwesenheitsMinuten,
   ABWESENHEIT_MIT_STUNDEN, ABWESENHEIT_BEZAHLT, abwesenheitMitStunden, abwesenheitBezahlt,
+  ABWESENHEIT_STUNDEN_FREIWILLIG, abwesenheitStundenFreiwillig,
 } = abr;
 
 // Alle Kalendertage von..bis (einschließlich) als 'YYYY-MM-DD'
@@ -123,21 +124,26 @@ test('Mitarbeiter-App rechnet „Lohn / Zeit“ im selben Zeitraum (statt Kalend
 
 // ---------------------------------------------------------------- Urlaub / Gleitzeit / Krank (07.11.2026)
 // Wie in üblichen Betrieben (Vorgabe Karl): Urlaub mit Stunden (bezahlt), Gleitzeit mit Stunden
-// (Zeitkonto, nicht in der Monatssumme), Krank und Abwesend nur der Tag – nie eine Zahl.
-test('Arten: Stunden nur bei Urlaub und Gleitzeit, bezahlt nur Urlaub', () => {
+// (Zeitkonto, nicht in der Monatssumme), Abwesend nur der Tag – nie eine Zahl.
+// Krank (Wunsch Geschäftsleitung 25.11.2026): der Tag immer; Stunden nur, wenn das Büro sie einträgt
+// (Teil-/Vollzeit) – dann bezahlt wie Urlaub; ohne Eintrag (Minijob) bleibt es beim Tag.
+test('Arten: Stunden gehören zu Urlaub und Gleitzeit, bei Krank sind sie freiwillig; bezahlt sind Urlaub und Krank', () => {
   assert.equal(ABWESENHEIT_STUNDEN_FELD, 'Stunden Urlaub/Gleitzeit');
   assert.deepEqual(ABWESENHEIT_MIT_STUNDEN, ['Urlaub', 'Gleitzeit']);
-  assert.deepEqual(ABWESENHEIT_BEZAHLT, ['Urlaub']);
-  for (const [art, mit, bez] of [
-    ['Urlaub', true, true], [' Urlaub ', true, true], ['Gleitzeit', true, false], ['Krank', false, false],
-    ['Abwesend', false, false], ['', false, false], [undefined, false, false], ['urlaub', false, false],
+  assert.deepEqual(ABWESENHEIT_STUNDEN_FREIWILLIG, ['Krank']);
+  assert.deepEqual(ABWESENHEIT_BEZAHLT, ['Urlaub', 'Krank']);
+  for (const [art, mit, frei, bez] of [
+    ['Urlaub', true, false, true], [' Urlaub ', true, false, true], ['Gleitzeit', true, false, false],
+    ['Krank', false, true, true], [' Krank ', false, true, true], ['Abwesend', false, false, false],
+    ['', false, false, false], [undefined, false, false, false], ['urlaub', false, false, false], ['krank', false, false, false],
   ]) {
     assert.equal(abwesenheitMitStunden(art), mit, `mitStunden ${art}`);
+    assert.equal(abwesenheitStundenFreiwillig(art), frei, `freiwillig ${art}`);
     assert.equal(abwesenheitBezahlt(art), bez, `bezahlt ${art}`);
   }
 });
 
-test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 Std. = Tippfehler, Krank nie', () => {
+test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 Std. = Tippfehler, Abwesend nie', () => {
   assert.equal(ABWESENHEIT_STUNDEN_MAX_MIN, 1440);
   const m = (v, art = 'Urlaub') => abwesenheitsMinuten({ [ABWESENHEIT_STUNDEN_FELD]: v }, art);
   assert.equal(m(8 * 3600), 480);
@@ -151,10 +157,20 @@ test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 
   for (const falsch of [undefined, null, '8:00', '28800', -60, NaN, Infinity, [28800], { s: 1 }]) {
     assert.equal(m(falsch), null, `ungültig: ${String(falsch)}`);
   }
-  // Krank, Abwesend und unbekannte Arten haben nie Stunden – auch wenn versehentlich etwas drinsteht
-  for (const art of ['Krank', 'Abwesend', '', undefined, null, 'Sonderurlaub']) {
+  // Abwesend und unbekannte Arten haben nie Stunden – auch wenn versehentlich etwas drinsteht
+  for (const art of ['Abwesend', '', undefined, null, 'Sonderurlaub']) {
     assert.equal(abwesenheitsMinuten({ [ABWESENHEIT_STUNDEN_FELD]: 8 * 3600 }, art), null, String(art));
   }
+  // Krank: eingetragene Stunden gelten genauso (Teil-/Vollzeit) …
+  assert.equal(m(8 * 3600, 'Krank'), 480);
+  assert.equal(m(3 * 3600 + 30 * 60, 'Krank'), 210);
+  assert.equal(m(24 * 3600, 'Krank'), 1440);
+  // … ohne Eintrag, mit 0:00 oder mit einem Tippfehler bleibt es beim Tag (Minijob)
+  for (const leer of [undefined, null, 0, 29, '8:00', -60, 24 * 3600 + 60]) {
+    assert.equal(m(leer, 'Krank'), null, `Krank ohne Stunden: ${String(leer)}`);
+  }
+  assert.equal(m(30, 'Krank'), 1);             // ab einer Minute ist es ein Eintrag
+  assert.equal(m(0, 'Urlaub'), 0);             // bei Urlaub bleibt 0:00 ein bewusster Eintrag
   assert.equal(abwesenheitsMinuten(undefined, 'Urlaub'), null);
   assert.equal(abwesenheitsMinuten(null, 'Urlaub'), null);
   assert.equal(abwesenheitsMinuten('Stunden Urlaub/Gleitzeit', 'Urlaub'), null);
@@ -162,7 +178,7 @@ test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 
   assert.equal(abwesenheitsMinuten({ 'Stunden Urlaub/Krank': 8 * 3600 }, 'Urlaub'), null); // alter Arbeitsname, nie live
 });
 
-test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; in „Lohn / Zeit“ nur eingetragener Urlaub', () => {
+test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; in „Lohn / Zeit“ nur eingetragene Stunden (Urlaub, Krank)', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   // gleiche Regel wie api/_zeitkonto.js: nur eine Zeile OHNE Klient ist eine Abwesenheit
   assert.ok(app.includes("getValue(t, 'Patient') || getValue(t, 'Patient_Name') ? '' : getValue(t, 'Abwesend/Urlaub').trim()"));
@@ -185,8 +201,19 @@ test('Mitarbeiter-App: Urlaub/Abwesenheit als eigene Karte, ohne Zeiterfassung; 
   assert.ok(app.includes("abwesenheitVon(t) ? abwesenheitsMinuten(t && t.fields ? t.fields : t, abwesenheitVon(t)) : null"));
   assert.ok(app.includes('.filter((t) => abwesenheitBezahlt(abwesenheitVon(t)) && !abwesenheitAbgesagt(t) && (abwesenheitsStundenMin(t) || 0) > 0)'));
   assert.ok(app.includes(".filter((t) => String(getValue(t, 'Datum') || '').slice(0, 10) < zeitHeute);"));
-  assert.ok(app.includes('+ zeitAbwesenheiten.reduce((s, t) => s + (abwesenheitsStundenMin(t) || 0) * 60, 0);'));
-  assert.ok(app.includes('const zeitZeilen = [...zeitEinsaetze, ...zeitAbwesenheiten].sort(zeitReihenfolge);'));
+  assert.ok(app.includes('+ zeitAbwesenheiten.reduce((s, t) => s + (abwesenheitsStundenMin(t) || 0) * 60, 0)'));
+  // ebenso Stunden an ABGESAGTEN Einsätzen mit „Krank“ (Regel 7 in api/_zeitkonto.js, 25.11.2026): eine
+  // Regel für App und Stundenzettel, gleiche Zeitregel, gesichert gegen einen Fehler (App bleibt nie stehen)
+  assert.match(app, /import \{ bezahlteAusfallTage, type BezahlterAusfallTag \} from '\.\.\/api\/_zeitkonto';/);
+  assert.match(app, /const zeitAusfallTage = ausfallTageSicher\(zeitTermine \|\| \[\]\)\s*\.filter\(\(a\) => imZeitraum\(a\.datum, zeitZeitraum\) && a\.datum < zeitHeute\)/);
+  const sicher = app.slice(app.indexOf('const ausfallTageSicher = ')).replace(/\s+/g, ' ');
+  assert.ok(sicher.startsWith("const ausfallTageSicher = (zeilen: any[]): BezahlterAusfallTag[] => { try { return bezahlteAusfallTage(zeilen); } "
+    + "catch (err) { if (!ausfallTageFehlerGemeldet) { ausfallTageFehlerGemeldet = true; reportClientError('zeitnachweis-ausfalltage', err, {}); } return []; } };"),
+    'Absicherung der Regel in der App verändert');
+  assert.ok(app.includes('+ zeitAusfallTage.reduce((s, t) => s + t.ausfallTag.min * 60, 0);'));
+  assert.ok(app.includes('const zeitZeilen = [...zeitEinsaetze, ...zeitAbwesenheiten, ...zeitAusfallTage].sort(zeitReihenfolge);'));
+  assert.ok(app.includes('{t.ausfallTag.art} · {einsaetzeAbgesagtText(t.ausfallTag.einsaetze)}'));
+  assert.ok(app.includes('{stdMin(t.ausfallTag.min * 60)} Std.'));
   assert.ok(app.includes('for (const t of zeitZeilen) {'));
   // die Karte nennt eingetragene Stunden (nicht bei abgesagtem Urlaub; Krank hat nie welche):
   // Urlaub „Auf dem Stundenzettel“, Gleitzeit „aus dem Zeitkonto“

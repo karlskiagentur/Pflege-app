@@ -1,5 +1,6 @@
-import { airtable, fetchAll, sendError, esc, cronErlaubt, TABLES } from './_lib.js';
+import { airtable, fetchAll, sendError, reportError, esc, cronErlaubt, TABLES } from './_lib.js';
 import { abgeschlossenerMonat, abrechnungszeitraum, ersterTagDesZeitraums, imZeitraum, zeitraumText } from './_abrechnung.js';
+import { ABWESENHEIT_FELD, ausfallWegen } from './_zeitkonto.js';
 
 // Vercel-Cron (täglich): Am ersten Tag eines Abrechnungsmonats wird der vorige abgeschlossen –
 // seit November 2026 am 27. (Zeitraum 27. bis 26., api/_abrechnung.js; der Übergangsmonat
@@ -46,6 +47,7 @@ export default async function handler(req, res) {
     // einen Stundenzettel (sonst entstünden 0-Stunden-Zettel für alle, die noch nicht über den
     // digitalen Dienstplan laufen). Eine Urlaubs-/Krankzeile zählt dabei mit: Ihre eingetragenen
     // Stunden werden bezahlt und stehen auf dem Zettel – auch in einem Monat ganz ohne Einsatz.
+    // (Abgesagte Einsätze mit „Krank“ o. ä. zählen ebenfalls – siehe die zweite Abfrage unten.)
     // Grob über {Monat} (der Zeitraum berührt höchstens zwei Kalendermonate), genau über das Datum.
     const monate = [...new Set([zeitraum.von.slice(0, 7), zeitraum.bis.slice(0, 7)])];
     const formel = `AND(OR(${monate.map((m) => `{Monat} = '${esc(m)}'`).join(', ')}), {Status} != 'Abgesagt')`;
@@ -56,6 +58,26 @@ export default async function handler(req, res) {
     const mitEinsatz = new Set(einsaetze
       .filter((b) => imZeitraum(b.fields && b.fields.Datum, zeitraum))
       .flatMap((b) => (b.fields && b.fields.Pfleger_ID) || []).map(String));
+
+    // Auch wer im ganzen Zeitraum fehlte und nur abgesagte Einsätze mit „Krank“ o. ä. hat – so trägt
+    // das Büro Krankheit ein (Regel 7 in api/_zeitkonto.js) –, bekommt einen Zettel: Die Tage stehen
+    // drauf. Eigene Abfrage, damit die obige bleibt, wie sie ist; scheitert sie (z. B. Spalte
+    // umbenannt), läuft der Monatslauf ohne sie weiter und der Betreiber wird alarmiert.
+    try {
+      const formelAusfall = `AND(OR(${monate.map((m) => `{Monat} = '${esc(m)}'`).join(', ')}), {Status} = 'Abgesagt', ({${ABWESENHEIT_FELD}} & '') != '')`;
+      const felder = ['Pfleger_ID', 'Datum', 'Status', 'Patient', 'Patient_Name', ABWESENHEIT_FELD];
+      const ausfaelle = await fetchAll(
+        TABLES.BESUCHE,
+        `filterByFormula=${encodeURIComponent(formelAusfall)}&${felder.map((f) => `fields%5B%5D=${encodeURIComponent(f)}`).join('&')}`
+      );
+      for (const b of ausfaelle) {
+        const f = (b && b.fields) || {};
+        if (!imZeitraum(f.Datum, zeitraum) || !ausfallWegen(f)) continue;
+        for (const id of f.Pfleger_ID || []) mitEinsatz.add(String(id));
+      }
+    } catch (e) {
+      reportError('api/stundenzettel-monatslauf', 'Abgesagte Einsätze mit Abwesenheit nicht lesbar – Monatslauf ohne sie fortgesetzt', { status: e && e.status });
+    }
     const zuErstellen = aktive.filter((p) => mitEinsatz.has(String(p.id)));
 
     // Vorhandene Zeilen des Monats: fertige (finaler Zettel vorhanden) bleiben unberührt,

@@ -71,42 +71,62 @@ export function abgeschlossenerMonat(heute) {
   return monatPlus(ym, -1);
 }
 
-// Urlaub, Gleitzeit, Krank, Abwesend – wie in üblichen Betrieben (Vorgabe Karl 07.11.2026):
+// Urlaub, Gleitzeit, Krank, Abwesend – wie in üblichen Betrieben (Vorgabe Karl 07.11.2026; Krank mit
+// Stunden: Wunsch Geschäftsleitung 25.11.2026):
 // - Urlaub:    Das Büro trägt die Stunden des Tages ein (Spalte „Stunden Urlaub/Gleitzeit“).
 //              Bezahlt – zählt auf dem Stundenzettel zur Monatssumme.
 // - Gleitzeit: Das Büro trägt die Stunden ein. Freizeitausgleich aus dem Zeitkonto – steht auf dem
 //              Stundenzettel, zählt aber NICHT zur Monatssumme (die Stunden wurden schon gearbeitet,
 //              sonst wären sie doppelt bezahlt).
-// - Krank:     nur der Tag, keine Stunden („–“) – die Lohnfortzahlung rechnet das Lohnbüro.
+// - Krank:     Der Tag steht immer auf dem Stundenzettel. Stunden nur, wenn das Büro sie einträgt
+//              (dieselbe Spalte; üblich bei Teil- und Vollzeit): Dann stehen sie da und zählen zur
+//              Monatssumme. Ohne Eintrag (üblich beim Minijob) oder mit 0:00 bleibt es beim Tag („–“)
+//              – die Lohnfortzahlung rechnet dann das Lohnbüro.
 // - Abwesend und jede andere Art: nur der Tag, keine Stunden („–“).
 // Stunden gelten genau so, wie eingetragen (ganze Minuten, kein 15-Minuten-Takt, z. B. 7:42).
 // Von/Bis einer Abwesenheit ist nur das Zeitfenster und zählt nie. Keine Art zählt je zu den
-// geplanten, verplanten oder verkauften Stunden. Ob eine Zeile eine Abwesenheit ist (eigene Zeile
-// ohne Klient), prüft der Aufrufer (api/_zeitkonto.js, src/App.tsx).
+// geplanten, verplanten oder verkauften Stunden. Welche Zeile eine Abwesenheit ist (eigene Zeile
+// ohne Klient oder abgesagter Einsatz mit dieser Auswahl), prüft der Aufrufer (api/_zeitkonto.js,
+// src/App.tsx).
 export const ABWESENHEIT_STUNDEN_FELD = 'Stunden Urlaub/Gleitzeit';
 export const ABWESENHEIT_STUNDEN_MAX_MIN = 24 * 60; // mehr als ein ganzer Tag ist ein Tippfehler
-export const ABWESENHEIT_MIT_STUNDEN = ['Urlaub', 'Gleitzeit']; // hier trägt das Büro Stunden ein
-export const ABWESENHEIT_BEZAHLT = ['Urlaub'];                  // diese Stunden zählen zur Monatssumme
+export const ABWESENHEIT_MIT_STUNDEN = ['Urlaub', 'Gleitzeit'];   // hier gehören Stunden hin – fehlen sie, zählt der Tag 0:00
+export const ABWESENHEIT_STUNDEN_FREIWILLIG = ['Krank'];          // Stunden nur, wenn das Büro sie einträgt; sonst nur der Tag
+export const ABWESENHEIT_BEZAHLT = ['Urlaub', 'Krank'];           // eingetragene Stunden zählen zur Monatssumme
 
 const artText = (a) => String(a || '').trim();
-/** Trägt das Büro für diese Art Stunden ein (Urlaub, Gleitzeit)? */
+/** Gehören zu dieser Art immer Stunden (Urlaub, Gleitzeit)? Fehlen sie, zählt der Tag 0:00. */
 export const abwesenheitMitStunden = (a) => ABWESENHEIT_MIT_STUNDEN.includes(artText(a));
-/** Zählen die Stunden dieser Art zur Monatssumme (nur Urlaub)? */
+/** Kann das Büro zu dieser Art Stunden eintragen, muss es aber nicht (Krank)? */
+export const abwesenheitStundenFreiwillig = (a) => ABWESENHEIT_STUNDEN_FREIWILLIG.includes(artText(a));
+/** Zählen eingetragene Stunden dieser Art zur Monatssumme (Urlaub, Krank)? */
 export const abwesenheitBezahlt = (a) => ABWESENHEIT_BEZAHLT.includes(artText(a));
 
 /**
  * Stunden eines Abwesenheitstags laut Spalte „Stunden Urlaub/Gleitzeit“ (Airtable-Dauer in Sekunden).
  * @param {object} fields  Airtable-Felder der Dienstplan-Zeile
  * @param {string} abwesenheitsArt  z. B. „Urlaub“, „Gleitzeit“, „Krank“
- * @returns {number|null}  Minuten; null = Art ohne Stunden (Krank, Abwesend) oder nicht/ungültig eingetragen
+ * @returns {number|null}  Minuten; null = Art ohne Stunden (Abwesend), nicht/ungültig eingetragen
+ *   oder – nur bei Krank – 0:00 (dann gilt: nur der Tag)
  */
 export function abwesenheitsMinuten(fields, abwesenheitsArt) {
-  if (!abwesenheitMitStunden(abwesenheitsArt)) return null;
+  const freiwillig = abwesenheitStundenFreiwillig(abwesenheitsArt);
+  if (!abwesenheitMitStunden(abwesenheitsArt) && !freiwillig) return null;
   const v = fields && typeof fields === 'object' ? fields[ABWESENHEIT_STUNDEN_FELD] : undefined;
   if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
   const min = Math.round(v / 60);
-  return min <= ABWESENHEIT_STUNDEN_MAX_MIN ? min : null;
+  if (min > ABWESENHEIT_STUNDEN_MAX_MIN) return null;
+  // Urlaub/Gleitzeit: 0:00 ist ein bewusster Eintrag. Krank: 0:00 heißt „keine Stunden“ (nur der Tag).
+  return freiwillig && min === 0 ? null : min;
 }
+
+/**
+ * Zusatz zu einem Abwesenheitstag, der aus abgesagten Einsätzen stammt (Regel 7 in api/_zeitkonto.js),
+ * z. B. „3 Einsätze abgesagt“ – derselbe Wortlaut auf dem Stundenzettel und in der App.
+ * @param {number} anzahl
+ * @returns {string}
+ */
+export const einsaetzeAbgesagtText = (anzahl) => `${anzahl} ${anzahl === 1 ? 'Einsatz' : 'Einsätze'} abgesagt`;
 
 // „Abrechnen ohne Lohn“ (Wunsch Geschäftsleitung 23.11.2026): Das Büro kreuzt die Spalte an einem
 // Einsatz MIT Klient an, wenn der Einsatz dem Klienten berechnet wird, die Mitarbeiterin dafür aber

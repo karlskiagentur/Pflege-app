@@ -427,7 +427,8 @@ test('Soll und Ist je Einsatz getrennt; Soll-Summe nur über berechnete (bestät
 // ---------------------------------------------------------------- Urlaub / Gleitzeit / Krank / Abwesenheit (06./07.11.2026)
 // Eigene Dienstplan-Zeile OHNE Klient, Spalte „Abwesend/Urlaub“ gewählt (Uhrzeit optional). Wie in
 // üblichen Betrieben (Vorgabe Karl 07.11.2026): Urlaub mit eingetragenen Stunden zählt zur Monatssumme,
-// Gleitzeit steht nur da (Zeitkonto), Krank und Abwesend sind nur der Tag – nie eine Zahl.
+// Gleitzeit steht nur da (Zeitkonto), Abwesend ist nur der Tag – nie eine Zahl. Krank: der Tag;
+// Stunden nur, wenn das Büro sie einträgt (seit 25.11.2026) – Tests dazu: tests/krank-urlaub-stundenzettel.test.mjs.
 const abw = (datum, art, extra = {}) => ({
   id: `recAbw${String(++n).padStart(11, '0')}`,
   fields: { Datum: datum, Status: 'Geplant', 'Abwesend/Urlaub': art, ...extra },
@@ -482,11 +483,11 @@ test('Urlaub mit Uhrzeit: Von/Bis ist nur das Zeitfenster, eine Ist-Zeit zählt 
   assert.deepEqual(mit.abwesenheiten.map((a) => [a.von, a.bis, a.min]), [['06:00', '12:00', 480]]);
 });
 
-test('Gleitzeit steht mit Stunden da, zählt aber nicht zur Monatssumme; Krank und Abwesend haben nie Stunden', () => {
+test('Gleitzeit steht mit Stunden da, zählt aber nicht zur Monatssumme; Krank ohne Stunden und Abwesend sind nur der Tag', () => {
   const r = berechneZeitnachweis([
     b('2026-10-20', '08:00', '09:00'),
     abw('2026-10-19', 'Gleitzeit', std(6 * 3600)),
-    abw('2026-10-21', 'Krank', std(8 * 3600)), // versehentlich eingetragen: Krank bleibt ohne Zahl
+    abw('2026-10-21', 'Krank'),                // ohne eingetragene Stunden: nur der Tag
     abw('2026-10-22', 'Abwesend', { 'Tätigkeit': 'Arzttermin', Von: '10:00', Bis: '12:00', ...std(2 * 3600) }),
     abw('2026-10-16', 'Urlaub', std(8 * 3600)),
   ], { jetzt: ZEIT });
@@ -518,19 +519,37 @@ test('Urlaub zwischen zwei Einsätzen ändert die Anfahrt-/Pausenrechnung der Ei
   assert.equal(mit.abwesenheiten[0].grund, 'halber Tag');
 });
 
-test('Abgesagter oder künftiger Urlaub steht nicht auf dem Zettel – auch seine Stunden zählen nicht', () => {
+test('Abgesagter Urlaub steht nicht auf dem Zettel – auch seine Stunden zählen nicht', () => {
   const acht = std(8 * 3600);
   const r = berechneZeitnachweis([
     abw('2026-10-19', 'Urlaub', { Status: 'Abgesagt', ...acht }),
-    abw('2026-10-23', 'Urlaub', acht),       // heute ohne Uhrzeit: wie Einsätze erst ab morgen „vorbei“
-    abw('2026-10-26', 'Gleitzeit', acht),
+    abw('2026-10-20', 'Gleitzeit', { Status: 'Abgesagt', ...acht }),
+    abw('2026-10-21', 'Krank', { Status: 'Abgesagt', ...acht }),
   ], { jetzt: ZEIT });
   assert.deepEqual(r.abwesenheiten, []);
-  assert.deepEqual(r.ausgelassen, { abgesagt: 1, zukunft: 2 });
+  assert.deepEqual(r.ausgelassen, { abgesagt: 3, zukunft: 0 });
   assert.equal(r.summen.einsaetze, 0);
   assert.equal(r.summen.abwesenheitBezahltMin, 0);
   assert.equal(r.summen.abwesenheitZeitkontoMin, 0);
   assert.equal(r.summen.bezahltMin, 0);
+});
+
+test('Eingetragene Abwesenheit gilt für den ganzen Zeitraum – auch heute und an kommenden Tagen (seit 25.11.2026)', () => {
+  const acht = std(8 * 3600);
+  const r = berechneZeitnachweis([
+    abw('2026-10-23', 'Urlaub', acht),       // heute ohne Uhrzeit (früher: erst ab morgen)
+    abw('2026-10-26', 'Gleitzeit', acht),    // kommender Tag
+    b('2026-10-26', '08:00', '09:00'),       // ein kommender EINSATZ zählt weiterhin nicht
+  ], { jetzt: ZEIT });
+  assert.deepEqual(r.abwesenheiten.map((a) => [a.datum, a.art, a.min, a.bevorstehend]), [
+    ['2026-10-23', 'Urlaub', 480, true],
+    ['2026-10-26', 'Gleitzeit', 480, true],
+  ]);
+  assert.deepEqual(r.ausgelassen, { abgesagt: 0, zukunft: 1 });
+  assert.equal(r.summen.einsaetze, 0);
+  assert.equal(r.summen.abwesenheitBezahltMin, 480);
+  assert.equal(r.summen.abwesenheitZeitkontoMin, 480);
+  assert.equal(r.summen.bezahltMin, 480);
 });
 
 test('Auswahl an einem Einsatz MIT Klient: bleibt ein Einsatz (nie versteckt, bestätigbar)', () => {
@@ -599,11 +618,12 @@ test('Abwesenheitsgrund: ohne Wiederholung der Art und ohne Standardtext', () =>
   assert.equal(abwesenheit(null), '');
   assert.equal(termin({ Datum: '2026-10-20', 'Abwesend/Urlaub': 'Urlaub' }).abwesenheit, 'Urlaub');
   assert.equal(termin({ Datum: '2026-10-20' }).abwesenheit, '');
-  // Stunden nur bei Urlaub und Gleitzeit an einer eigenen Zeile ohne Klient – Krank/Abwesend nie
+  // Stunden an einer eigenen Zeile ohne Klient: Urlaub, Gleitzeit und – wenn eingetragen – Krank; Abwesend nie
   const sechs = { Datum: '2026-10-20', 'Stunden Urlaub/Gleitzeit': 6 * 3600 };
   assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Urlaub' }).stundenMin, 360);
   assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Gleitzeit' }).stundenMin, 360);
-  assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Krank' }).stundenMin, null);
+  assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Krank' }).stundenMin, 360);
+  assert.equal(termin({ Datum: '2026-10-20', 'Abwesend/Urlaub': 'Krank' }).stundenMin, null);
   assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Abwesend' }).stundenMin, null);
   assert.equal(termin(sechs).stundenMin, null);
   assert.equal(termin({ ...sechs, 'Abwesend/Urlaub': 'Urlaub', Patient: ['recPatTest0000001'] }).stundenMin, null);

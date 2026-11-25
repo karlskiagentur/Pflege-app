@@ -44,10 +44,11 @@ test('bestätigt: Ist-Zeit zählt; offen: vorbei ohne Ist; abgesagt: durchgestri
   assert.deepEqual(summen(sp), { min: 90, offen: 1 });
 });
 
-test('Urlaub mit Stunden zählt als Abwesenheit mit stundenMin; Krank ohne Stunden', () => {
+test('Urlaub mit Stunden zählt als Abwesenheit mit stundenMin; Krank ohne Stunden nur als Tag, mit eingetragenen Stunden mit Zahl', () => {
   const besuche = [
     besuch('rec4', { Datum: '2026-11-09', 'Abwesend/Urlaub': 'Urlaub', 'Stunden Urlaub/Gleitzeit': 28800 }), // 8 Std.
-    besuch('rec5', { Datum: '2026-11-10', 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 28800 }),  // zählt nie
+    besuch('rec5', { Datum: '2026-11-10', 'Abwesend/Urlaub': 'Krank' }),                                      // Minijob: nur der Tag
+    besuch('rec5b', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 28800 }), // Teil-/Vollzeit: eingetragene Stunden
   ];
   const d = baueWoche(besuche, PERSONAL, BEREICH, JETZT);
   const sp = d.mitarbeiter[0];
@@ -57,7 +58,8 @@ test('Urlaub mit Stunden zählt als Abwesenheit mit stundenMin; Krank ohne Stund
   assert.equal(urlaub.stundenMin, 480);
   const krank = sp.tage['2026-11-10'][0];
   assert.equal(krank.grund, 'Krank');
-  assert.equal(krank.stundenMin, null, 'Krank hat nie Stunden');
+  assert.equal(krank.stundenMin, null, 'Krank ohne eingetragene Stunden: nur der Tag');
+  assert.equal(sp.tage['2026-11-11'][0].stundenMin, 480, 'Krank mit eingetragenen Stunden (seit 25.11.2026)');
   // Abwesenheit zählt nicht in die Stundensumme des Blatts
   assert.equal(summen(sp).min, 0);
 });

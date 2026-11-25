@@ -379,9 +379,10 @@ test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zäh
     abwesend('rec0000000000023', { Datum: '2026-11-10', Von: '06:00', Bis: '12:00', 'Abwesend/Urlaub': 'Abwesend', 'Tätigkeit': 'Fortbildung' }),
     abwesend('rec0000000000024', { Datum: '2026-11-11', 'Abwesend/Urlaub': 'Urlaub', Status: 'Abgesagt', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }),
     abwesend('rec0000000000025', { Datum: '2026-11-12', 'Abwesend/Urlaub': 'Gleitzeit', 'Stunden Urlaub/Gleitzeit': 7 * 3600 + 42 * 60 }),
-    abwesend('rec0000000000026', { Datum: '2026-11-13', 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }), // Krank: nie Stunden
+    abwesend('rec0000000000026', { Datum: '2026-11-13', 'Abwesend/Urlaub': 'Krank' }),                                        // Krank ohne Stunden (Minijob): nur der Tag
+    abwesend('rec0000000000027', { Datum: '2026-11-14', 'Abwesend/Urlaub': 'Krank', 'Stunden Urlaub/Gleitzeit': 8 * 3600 }), // Krank mit eingetragenen Stunden (seit 25.11.2026)
   ], w);
-  const [mo, di, mi, don, fr] = plan.tage;
+  const [mo, di, mi, don, fr, sa] = plan.tage;
   assert.deepEqual(mo.eintraege.map((e) => [e.id, e.zeit, e.klient, e.taetigkeit, e.adresse, e.abwesenheit]), [
     ['rec0000000000022', 'ganztägig', 'Urlaub', '', '', 'Urlaub'],
     ['rec0000000000021', '08:00 – 09:00', 'Erika Musterfrau', 'Unterstützung', '', ''],
@@ -399,8 +400,11 @@ test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zäh
   assert.equal(don.abwesenheitMin, 462);
   assert.deepEqual(don.abwesenheiten, ['Gleitzeit']);
   assert.equal(fr.planMin, 0);
-  assert.equal(fr.abwesenheitMin, 0, 'Krank hat nie Stunden – auch wenn versehentlich etwas eingetragen ist');
+  assert.equal(fr.abwesenheitMin, 0, 'Krank ohne eingetragene Stunden: nur der Tag');
   assert.deepEqual(fr.abwesenheiten, ['Krank']);
+  assert.equal(sa.planMin, 0, 'eingetragene Krank-Stunden zählen nie zur geplanten Zeit');
+  assert.equal(sa.abwesenheitMin, 480, 'Krank mit eingetragenen Stunden: stehen in der Notiz');
+  assert.deepEqual(sa.abwesenheiten, ['Krank']);
   // vom Büro wieder abgesagter Urlaub: bleibt durchgestrichen sichtbar, zählt nicht
   assert.deepEqual(mi.eintraege.map((e) => [e.klient, e.abgesagt, e.hinweise.map((h) => h.text)]), [['Urlaub', true, ['Abgesagt']]]);
   assert.deepEqual(mi.abwesenheiten, []);
@@ -413,9 +417,10 @@ test('Wochenplan: Urlaub ohne Uhrzeit steht als „ganztägig“ zuerst und zäh
     { datum: '2026-11-10', art: 'Abwesend', min: null },
     { datum: '2026-11-12', art: 'Gleitzeit', min: 462 },
     { datum: '2026-11-13', art: 'Krank', min: null },
+    { datum: '2026-11-14', art: 'Krank', min: 480 },
   ]);
   assert.equal(abwesenheitNotiz(plan),
-    'Abwesenheit: Mo 09.11. Urlaub, Di 10.11. Abwesend, Do 12.11. Gleitzeit (7:42 Std.), Fr 13.11. Krank – kein Einsatz, nicht in der geplanten Zeit (Stunden siehe Stundenzettel).');
+    'Abwesenheit: Mo 09.11. Urlaub, Di 10.11. Abwesend, Do 12.11. Gleitzeit (7:42 Std.), Fr 13.11. Krank, Sa 14.11. Krank (8:00 Std.) – kein Einsatz, nicht in der geplanten Zeit (Stunden siehe Stundenzettel).');
   assert.equal(abwesenheitNotiz(wochenplan([], w)), '');
   assert.equal(abwesenheitNotiz(undefined), '');
 });
