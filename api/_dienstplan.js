@@ -14,8 +14,10 @@
 //    Wunsch Pflegedienst 06.11.2026) steht am Tag als eigene Zeile („Urlaub“, ganztägig oder mit
 //    Uhrzeit, Grund aus „Tätigkeit“), ist aber kein Einsatz und zählt nie zur geplanten Zeit – auch
 //    nicht mit eingetragenen Stunden („Stunden Urlaub/Gleitzeit“, nur für den Stundenzettel; die
-//    Notiz unter der Wochensumme nennt sie, Krank hat nie Stunden). An einem Einsatz MIT Klient
-//    bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“.
+//    Notiz unter der Wochensumme nennt sie – bei Krank nur, wenn das Büro welche eingetragen hat).
+//    An einem Einsatz MIT Klient bleibt es ein Einsatz, mit dem Hinweis „Urlaub eingetragen“; ist
+//    er abgesagt, steht er wie jeder abgesagte Einsatz da (auf dem Stundenzettel zählt der Tag dann
+//    als Abwesenheitstag – Regel 7 in api/_zeitkonto.js).
 // 6. „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026; Regel:
 //    api/_abrechnung.js): Der Einsatz bleibt im Plan und in der geplanten Zeit (er ist verplant und
 //    wird abgerechnet), bekommt aber den Hinweis „Ohne Zeiterfassung“ und eine Notiz unter der
@@ -157,7 +159,7 @@ export function wochenplan(besuche, bereich) {
         adresse: '',
         taetigkeit: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
         planMin: t.planMin,
-        stundenMin: t.stundenMin, // Stunden („Stunden Urlaub/Gleitzeit“, nur Urlaub/Gleitzeit) – nur für die Notiz
+        stundenMin: t.stundenMin, // eingetragene Stunden („Stunden Urlaub/Gleitzeit“: Urlaub, Gleitzeit, Krank) – nur für die Notiz
         abgesagt,
         abwesenheit: t.abwesenheit,
         hinweise: abgesagt ? [{ text: 'Abgesagt', art: 'abgesagt' }] : [],

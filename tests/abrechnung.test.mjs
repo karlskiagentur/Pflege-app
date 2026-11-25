@@ -10,6 +10,7 @@ const {
   ERSTER_STICHTAG_MONAT, STICHTAG, monatPlus, abrechnungszeitraum, abrechnungsmonatFuer, imZeitraum, zeitraumText,
   ersterTagDesZeitraums, abgeschlossenerMonat, ABWESENHEIT_STUNDEN_FELD, ABWESENHEIT_STUNDEN_MAX_MIN, abwesenheitsMinuten,
   ABWESENHEIT_MIT_STUNDEN, ABWESENHEIT_BEZAHLT, abwesenheitMitStunden, abwesenheitBezahlt,
+  ABWESENHEIT_STUNDEN_FREIWILLIG, abwesenheitStundenFreiwillig,
 } = abr;
 
 // Alle Kalendertage von..bis (einschließlich) als 'YYYY-MM-DD'
@@ -123,21 +124,26 @@ test('Mitarbeiter-App rechnet „Lohn / Zeit“ im selben Zeitraum (statt Kalend
 
 // ---------------------------------------------------------------- Urlaub / Gleitzeit / Krank (07.11.2026)
 // Wie in üblichen Betrieben (Vorgabe Karl): Urlaub mit Stunden (bezahlt), Gleitzeit mit Stunden
-// (Zeitkonto, nicht in der Monatssumme), Krank und Abwesend nur der Tag – nie eine Zahl.
-test('Arten: Stunden nur bei Urlaub und Gleitzeit, bezahlt nur Urlaub', () => {
+// (Zeitkonto, nicht in der Monatssumme), Abwesend nur der Tag – nie eine Zahl.
+// Krank (Wunsch Geschäftsleitung 25.11.2026): der Tag immer; Stunden nur, wenn das Büro sie einträgt
+// (Teil-/Vollzeit) – dann bezahlt wie Urlaub; ohne Eintrag (Minijob) bleibt es beim Tag.
+test('Arten: Stunden gehören zu Urlaub und Gleitzeit, bei Krank sind sie freiwillig; bezahlt sind Urlaub und Krank', () => {
   assert.equal(ABWESENHEIT_STUNDEN_FELD, 'Stunden Urlaub/Gleitzeit');
   assert.deepEqual(ABWESENHEIT_MIT_STUNDEN, ['Urlaub', 'Gleitzeit']);
-  assert.deepEqual(ABWESENHEIT_BEZAHLT, ['Urlaub']);
-  for (const [art, mit, bez] of [
-    ['Urlaub', true, true], [' Urlaub ', true, true], ['Gleitzeit', true, false], ['Krank', false, false],
-    ['Abwesend', false, false], ['', false, false], [undefined, false, false], ['urlaub', false, false],
+  assert.deepEqual(ABWESENHEIT_STUNDEN_FREIWILLIG, ['Krank']);
+  assert.deepEqual(ABWESENHEIT_BEZAHLT, ['Urlaub', 'Krank']);
+  for (const [art, mit, frei, bez] of [
+    ['Urlaub', true, false, true], [' Urlaub ', true, false, true], ['Gleitzeit', true, false, false],
+    ['Krank', false, true, true], [' Krank ', false, true, true], ['Abwesend', false, false, false],
+    ['', false, false, false], [undefined, false, false, false], ['urlaub', false, false, false], ['krank', false, false, false],
   ]) {
     assert.equal(abwesenheitMitStunden(art), mit, `mitStunden ${art}`);
+    assert.equal(abwesenheitStundenFreiwillig(art), frei, `freiwillig ${art}`);
     assert.equal(abwesenheitBezahlt(art), bez, `bezahlt ${art}`);
   }
 });
 
-test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 Std. = Tippfehler, Krank nie', () => {
+test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 Std. = Tippfehler, Abwesend nie', () => {
   assert.equal(ABWESENHEIT_STUNDEN_MAX_MIN, 1440);
   const m = (v, art = 'Urlaub') => abwesenheitsMinuten({ [ABWESENHEIT_STUNDEN_FELD]: v }, art);
   assert.equal(m(8 * 3600), 480);
@@ -151,10 +157,20 @@ test('Stunden: genau wie eingetragen (Minuten), leer/ungültig = null, über 24 
   for (const falsch of [undefined, null, '8:00', '28800', -60, NaN, Infinity, [28800], { s: 1 }]) {
     assert.equal(m(falsch), null, `ungültig: ${String(falsch)}`);
   }
-  // Krank, Abwesend und unbekannte Arten haben nie Stunden – auch wenn versehentlich etwas drinsteht
-  for (const art of ['Krank', 'Abwesend', '', undefined, null, 'Sonderurlaub']) {
+  // Abwesend und unbekannte Arten haben nie Stunden – auch wenn versehentlich etwas drinsteht
+  for (const art of ['Abwesend', '', undefined, null, 'Sonderurlaub']) {
     assert.equal(abwesenheitsMinuten({ [ABWESENHEIT_STUNDEN_FELD]: 8 * 3600 }, art), null, String(art));
   }
+  // Krank: eingetragene Stunden gelten genauso (Teil-/Vollzeit) …
+  assert.equal(m(8 * 3600, 'Krank'), 480);
+  assert.equal(m(3 * 3600 + 30 * 60, 'Krank'), 210);
+  assert.equal(m(24 * 3600, 'Krank'), 1440);
+  // … ohne Eintrag, mit 0:00 oder mit einem Tippfehler bleibt es beim Tag (Minijob)
+  for (const leer of [undefined, null, 0, 29, '8:00', -60, 24 * 3600 + 60]) {
+    assert.equal(m(leer, 'Krank'), null, `Krank ohne Stunden: ${String(leer)}`);
+  }
+  assert.equal(m(30, 'Krank'), 1);             // ab einer Minute ist es ein Eintrag
+  assert.equal(m(0, 'Urlaub'), 0);             // bei Urlaub bleibt 0:00 ein bewusster Eintrag
   assert.equal(abwesenheitsMinuten(undefined, 'Urlaub'), null);
   assert.equal(abwesenheitsMinuten(null, 'Urlaub'), null);
   assert.equal(abwesenheitsMinuten('Stunden Urlaub/Gleitzeit', 'Urlaub'), null);

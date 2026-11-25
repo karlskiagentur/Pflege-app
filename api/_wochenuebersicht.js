@@ -4,6 +4,11 @@
 //
 // Stunden = BESTÄTIGTE Ist-Zeit. Nicht bestätigte Einsätze stehen als "offen" da und zählen
 // nicht; abgesagte sind durchgestrichen; Urlaub/Gleitzeit/Krank/Abwesend laut Dienstplan.
+// Abwesenheit steht als eigener Eintrag über den Einsätzen des Tages – aus einer eigenen Zeile ohne
+// Klient oder, wenn das Büro die Einsätze einer Kranken absagt und dort „Krank“ wählt, aus diesen
+// abgesagten Einsätzen (ein Eintrag je Tag und Art; Regel 7 in api/_zeitkonto.js, Meldung
+// Geschäftsleitung 25.11.2026). Eine wieder ABGESAGTE Abwesenheitszeile (z. B. abgelehnter Urlaub)
+// steht nicht auf dem Blatt.
 // „Abrechnen ohne Lohn“ (Spalte im Dienstplan, Wunsch Geschäftsleitung 23.11.2026): Der Einsatz
 // gilt als geklärt – er steht mit der GEPLANTEN Zeit und einem * da (wird abgerechnet), zählt aber
 // nicht zur Summe der Mitarbeiterin (keine Arbeitszeit) und nicht als "offen".
@@ -16,7 +21,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { pdfText } from './_pdftext.js';
 import { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } from './_logo.js';
-import { termin, vorbei, abwesenheitsGrund, berlin } from './_zeitkonto.js';
+import { termin, vorbei, abwesenheitsGrund, abwesenheitsEintraege, berlin } from './_zeitkonto.js';
 
 const A4_QUER = [841.89, 595.28];
 const M = 26;
@@ -176,10 +181,21 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
     spalten.set(String(p.id), { id: String(p.id), name: mitarbeiterName(f), tage: {} });
   }
 
+  // Abgesagte Einsätze mit „Krank“ o. ä. je Mitarbeiter (Regel 7) – daraus entsteht unten je Tag und
+  // Art ein Abwesenheitseintrag; eigene Abwesenheitszeilen des Mitarbeiters gehen dabei vor.
+  const ausfaelle = new Map(); // Mitarbeiter-ID -> { eigene: [termin], ausfall: [termin] }
+  const merke = (id, art, t) => {
+    if (!ausfaelle.has(id)) ausfaelle.set(id, { eigene: [], ausfall: [] });
+    ausfaelle.get(id)[art].push(t);
+  };
+
   for (const r of besuche || []) {
     const f = (r && r.fields) || {};
     const t = termin(f, (r && r.id) || '');
     if (!t.datum || !inWoche.has(t.datum)) continue;
+    // Wieder abgesagte Abwesenheit (z. B. abgelehnter Urlaub): steht nicht auf dem Blatt – wie auf
+    // dem Stundenzettel. (Vorher stand sie weiter als „Urlaub“ da.)
+    if (t.abwesenheit && t.status === 'Abgesagt') continue;
 
     // Zuordnung wie im Dienstplan/ma-termine: über Pfleger_ID (enthält auch die Vertretung,
     // wenn das Büro sie dort einträgt) – gleiche Regel wie beim Stundenzettel.
@@ -194,7 +210,7 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
           art: 'abwesenheit',
           grund: t.abwesenheit,
           notiz: abwesenheitsGrund(t.abwesenheit, t.taetigkeit),
-          // Stunden nur bei Urlaub/Gleitzeit (api/_abrechnung.js), sonst null
+          // eingetragene Stunden (Urlaub, Gleitzeit, Krank – api/_abrechnung.js), sonst null
           stundenMin: t.stundenMin,
         }
       : {
@@ -226,6 +242,19 @@ export function baueWoche(besuche, personal, bereich, jetzt = Date.now()) {
       const sp = spalten.get(id);
       if (!sp) continue;                           // inaktiv oder unbekannt -> keine Spalte
       (sp.tage[t.datum] = sp.tage[t.datum] || []).push(eintrag);
+      if (t.abwesenheit) merke(id, 'eigene', t);
+      else if (t.ausfall) merke(id, 'ausfall', t);
+    }
+  }
+
+  // Regel 7: Abwesenheitstag aus abgesagten Einsätzen – dieselbe Regel wie auf dem Stundenzettel
+  // (ein Eintrag je Tag und Art; gibt es schon eine eigene Zeile derselben Art, gilt nur diese).
+  for (const [id, { eigene, ausfall }] of ausfaelle) {
+    if (!ausfall.length) continue;
+    const sp = spalten.get(id);
+    for (const a of abwesenheitsEintraege(eigene, ausfall)) {
+      if (!a.einsaetze) continue;                  // eigene Zeilen stehen schon da
+      sp.tage[a.datum].push({ art: 'abwesenheit', grund: a.art, notiz: '', stundenMin: a.min });
     }
   }
 

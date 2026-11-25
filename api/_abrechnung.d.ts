@@ -17,16 +17,19 @@ export declare function zeitraumText(zeitraum: Zeitraum): string;
 export declare function ersterTagDesZeitraums(heute: string): boolean;
 export declare function abgeschlossenerMonat(heute: string): string;
 
-/** Spalte mit den Stunden eines Urlaubs- oder Gleitzeittags. */
+/** Spalte mit den Stunden eines Urlaubs-, Gleitzeit- oder Krankheitstags. */
 export declare const ABWESENHEIT_STUNDEN_FELD: string;
 export declare const ABWESENHEIT_STUNDEN_MAX_MIN: number;
-/** Arten, für die das Büro Stunden einträgt (Urlaub, Gleitzeit). */
+/** Arten, zu denen immer Stunden gehören (Urlaub, Gleitzeit) – fehlen sie, zählt der Tag 0:00. */
 export declare const ABWESENHEIT_MIT_STUNDEN: string[];
-/** Arten, deren Stunden zur Monatssumme zählen (Urlaub). */
+/** Arten, zu denen das Büro Stunden eintragen kann, aber nicht muss (Krank). */
+export declare const ABWESENHEIT_STUNDEN_FREIWILLIG: string[];
+/** Arten, deren eingetragene Stunden zur Monatssumme zählen (Urlaub, Krank). */
 export declare const ABWESENHEIT_BEZAHLT: string[];
 export declare function abwesenheitMitStunden(art: unknown): boolean;
+export declare function abwesenheitStundenFreiwillig(art: unknown): boolean;
 export declare function abwesenheitBezahlt(art: unknown): boolean;
-/** Minuten laut „Stunden Urlaub/Gleitzeit“; null = Art ohne Stunden oder nicht (gültig) eingetragen. */
+/** Minuten laut „Stunden Urlaub/Gleitzeit“; null = Art ohne Stunden, nicht (gültig) eingetragen oder Krank mit 0:00. */
 export declare function abwesenheitsMinuten(fields: unknown, abwesenheitsArt: unknown): number | null;
 
 /** Spalte „Abrechnen ohne Lohn“: Einsatz wird berechnet, ist aber keine Arbeitszeit. */

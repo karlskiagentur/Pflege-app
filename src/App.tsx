@@ -183,7 +183,9 @@ const getValueOr = (item: any, fieldName: string, fallback = "-") => {
 // Das Büro trägt dafür eine eigene Zeile OHNE Klient ein. Sie ist KEIN Einsatz: keine Ist-Zeit,
 // kein „Problem melden“ (Server-Sicherung: /api/besuch-dauer lehnt die Erfassung ab).
 // An einem Einsatz MIT Klient bleibt es ein Einsatz (z. B. für die Vertretung) - gleiche Regel
-// wie api/_zeitkonto.js.
+// wie api/_zeitkonto.js. Sagt das Büro die Einsätze einer Kranken ab und wählt dort „Krank“, zeigt
+// die App sie im Plan wie jeden abgesagten Einsatz; als Krankheitstag zählt der Tag auf dem
+// Stundenzettel (api/_zeitkonto.js, Regel 7).
 const abwesenheitVon = (t: any) =>
   getValue(t, 'Patient') || getValue(t, 'Patient_Name') ? '' : getValue(t, 'Abwesend/Urlaub').trim();
 // Grund aus dem Feld Tätigkeit (z. B. „Arzttermin“) - ohne Wiederholung der Art, ohne Standardtext.
@@ -214,9 +216,10 @@ const abwesenheitAbgesagt = (t: any) => getValue(t, 'Status') === 'Abgesagt';
 const ohneZeiterfassung = (t: any) =>
   !!(getValue(t, 'Patient') || getValue(t, 'Patient_Name')) && abrechnenOhneLohn(t && t.fields ? t.fields : t);
 
-// Stunden eines Urlaubs- oder Gleitzeittags in Minuten (Spalte „Stunden Urlaub/Gleitzeit“, vom Büro
-// eingetragen); null = Krank/Abwesend (nie Stunden) oder nicht eingetragen. Gleiche Regel wie der
-// Stundenzettel (api/_abrechnung.js) - Von/Bis einer Abwesenheit ist nur das Zeitfenster.
+// Stunden eines Urlaubs-, Gleitzeit- oder Krankheitstags in Minuten (Spalte „Stunden
+// Urlaub/Gleitzeit“, vom Büro eingetragen); null = nicht eingetragen, Krank ohne Stunden oder
+// Abwesend (nie Stunden). Gleiche Regel wie der Stundenzettel (api/_abrechnung.js) - Von/Bis einer
+// Abwesenheit ist nur das Zeitfenster.
 const abwesenheitsStundenMin = (t: any): number | null =>
   abwesenheitVon(t) ? abwesenheitsMinuten(t && t.fields ? t.fields : t, abwesenheitVon(t)) : null;
 
@@ -227,7 +230,7 @@ function AbwesenheitKarte({ t, kompakt = false, marke = null }: { t: any; kompak
   const von = getValue(t, 'Von');
   const bis = getValue(t, 'Bis');
   const zeit = von && bis ? `${von} – ${bis} Uhr` : von ? `ab ${von} Uhr` : 'ganztägig';
-  // vom Büro eingetragene Stunden (nur Urlaub/Gleitzeit, z. B. „8:00 Std.“) – Krank: nie eine Zahl
+  // vom Büro eingetragene Stunden (Urlaub, Gleitzeit; Krank nur, wenn eingetragen – z. B. „8:00 Std.“)
   const stundenMin = abwesenheitsStundenMin(t);
   const stunden = !abgesagt && stundenMin ? `${stdMin(stundenMin * 60)} Std.` : '';
   const stundenLang = abwesenheitBezahlt(art) ? `Auf dem Stundenzettel: ${stunden}` : `${stunden} aus dem Zeitkonto`;
@@ -1753,9 +1756,10 @@ export default function App() {
       .filter((t) => !ohneZeiterfassung(t)) // „Abrechnen ohne Lohn“: nie Arbeitszeit, auch mit eingetragener Zeit
       .filter((t) => getValue(t, 'Erledigt_Am') && Number(getValue(t, 'Dauer_Ist')) > 0)
       .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum));
-    // Vom Büro eingetragene Urlaubsstunden („Stunden Urlaub/Gleitzeit“) zählen wie auf dem
-    // Stundenzettel zur Summe (Vorgabe 07.11.2026): nur bezahlter Urlaub (nicht Gleitzeit/Krank),
-    // nicht abgesagt, im Zeitraum und - wie auf dem Zettel - erst, wenn der Tag vorbei ist.
+    // Vom Büro eingetragene Stunden („Stunden Urlaub/Gleitzeit“) zählen wie auf dem Stundenzettel
+    // zur Summe (Vorgabe 07.11.2026; Krank seit 25.11.2026): bezahlter Urlaub und Krank mit
+    // eingetragenen Stunden (nicht Gleitzeit), nicht abgesagt, im Zeitraum - hier erst, wenn der Tag
+    // vorbei ist (diese Ansicht zeigt nur Erfasstes; der fertige Zettel am 27. stimmt damit überein).
     const zeitAbwesenheiten = (zeitTermine || [])
       .filter((t) => abwesenheitBezahlt(abwesenheitVon(t)) && !abwesenheitAbgesagt(t) && (abwesenheitsStundenMin(t) || 0) > 0)
       .filter((t) => imZeitraum(String(getValue(t, 'Datum') || '').slice(0, 10), zeitZeitraum))
@@ -2200,7 +2204,7 @@ export default function App() {
                             {new Date(`${tag.datum}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' })}
                           </p>
                           {tag.rows.map((t) => (abwesenheitVon(t) ? (
-                            // bezahlter Urlaub: Art + vom Büro eingetragene Stunden (kein Einsatz)
+                            // bezahlter Urlaub / Krank mit Stunden: Art + vom Büro eingetragene Stunden (kein Einsatz)
                             <div key={t.id} className="flex items-center justify-between py-1.5 border-t border-gray-50 first:border-t-0">
                               <p className="text-sm font-bold text-[#335F8F]">{abwesenheitVon(t)}</p>
                               <p className="text-sm font-black text-[#335F8F]">{stdMin((abwesenheitsStundenMin(t) || 0) * 60)} Std.</p>

@@ -9,7 +9,7 @@ import { abrechnungszeitraum, imZeitraum, zeitraumText, abwesenheitBezahlt } fro
 // Session-Token-Flow: Auth über gemeinsames Secret im Header X-Hook-Secret.
 // Erzeugt den Monats-Stundenzettel als PDF und hängt ihn an die Stundenzettel-Zeile.
 // Rechenregeln (nur Vergangenes, nur bestätigte Ist-Zeit, Kunden-Anfahrt, Pausen, Urlaub/Gleitzeit/
-// Krank, „Abrechnen ohne Lohn“): api/_zeitkonto.js und api/_abrechnung.js
+// Krank – auch am abgesagten Einsatz –, „Abrechnen ohne Lohn“): api/_zeitkonto.js und api/_abrechnung.js
 // Abrechnungszeitraum (seit November 2026 vom 27. bis 26.): api/_abrechnung.js
 
 const ZETTEL = 'tblmlg9ZNrtwRxmXx';  // Tabelle "Stundenzettel" (ID -> umbenenn-fest)
@@ -43,12 +43,12 @@ export const SPALTEN = { datum: 50, fenster: 110, sollR: 212, istR: 256, klient:
 export const UNTERSCHRIFT_ROLLE = 'Geschäftsleitung';
 
 // Kurzhinweis oben auf Seite 1; die ausführliche Erläuterung steht am Ende jedes Zettels.
-export const HINWEIS = 'Zeitfenster und Soll = Planung · bezahlt: bestätigte Ist-Zeit + Kunden-Anfahrt + eingetragener Urlaub · Erläuterung am Ende';
+export const HINWEIS = 'Zeitfenster und Soll = Planung · bezahlt: bestätigte Ist-Zeit + Kunden-Anfahrt + eingetragene Stunden Urlaub/Krank · Erläuterung am Ende';
 export const ERLAEUTERUNG = [
   'Zeitfenster und Soll: geplante Zeit laut Dienstplan. Das Zeitfenster bleibt so stehen, auch wenn ein Einsatz länger oder kürzer gedauert hat – es zeigt immer die Planung.',
   'Ist: die in der App unter „Tatsächliche Dauer“ bestätigte (oder vom Büro eingetragene) Zeit im 15-Minuten-Takt (gerundet, z. B. 20 Min. = 0:15, 25 Min. = 0:30). Bezahlt wird nur die bestätigte Ist-Zeit, nicht das Zeitfenster. Fett gedruckt = weicht von der Planung ab.',
   'Nicht bestätigt: Einsätze ohne bestätigte Ist-Zeit werden nicht berechnet – auch keine Kunden-Anfahrt dorthin. Sie stehen gesammelt unter „Nicht bestätigt – nicht berechnet“. Wurde ein solcher Einsatz geleistet, bitte beim Büro melden – das Büro trägt die Zeit nach.',
-  'Urlaub, Gleitzeit, Krank, Abwesenheit: vom Büro im Dienstplan eingetragen (eigene Zeile ohne Klient). Urlaub: bezahlt werden die Stunden, die das Büro einträgt – sie zählen zur Monatssumme (ohne eingetragene Stunden 0:00). Gleitzeit: Freizeitausgleich aus dem Zeitkonto – die Stunden stehen in Klammern da und zählen nicht zur Monatssumme. Krank: nur der Tag („–“), keine Stunden – die Lohnfortzahlung rechnet das Lohnbüro. Abwesend: nur der Tag („–“). Ein Zeitfenster zeigt nur, wann die Abwesenheit war. Diese Tage sind keine Einsätze: kein Soll, keine Kunden-Anfahrt.',
+  'Urlaub, Gleitzeit, Krank, Abwesenheit: vom Büro im Dienstplan eingetragen (eigene Zeile ohne Klient oder am abgesagten Einsatz). Urlaub: bezahlt werden die Stunden, die das Büro einträgt – sie zählen zur Monatssumme (ohne eingetragene Stunden 0:00). Gleitzeit: Freizeitausgleich aus dem Zeitkonto – die Stunden stehen in Klammern da und zählen nicht zur Monatssumme. Krank: mit eingetragenen Stunden wie Urlaub; sonst nur der Tag („–“), die Lohnfortzahlung rechnet das Lohnbüro. Abwesend: nur der Tag („–“). Ein Zeitfenster zeigt nur, wann die Abwesenheit war. Diese Tage sind keine Einsätze: kein Soll, keine Kunden-Anfahrt.',
   '„laut Ist“: der gerechnete Zeitraum, wenn er vom Zeitfenster abweicht – Beginn laut Plan (bzw. direkt nach dem vorherigen Einsatz, wenn dieser länger gedauert hat) plus Ist-Dauer.',
   'Kunden-Anfahrt: Die Zeit zwischen dem Ende eines Einsatzes (laut Ist) und dem Beginn des nächsten wird bis 30 Minuten voll bezahlt. Ist die Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause – unbezahlt und separat ausgewiesen (z. B. Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt).',
   'Dauert ein Einsatz länger als geplant, wird die Anfahrt zum nächsten kürzer oder der nächste Einsatz beginnt später – keine Minute wird doppelt bezahlt. Dauert er kürzer, wird die Lücke länger; was über 30 Minuten hinausgeht, ist Pause.',
@@ -154,22 +154,47 @@ export const ABWESENHEIT_TITEL = 'Urlaub / Gleitzeit / Krank / Abwesenheit – v
 
 /**
  * Zeilen Urlaub/Gleitzeit/Krank/Abwesenheit (rein - testbar): Datum | Zeitfenster („ganztägig“ ohne
- * Zeit) | Soll „–“ (kein Einsatz) | Ist | Art und Grund (Klient-Spalte). Ist: Urlaub = bezahlte
- * Stunden (z. B. „8:00“), Gleitzeit = Stunden in Klammern („(6:00)“, zählen nicht – wie die Pause),
- * Krank/Abwesend oder nicht eingetragen = „–“ (api/_abrechnung.js).
+ * Zeit) | Soll „–“ (kein Einsatz) | Ist | Art und Grund (Klient-Spalte). Ist: Urlaub und Krank =
+ * bezahlte Stunden (z. B. „8:00“), Gleitzeit = Stunden in Klammern („(6:00)“, zählen nicht – wie die
+ * Pause), Abwesend oder nicht eingetragen = „–“ (api/_abrechnung.js). Stammt der Eintrag aus
+ * abgesagten Einsätzen (Regel 7 in api/_zeitkonto.js), steht das dabei: „Krank · 3 Einsätze abgesagt“.
  */
 export function abwesenheitZeilen(nachweis) {
   return ((nachweis && nachweis.abwesenheiten) || []).map((a) => {
     let ist = '–';
     if (typeof a.min === 'number') ist = abwesenheitBezahlt(a.art) ? hm(a.min) : `(${hm(a.min)})`;
+    const zusatz = a.einsaetze ? `${a.einsaetze} ${a.einsaetze === 1 ? 'Einsatz' : 'Einsätze'} abgesagt` : a.grund;
     return {
       datum: a.datum ? datumDe(a.datum) : '–',
       fenster: a.von && a.bis ? `${a.von} – ${a.bis}` : (a.von ? `ab ${a.von}` : 'ganztägig'),
       soll: '–',
       ist,
-      klient: a.grund ? `${a.art} · ${a.grund}` : a.art,
+      klient: zusatz ? `${a.art} · ${zusatz}` : a.art,
     };
   });
+}
+
+// Vorläufiger Zettel: Was er enthält, steht oben. Abwesenheiten trägt das Büro ein – sie stehen für
+// den ganzen Zeitraum drauf, auch wenn der Tag noch bevorsteht (Regel 1 in api/_zeitkonto.js). Der
+// längere Text erscheint nur dann; sonst bleibt die Zeile, wie sie war.
+export const VORLAEUFIG_INHALT = 'enthält nur bereits vergangene Termine';
+export const VORLAEUFIG_INHALT_ABWESENHEIT = 'vergangene Einsätze und alle eingetragenen Abwesenheiten';
+export function vorlaeufigInhalt(nachweis) {
+  return ((nachweis && nachweis.abwesenheiten) || []).some((a) => a && a.bevorstehend)
+    ? VORLAEUFIG_INHALT_ABWESENHEIT : VORLAEUFIG_INHALT;
+}
+
+/**
+ * Hinweis unter der Abwesenheitsliste, wenn eine Abwesenheit über das Ende des Abrechnungszeitraums
+ * hinausgeht ('' wenn nicht): Die Tage danach stehen auf dem nächsten Stundenzettel – sonst sucht
+ * man sie hier (Meldung Geschäftsleitung 25.11.2026: 3 Tage Urlaub eingetragen, 26.–28.11.).
+ */
+export function zeitraumendeHinweis(nachweis) {
+  const u = nachweis && nachweis.ueberZeitraumende;
+  if (!u || !Array.isArray(u.arten) || !u.arten.length) return '';
+  const tag = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+  const monat = `${MONATE[Number(u.monat.slice(5, 7)) - 1]} ${u.monat.slice(0, 4)}`;
+  return `${u.arten.join(' und ')} über den ${tag(u.bis)} hinaus: Die Tage ab ${tag(u.ab)} stehen auf dem Stundenzettel ${monat} (nächster Abrechnungszeitraum).`;
 }
 
 const tageText = (n) => `${n} ${n === 1 ? 'Tag' : 'Tage'}`;
@@ -177,15 +202,17 @@ const tageText = (n) => `${n} ${n === 1 ? 'Tag' : 'Tage'}`;
 /**
  * Summenzeilen je Art für den Fußblock (rein - testbar), z. B.
  * { label: 'Urlaub (3 Tage)', anzeige: '16:00 Std.', notiz: '…', bezahlt: true }.
- * bezahlt = steht vor der Monatssumme und zählt dazu (Urlaub); die übrigen stehen danach nur zur
- * Information: Gleitzeit „(6:00 Std.)“, Krank und Abwesend „–“ (api/_abrechnung.js).
+ * bezahlt = steht vor der Monatssumme und zählt dazu (Urlaub; Krank, wenn das Büro Stunden
+ * eingetragen hat); die übrigen stehen danach nur zur Information: Gleitzeit „(6:00 Std.)“, Krank
+ * ohne Stunden und Abwesend „–“ (api/_abrechnung.js).
  */
 export function abwesenheitSummen(nachweis) {
   return abwesenheitNachArt(nachweis && nachweis.abwesenheiten).map((a) => {
     const label = `${a.art} (${tageText(a.tage)})`;
     const ohne = a.ohneStunden ? `${tageText(a.ohneStunden)} ohne Stunden (0:00)` : '';
     if (a.bezahlt) {
-      return { label, anzeige: `${hm(a.min)} Std.`, notiz: ohne ? `davon ${ohne}` : 'bezahlt, vom Büro eingetragen', bezahlt: true };
+      const eingetragen = a.art === 'Krank' ? 'Lohnfortzahlung, vom Büro eingetragen' : 'bezahlt, vom Büro eingetragen';
+      return { label, anzeige: `${hm(a.min)} Std.`, notiz: ohne ? `davon ${ohne}` : eingetragen, bezahlt: true };
     }
     if (a.mitStunden) {
       return { label, anzeige: `(${hm(a.min)} Std.)`, notiz: ohne ? `Zeitkonto, nicht in der Summe; ${ohne}` : 'Freizeitausgleich (Zeitkonto) – nicht in der Summe', bezahlt: false };
@@ -194,7 +221,7 @@ export function abwesenheitSummen(nachweis) {
   });
 }
 
-/** Woraus die Monatssumme besteht, z. B. „= Ist + Kunden-Anfahrt + Urlaub“. */
+/** Woraus die Monatssumme besteht, z. B. „= Ist + Kunden-Anfahrt + Urlaub“ (Krank nur mit eingetragenen Stunden). */
 export function summeNotiz(nachweis) {
   const bezahlt = abwesenheitNachArt(nachweis && nachweis.abwesenheiten).filter((a) => a.bezahlt).map((a) => a.art);
   return ['= Ist + Kunden-Anfahrt', ...bezahlt].join(' + ');
@@ -313,7 +340,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     if (final) {
       text(page, `Erstellt am ${stand}`, M, y, 9, font, hellgrau);
     } else {
-      text(page, `VORLÄUFIG · Stand ${stand} · enthält nur bereits vergangene Termine`, M, y, 9, bold, orange);
+      text(page, `VORLÄUFIG · Stand ${stand} · ${vorlaeufigInhalt(nachweis)}`, M, y, 9, bold, orange);
     }
     if (ersteSeite) {
       y -= 13;
@@ -377,8 +404,8 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     text(page, offen.length || abwesend.length || ohneArbeitszeit.length ? 'Keine bestätigten Einsätze in diesem Monat.' : 'Keine vergangenen Einsätze in diesem Monat.', M, y, 10, font, grau);
     y -= 16;
   }
-  // Urlaub/Gleitzeit/Krank/Abwesenheit: getrennt aufgeführt. Ist: Urlaub fett (zählt zur
-  // Monatssumme), Gleitzeit in Klammern (zählt nicht), Krank/Abwesend/ohne Stunden „–“.
+  // Urlaub/Gleitzeit/Krank/Abwesenheit: getrennt aufgeführt. Ist: Urlaub und Krank mit Stunden fett
+  // (zählen zur Monatssumme), Gleitzeit in Klammern (zählt nicht), Abwesend/ohne Stunden „–“.
   if (abwesend.length) {
     platz(40);
     y -= 6;
@@ -393,6 +420,15 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
       rechts(page, z.ist, SP.istR, y, 10, zaehlt ? bold : font, zaehlt ? schwarz : grau);
       page.drawText(gekuerzt(z.klient, bold, 10, KLIENT_MAX), { x: SP.klient, y, size: 10, font: bold, color: blau });
       y -= 14;
+    }
+    // Geht eine Abwesenheit über das Ende des Zeitraums hinaus, steht hier, wo die Tage danach stehen.
+    const zeitraumende = zeitraumendeHinweis(nachweis);
+    if (zeitraumende) {
+      for (const z of umbrechen(zeitraumende, kursiv, 8, BREITE)) {
+        platz(11);
+        page.drawText(z, { x: SP.datum, y, size: 8, font: kursiv, color: blau });
+        y -= 11;
+      }
     }
     y -= 4;
   }
@@ -432,7 +468,7 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   }
 
   // Fußblock: Summen + (nur beim fertigen Monat) EINE Unterschrift der Geschäftsleitung –
-  // auch, wenn im Monat nur bezahlter Urlaub anfiel.
+  // auch, wenn im Monat nur bezahlter Urlaub oder Krank mit eingetragenen Stunden anfiel.
   const s = nachweis.summen;
   const abwSummen = abwesenheitSummen(nachweis);
   const mitUnterschrift = final && (s.einsaetze > 0 || s.abwesenheitBezahltMin > 0);
@@ -453,9 +489,9 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
   summenZeile('Einsätze laut Dienstplan (Soll)', hm(s.sollMin), 'der bestätigten Einsätze, nur zum Vergleich', font, 10, grau);
   summenZeile('Einsätze bestätigt (Ist)', hm(s.einsatzMin), '', font, 10, schwarz);
   summenZeile('Kunden-Anfahrt', hm(s.anfahrtMin), '', font, 10, schwarz);
-  for (const a of abwSummen.filter((z) => z.bezahlt)) zeile(a.label, a.anzeige, a.notiz, font, 10, schwarz); // Urlaub
+  for (const a of abwSummen.filter((z) => z.bezahlt)) zeile(a.label, a.anzeige, a.notiz, font, 10, schwarz); // Urlaub, Krank mit Stunden
   summenZeile(final ? 'Monatssumme (bezahlt)' : 'Zwischensumme (bezahlt)', hm(s.bezahltMin), summeNotiz(nachweis), bold, 12, schwarz);
-  for (const a of abwSummen.filter((z) => !z.bezahlt)) zeile(a.label, a.anzeige, a.notiz, font, 10, grau); // Gleitzeit, Krank, …
+  for (const a of abwSummen.filter((z) => !z.bezahlt)) zeile(a.label, a.anzeige, a.notiz, font, 10, grau); // Gleitzeit, Krank ohne Stunden, …
   summenZeile('Pausen (unbezahlt)', hm(s.pauseMin), 'nicht in der Summe enthalten', font, 9, grau);
   const offenText = nichtBestaetigtText(s);
   if (offenText) {
@@ -538,7 +574,10 @@ export default async function handler(req, res) {
     const zeitraum = abrechnungszeitraum(monat);
     const kandidaten = await fetchAll(TABLES.BESUCHE, `filterByFormula=${encodeURIComponent(besucheFormel(maId, zeitraum))}`);
     const besuche = kandidaten.filter((b) => imZeitraum(b && b.fields && b.fields.Datum, zeitraum));
-    const nachweis = berechneZeitnachweis(besuche, { jetzt: Date.now() });
+    // Zeilen nach dem Zeitraum (soweit im selben Kalendermonat geladen – der Tag danach ist es immer):
+    // nur für den Hinweis „Abwesenheit geht über das Ende des Zeitraums hinaus“.
+    const danach = kandidaten.filter((b) => String((b && b.fields && b.fields.Datum) || '') > zeitraum.bis);
+    const nachweis = berechneZeitnachweis(besuche, { jetzt: Date.now(), zeitraum, danach });
 
     // Fertig ist der Zettel erst, wenn der Zeitraum vorbei ist (ab dem 27.); vorher "vorläufig".
     const final = nachweis.jetzt.datum > zeitraum.bis;
@@ -600,7 +639,9 @@ export default async function handler(req, res) {
       status: 'success', einsaetze: nachweis.summen.einsaetze, summe, vorlaeufig: !final,
       ohneIst: nachweis.summen.ohneIst, abwesenheiten: nachweis.abwesenheiten.length,
       ohneLohn: nachweis.ohneLohn.length,
+      // Urlaub + Krank mit eingetragenen Stunden (Name des Felds unverändert) – Krank zusätzlich einzeln
       urlaubStunden: hm(nachweis.summen.abwesenheitBezahltMin), gleitzeitStunden: hm(nachweis.summen.abwesenheitZeitkontoMin),
+      krankStunden: hm((abwesenheitNachArt(nachweis.abwesenheiten).find((a) => a.art === 'Krank') || { min: 0 }).min),
       ausgelassen: nachweis.ausgelassen,
     });
   } catch (e) {
