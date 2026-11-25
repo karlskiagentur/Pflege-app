@@ -8,6 +8,7 @@ import handler, {
   pdfText, erstellePdf, tagesZeilen, tagesSummeText, SPALTEN, ERLAEUTERUNG, HINWEIS,
   NICHT_BESTAETIGT_TITEL, nichtBestaetigtZeilen, nichtBestaetigtText, UNTERSCHRIFT_ROLLE, neuesteZuerst, besucheFormel,
   ABWESENHEIT_TITEL, abwesenheitZeilen, abwesenheitSummen, summeNotiz,
+  OHNE_LOHN_ERLAEUTERUNG, umbrechen, druckbreite,
 } from '../api/stundenzettel.js';
 import { abrechnungszeitraum } from '../api/_abrechnung.js';
 import { berechneZeitnachweis, berlin, minutenAus } from '../api/_zeitkonto.js';
@@ -570,4 +571,44 @@ test('Erläuterung erklärt Urlaub, Gleitzeit, Krank; Texte darstellbar und pass
     assert.ok(normal.widthOfTextAtSize(pdfText(z.notiz), 8) <= notizBreite, `Notiz zu breit: ${z.notiz}`);
     assert.ok(normal.widthOfTextAtSize(z.label, 10) + normal.widthOfTextAtSize('(999:59 Std.)', 10) + 6 <= 300 - 50, `Beschriftung zu breit: ${z.label}`);
   }
+});
+
+// pdf-lib misst mit Unterschneidung (Kerning) der Standardschrift, schreibt den Text aber ohne sie:
+// Eine nur so gemessene Zeile ist gedruckt bis zu einigen Punkt breiter. Der Umbruch der Fließtexte
+// misst deshalb die gedruckte Breite – sonst ragt eine volle Zeile über den rechten Rand.
+test('Umbruch misst die gedruckte Breite: pdf-lib rechnet die Unterschneidung mit, druckt aber ohne', async () => {
+  const doc = await PDFDocument.create();
+  const normal = await doc.embedFont(StandardFonts.Helvetica);
+  // „AV“ wird in der Schrift unterschnitten: gemessen schmaler als die Summe der beiden Buchstaben
+  const einzeln = normal.widthOfTextAtSize('A', 8) + normal.widthOfTextAtSize('V', 8);
+  assert.ok(normal.widthOfTextAtSize('AV', 8) < einzeln, 'Voraussetzung: die Schrift unterschneidet');
+  assert.equal(druckbreite('AV', normal, 8), einzeln);
+  assert.equal(druckbreite('', normal, 8), 0);
+  // Grenzfall: „AVAVAV AVAVAV“ wäre mit Unterschneidung gemessen schmal genug für eine Zeile,
+  // gedruckt aber breiter als die Grenze – also zwei Zeilen
+  const wort = 'AVAVAV';
+  const grenze = (normal.widthOfTextAtSize(`${wort} ${wort}`, 8) + druckbreite(`${wort} ${wort}`, normal, 8)) / 2;
+  assert.ok(normal.widthOfTextAtSize(`${wort} ${wort}`, 8) <= grenze && druckbreite(`${wort} ${wort}`, normal, 8) > grenze);
+  assert.deepEqual(umbrechen(`${wort} ${wort}`, normal, 8, grenze), [wort, wort]);
+  // ein einzelnes zu langes Wort bleibt stehen (wird nie verschluckt), Leertext ergibt keine Zeile
+  assert.deepEqual(umbrechen('Donaudampfschifffahrtsgesellschaft', normal, 8, 10), ['Donaudampfschifffahrtsgesellschaft']);
+  assert.deepEqual(umbrechen('', normal, 8, 100), []);
+  // Zeichen außerhalb der Schrift werden wie im PDF ersetzt, nicht zum Fehler
+  assert.doesNotThrow(() => umbrechen('Tag 1 → Tag 2 ✓', normal, 8, 100));
+});
+
+test('Erläuterung: keine Zeile ragt gedruckt über den rechten Rand; Zeilenzahl je Absatz bleibt (kein zusätzlicher Seitenumbruch)', async () => {
+  const doc = await PDFDocument.create();
+  const normal = await doc.embedFont(StandardFonts.Helvetica);
+  const breite = 595.28 - 2 * 50 - 10; // wie im PDF: Seitenbreite ohne Ränder, 10 pt Einzug nach dem Aufzählungspunkt
+  const absaetze = [...ERLAEUTERUNG, OHNE_LOHN_ERLAEUTERUNG].map((t) => umbrechen(t, normal, 8, breite));
+  // jede zusätzliche Zeile könnte einen bisher einseitigen Zettel auf zwei Seiten verteilen
+  assert.deepEqual(absaetze.map((z) => z.length), [2, 2, 2, 5, 2, 3, 2, 2, 3]);
+  for (const zeilen of absaetze) {
+    for (const z of zeilen) assert.ok(druckbreite(z, normal, 8) <= breite, `Zeile zu breit: ${z}`);
+  }
+  // beim Umbrechen geht kein Wort verloren
+  for (const [i, t] of [...ERLAEUTERUNG, OHNE_LOHN_ERLAEUTERUNG].entries()) assert.equal(absaetze[i].join(' '), pdfText(t));
+  // Kurzhinweis oben (eine Zeile, 8 pt) passt auch gedruckt in die Breite
+  assert.ok(druckbreite(pdfText(HINWEIS), normal, 8) <= 595.28 - 2 * 50, 'HINWEIS zu breit');
 });

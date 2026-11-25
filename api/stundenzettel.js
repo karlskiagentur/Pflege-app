@@ -232,6 +232,28 @@ export function tagesSummeText(tag) {
   return teile.join(' · ');
 }
 
+// Breite eines Textes so, wie er gedruckt wird. pdf-lib rechnet bei widthOfTextAtSize die
+// Unterschneidung (Kerning) der Standardschrift mit ein, schreibt den Text aber ohne sie – eine
+// nur so gemessene Zeile ist gedruckt bis zu einigen Punkt breiter und ragt über den rechten Rand.
+export function druckbreite(s, f, size) {
+  let breite = 0;
+  for (const zeichen of String(s)) breite += f.widthOfTextAtSize(zeichen, size);
+  return breite;
+}
+
+// Fließtext an Wortgrenzen auf die Breite max umbrechen – gemessen wird die gedruckte Breite.
+export function umbrechen(s, f, size, max) {
+  const zeilen = [];
+  let akt = '';
+  for (const w of pdfText(s).split(' ')) {
+    const probe = akt ? `${akt} ${w}` : w;
+    if (!akt || druckbreite(probe, f, size) <= max) akt = probe;
+    else { zeilen.push(akt); akt = w; }
+  }
+  if (akt) zeilen.push(akt);
+  return zeilen;
+}
+
 /**
  * Rendert den Stundenzettel (A4 hoch). Rein, ohne Netz - auch für Tests/Vorschau.
  * @param {{maName: string, maNr: string|number, monat: string, zeitraum?: {von: string, bis: string},
@@ -274,18 +296,6 @@ export async function erstellePdf({ maName, maNr, monat, zeitraum = abrechnungsz
     if (f.widthOfTextAtSize(t, size) <= max) return t;
     while (t.length > 1 && f.widthOfTextAtSize(`${t}…`, size) > max) t = t.slice(0, -1);
     return `${t.trimEnd()}…`;
-  };
-  // Fließtext an Wortgrenzen auf die Breite max umbrechen.
-  const umbrechen = (s, f, size, max) => {
-    const zeilen = [];
-    let akt = '';
-    for (const w of pdfText(s).split(' ')) {
-      const probe = akt ? `${akt} ${w}` : w;
-      if (!akt || f.widthOfTextAtSize(probe, size) <= max) akt = probe;
-      else { zeilen.push(akt); akt = w; }
-    }
-    if (akt) zeilen.push(akt);
-    return zeilen;
   };
 
   let page;
