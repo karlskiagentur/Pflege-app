@@ -17,11 +17,21 @@
 // (z. B. kurzfristige Absage, die berechnet wird): Klient und Zeit bleiben durchgestrichen (für die
 // Mitarbeiterin fällt er aus), die Zahl mit * bleibt lesbar, und unter der Summe der Mitarbeiterin
 // steht „* abrechnen ohne Lohn: … Std.“. Ein abgesagter Einsatz OHNE Haken bleibt, wie er war.
+// Abweichende Ist-Zeit (Wunsch Geschäftsleitung 25.11.2026): Hat die Mitarbeiterin eine andere Zeit
+// bestätigt als geplant (z. B. 2 Std. bei 14.45–16.00), steht die Zahl FETT da – wie auf dem
+// Stundenzettel („fett = weicht von der Planung ab“). So wundert sich niemand, dass Zahl und
+// Zeitfenster nicht zusammenpassen. Die Legende nennt es nur auf Seiten, auf denen es vorkommt.
+// Wochensumme (Wunsch Geschäftsleitung 25.11.2026): Vom Büro eingetragene Stunden für Urlaub und
+// Krank (bezahlt – Regel: api/_abrechnung.js) stehen unter der Summe und werden dazugezählt:
+// „+ 24 Urlaub = 48 Std.“. Die Zeile „… Std. bestätigt“ bleibt die gearbeitete Zeit. Gleitzeit zählt
+// wie auf dem Stundenzettel nicht dazu (Freizeitausgleich aus dem Zeitkonto) – ihre Stunden stehen
+// deshalb wie dort in Klammern am Tag, z. B. „(6)“.
 
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { pdfText } from './_pdftext.js';
+import { pdfText, druckbreite } from './_pdftext.js';
 import { LOGO_B64, LOGO_BREITE, LOGO_HOEHE } from './_logo.js';
 import { termin, vorbei, abwesenheitsGrund, abwesenheitsEintraege, berlin } from './_zeitkonto.js';
+import { abwesenheitBezahlt } from './_abrechnung.js';
 
 const A4_QUER = [841.89, 595.28];
 const M = 26;
@@ -60,6 +70,26 @@ const uhrAus = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:$
 // Einsatz vorkommt – alle anderen Blätter bleiben, wie sie waren.
 export const LEGENDE = 'Zahl rechts = bestätigte Ist-Zeit in Stunden  ·  offen = nicht bestätigt, zählt nicht  ·  durchgestrichen = abgesagt  ·  gelb = Zusatz/Änderung des Büros';
 export const LEGENDE_OHNE_LOHN = '  ·  * = Abrechnen ohne Lohn: geplante Zeit abrechnen, zählt nicht';
+// Zusatz zur abweichenden Ist-Zeit – ebenfalls nur auf Seiten, auf denen sie vorkommt.
+export const LEGENDE_ABWEICHUNG = '  ·  fett = Ist-Zeit weicht vom Plan ab';
+const LEGENDE_TRENNER = '  ·  ';
+
+/**
+ * Zeilen der Legende einer Seite. Passt alles in eine Zeile, bleibt es bei einer (wie bisher); kommen
+ * abweichende Ist-Zeit UND „Abrechnen ohne Lohn“ auf derselben Seite vor, steht der Zusatz zum * in
+ * einer zweiten Zeile.
+ * @param {{abweichung: boolean, ohneLohn: boolean}} inhalt  was auf der Seite vorkommt
+ * @param {(text: string) => number} breiteVon  gedruckte Breite eines Textes
+ * @param {number} platz  verfügbare Breite
+ * @returns {string[]}
+ */
+export function legendeZeilen(inhalt, breiteVon, platz) {
+  const erste = LEGENDE + (inhalt && inhalt.abweichung ? LEGENDE_ABWEICHUNG : '');
+  if (!inhalt || !inhalt.ohneLohn) return [erste];
+  const zusammen = erste + LEGENDE_OHNE_LOHN;
+  if (breiteVon(zusammen) <= platz) return [zusammen];
+  return [erste, LEGENDE_OHNE_LOHN.slice(LEGENDE_TRENNER.length)];
+}
 /** Kennzeichen hinter der geplanten Zeit eines Einsatzes mit „Abrechnen ohne Lohn“. */
 export const OHNE_LOHN_ZEICHEN = '*';
 
@@ -100,6 +130,78 @@ export function ohneLohnSummenText(ma) {
 }
 
 /**
+ * Hat die Mitarbeiterin eine andere Zeit bestätigt als geplant? Gleiche Regel wie auf dem
+ * Stundenzettel (dort ist die Ist-Zeit dann fett): bestätigter Einsatz, geplante Dauer bekannt, Ist
+ * (im 15-Minuten-Takt) ungleich Plan. Auch eine bewusst bestätigte 0 ist eine Abweichung.
+ */
+export const istAbweichend = (e) => !!e && e.art === 'einsatz' && e.status === 'bestaetigt'
+  && typeof e.istMin === 'number' && typeof e.planMin === 'number' && e.istMin !== e.planMin;
+
+/** Steht auf dieser Seite (Gruppe von Mitarbeitern) ein Einsatz mit abweichender Ist-Zeit? */
+export function hatAbweichung(gruppe) {
+  return (gruppe || []).some((ma) => Object.values((ma && ma.tage) || {})
+    .some((liste) => liste.some(istAbweichend)));
+}
+
+// Reihenfolge der Arten in der Summenzeile (wie auf dem Stundenzettel), weitere alphabetisch.
+const ABWESENHEIT_REIHENFOLGE = ['Urlaub', 'Krank'];
+const artRang = (art) => { const i = ABWESENHEIT_REIHENFOLGE.indexOf(art); return i < 0 ? ABWESENHEIT_REIHENFOLGE.length : i; };
+
+/**
+ * Vom Büro eingetragene, bezahlte Abwesenheitsstunden der Woche je Mitarbeiter (Urlaub; Krank, wenn
+ * Stunden eingetragen sind – Regel: api/_abrechnung.js). Gleitzeit und Abwesend zählen nicht.
+ * @returns {{min: number, teile: Array<{art: string, min: number}>}}
+ */
+export function summeAbwesenheit(ma) {
+  const proArt = new Map();
+  for (const liste of Object.values((ma && ma.tage) || {})) {
+    for (const e of liste) {
+      if (!e || e.art !== 'abwesenheit' || !abwesenheitBezahlt(e.grund)) continue;
+      if (typeof e.stundenMin !== 'number' || !(e.stundenMin > 0)) continue;
+      proArt.set(e.grund, (proArt.get(e.grund) || 0) + e.stundenMin);
+    }
+  }
+  const teile = [...proArt.entries()]
+    .map(([art, min]) => ({ art, min }))
+    .sort((a, b) => artRang(a.art) - artRang(b.art) || a.art.localeCompare(b.art, 'de'));
+  return { min: teile.reduce((s, t) => s + t.min, 0), teile };
+}
+
+/**
+ * Stunden rechts neben einem Abwesenheitseintrag ('' ohne eingetragene Stunden): bezahlte Arten
+ * (Urlaub, Krank) als Zahl, z. B. „8“ – sie zählen zur Gesamtzahl der Woche; alle übrigen (Gleitzeit)
+ * in Klammern, z. B. „(6)“ – sie stehen nur da, wie auf dem Stundenzettel.
+ */
+export function abwesenheitAnzeige(e) {
+  if (!e || !e.stundenMin) return '';
+  const zahl = stundenDe(e.stundenMin);
+  return abwesenheitBezahlt(e.grund) ? zahl : `(${zahl})`;
+}
+
+/**
+ * Zeile unter „… Std. bestätigt“ ('' ohne bezahlte Abwesenheitsstunden): die eingetragenen Stunden
+ * und die Gesamtzahl der Woche, z. B. „+ 24 Urlaub = 48 Std.“ oder „+ 8 Urlaub + 16 Krank = 48 Std.“
+ */
+export function abwesenheitSummenText(ma) {
+  const a = summeAbwesenheit(ma);
+  if (!a.teile.length) return '';
+  const gesamt = summen(ma).min + a.min;
+  return `${a.teile.map((t) => `+ ${stundenDe(t.min)} ${t.art}`).join(' ')} = ${stundenDe(gesamt)} Std.`;
+}
+
+/**
+ * Zusatzzeilen unter „… Std. bestätigt“ einer Mitarbeiterin, in dieser Reihenfolge: bezahlte
+ * Abwesenheitsstunden mit der Gesamtzahl der Woche (blau), „* abrechnen ohne Lohn: … Std.“ (violett).
+ * @returns {Array<{text: string, farbe: 'blau'|'violett'}>}
+ */
+export function summenZusatz(ma) {
+  return [
+    { text: abwesenheitSummenText(ma), farbe: 'blau' },
+    { text: ohneLohnSummenText(ma), farbe: 'violett' },
+  ].filter((z) => z.text);
+}
+
+/**
  * Darstellung eines Einsatzes (rein – testbar): Farbe, Text rechts, Schrift der Zahl, Durchstreichung.
  * strich: 'ganz' = abgesagt wie bisher (Zeile samt Zahl) · 'text' = abgesagt + „Abrechnen ohne Lohn“
  * (nur Klient und Zeit – die Zahl mit * bleibt lesbar, sie wird abgerechnet) · '' = keine.
@@ -112,7 +214,8 @@ export function eintragStil(e) {
     farbe: ohneLohn ? 'violett' : abgesagt ? 'grau' : offen ? 'orange' : 'blau',
     rechts: ohneLohn ? ohneLohnAnzeige(e)
       : abgesagt ? (e.planMin ? stundenDe(e.planMin) : '') : offen ? 'offen' : stundenDe(e.istMin || 0),
-    fett: ohneLohn,
+    // fett: Zahl mit * („Abrechnen ohne Lohn“) oder bestätigte Zeit, die vom Plan abweicht
+    fett: ohneLohn || istAbweichend(e),
     strich: abgesagt ? (ohneLohn ? 'text' : 'ganz') : '',
   };
 }
@@ -319,8 +422,18 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     // Zweite Zeile in der Summe („* abrechnen ohne Lohn: … Std.“) nur auf Seiten mit so markierten
     // Einsätzen – alle anderen Blätter behalten ihre Maße.
     const mitOhneLohn = hatOhneLohn(gruppe);
-    const SUMME_H = mitOhneLohn ? 34 : 22;
-    const FUSS_H = 30;
+    // Ebenso die Zeile „+ 24 Urlaub = 48 Std.“ (bezahlte Abwesenheitsstunden): Die Summe ist so hoch
+    // wie die meisten Zusatzzeilen einer Mitarbeiterin auf der Seite.
+    const zusatz = gruppe.map(summenZusatz);
+    const SUMME_H = 22 + 12 * Math.max(0, ...zusatz.map((z) => z.length));
+    // Legende: in der Regel eine Zeile; eine zweite nur, wenn abweichende Ist-Zeit UND * vorkommen.
+    const logoBreite = logo ? 16 * (LOGO_BREITE / LOGO_HOEHE) : 0;
+    const legende = legendeZeilen(
+      { abweichung: hatAbweichung(gruppe), ohneLohn: mitOhneLohn },
+      (t) => druckbreite(pdfText(t), font, 7.5),
+      W - 2 * M - logoBreite - 6,
+    );
+    const FUSS_H = 30 + 11 * (legende.length - 1);
     const verfuegbar = y - M - FUSS_H - KOPF_H - SUMME_H;
     const anzahl = zeilen.map((z) => Math.max(1, ...gruppe.map((ma) => eintraege(ma, z).length)));
     let size = 8.5;
@@ -367,10 +480,14 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
       const t = pdfText(`${stundenDe(min)} Std. bestätigt`);
       page.drawText(t, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(t, 9.5), y: yr - 15, size: 9.5, font: bold, color: F.schwarz });
       if (offen) page.drawText(pdfText(`${offen} offen`), { x: xSp(i) + 6, y: yr - 15, size: 9, font: bold, color: F.orange });
-      const nurAbrechnen = mitOhneLohn ? pdfText(ohneLohnSummenText(ma)) : '';
-      if (nurAbrechnen) {
-        page.drawText(nurAbrechnen, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(nurAbrechnen, 9), y: yr - 27, size: 9, font: bold, color: F.violett });
-      }
+      // Zusatzzeilen direkt unter der Summe (rechtsbündig). Sie passen in aller Regel mit 9 pt; bei
+      // sehr vielen Stunden wird die Zeile kleiner, nie breiter als die Spalte.
+      zusatz[i].forEach((z, n) => {
+        const roh = pdfText(z.text);
+        const gr = passendeGroesse(roh, bold, 9, colW - 12);
+        const text = kuerzen(roh, bold, gr, colW - 12);
+        page.drawText(text, { x: xSp(i) + colW - 6 - bold.widthOfTextAtSize(text, gr), y: yr - 27 - 12 * n, size: gr, font: bold, color: F[z.farbe] });
+      });
     });
     const bottom = yr - SUMME_H;
 
@@ -383,9 +500,10 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
     for (let i = 0; i <= SPALTEN_JE_SEITE; i++) linie(xSp(i), top, xSp(i), bottom);
 
     // Fuß: Legende + Vertraulichkeit
-    const leg = mitOhneLohn ? LEGENDE + LEGENDE_OHNE_LOHN : LEGENDE;
-    page.drawText(pdfText(leg), { x: M, y: bottom - 13, size: 7.5, font, color: F.grau });
-    page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24, size: 7.5, font, color: F.grau });
+    legende.forEach((zeile, n) => {
+      page.drawText(pdfText(zeile), { x: M, y: bottom - 13 - 11 * n, size: 7.5, font, color: F.grau });
+    });
+    page.drawText(pdfText('Vertraulich – nur für die interne Ablage des Pflegedienstes. Erzeugt aus dem digitalen Dienstplan.'), { x: M, y: bottom - 24 - 11 * (legende.length - 1), size: 7.5, font, color: F.grau });
     if (logo) {
       const h = 16;
       const w = h * (LOGO_BREITE / LOGO_HOEHE);
@@ -394,6 +512,13 @@ export async function erstelleWochenuebersichtPdf({ kw, jahr, tage, stand, mitar
   });
 
   return pdf.save();
+}
+
+/** Größte Schriftgröße (in Viertelschritten, nie unter 6,5), mit der der Text gedruckt in die Breite passt. */
+export function passendeGroesse(s, f, size, max) {
+  let gr = size;
+  while (gr > 6.5 && druckbreite(s, f, gr) > max) gr -= 0.25;
+  return gr;
 }
 
 function kuerzen(s, f, size, max) {
@@ -408,10 +533,8 @@ function zeichneEintrag(page, e, x, y, breite, size, lineH, font, bold) {
     const farbe = e.grund === 'Krank' ? F.rot : F.blau;
     const t = pdfText(e.praefix + e.grund);
     page.drawText(t, { x, y, size: size + 0.5, font: bold, color: farbe });
-    if (e.stundenMin) {
-      const h = pdfText(stundenDe(e.stundenMin));
-      page.drawText(h, { x: x + breite - bold.widthOfTextAtSize(h, size), y, size, font: bold, color: farbe });
-    }
+    const h = pdfText(abwesenheitAnzeige(e));
+    if (h) page.drawText(h, { x: x + breite - bold.widthOfTextAtSize(h, size), y, size, font: bold, color: farbe });
     return;
   }
   const abgesagt = e.status === 'abgesagt';

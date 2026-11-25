@@ -2,7 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { airtable, fetchAll, sendError, reportError, esc, TABLES } from './_lib.js';
 import { UNTERSCHRIFT_PDL_B64 } from './_unterschrift-pdl.js';
 import { berechneZeitnachweis, abwesenheitNachArt, hm } from './_zeitkonto.js';
-import { pdfText } from './_pdftext.js';
+import { pdfText, druckbreite } from './_pdftext.js';
 import { abrechnungszeitraum, imZeitraum, zeitraumText, abwesenheitBezahlt, einsaetzeAbgesagtText } from './_abrechnung.js';
 
 // Interner Hook (Airtable-Automation "Status = Erstellen" -> Webhook), KEIN
@@ -30,7 +30,7 @@ const parseMonatAuswahl = (s) => {
 
 // Text für die PDF-Standardschrift (Windows-1252): gemeinsamer Helfer in _pdftext.js, auch vom
 // Dienstplan genutzt. Re-Export, damit bestehende Importe aus diesem Modul unverändert funktionieren.
-export { pdfText };
+export { pdfText, druckbreite };
 
 const datumDe = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
 const uhrDe = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
@@ -259,16 +259,8 @@ export function tagesSummeText(tag) {
   return teile.join(' · ');
 }
 
-// Breite eines Textes so, wie er gedruckt wird. pdf-lib rechnet bei widthOfTextAtSize die
-// Unterschneidung (Kerning) der Standardschrift mit ein, schreibt den Text aber ohne sie – eine
-// nur so gemessene Zeile ist gedruckt bis zu einigen Punkt breiter und ragt über den rechten Rand.
-export function druckbreite(s, f, size) {
-  let breite = 0;
-  for (const zeichen of String(s)) breite += f.widthOfTextAtSize(zeichen, size);
-  return breite;
-}
-
-// Fließtext an Wortgrenzen auf die Breite max umbrechen – gemessen wird die gedruckte Breite.
+// Fließtext an Wortgrenzen auf die Breite max umbrechen – gemessen wird die gedruckte Breite
+// (druckbreite aus _pdftext.js: pdf-lib misst mit Unterschneidung, druckt aber ohne).
 export function umbrechen(s, f, size, max) {
   const zeilen = [];
   let akt = '';
