@@ -7,11 +7,6 @@ import {
   Flag, UserX, CalendarX, MoreHorizontal, Download, Eye, PenLine, RotateCcw, MapPin, Navigation
 } from 'lucide-react';
 
-// Google-Maps-Link zu einer Adresse (öffnet die Karten-App auf dem Handy).
-// Öffnet die ROUTE (Navigation) zur vollständigen Anschrift, nicht nur einen
-// Kartenpunkt. encodeURIComponent schützt Umlaute, Kommas und /-Hausnummern.
-const mapsUrl = (adresse: string) =>
-  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(adresse).replace(/\n/g, ', '))}`;
 import { subscribeToPush, isPushSubscribed, subscribeMitarbeiter, VAPID_APP_SERVER_KEY, pushVomKontoLoesen, pushAboUebernehmen } from './push';
 import { reportClientError, fetchWithTimeout } from './report';
 import PdfVorschau from './PdfVorschau';
@@ -22,6 +17,8 @@ import {
 // Abrechnungszeitraum (27. bis 26.) – dieselbe Regel wie Stundenzettel und Monatslauf auf dem Server.
 import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitraumText, abwesenheitsMinuten, abwesenheitBezahlt, abrechnenOhneLohn, einsaetzeAbgesagtText } from '../api/_abrechnung';
 import { bezahlteAusfallTage, type BezahlterAusfallTag } from '../api/_zeitkonto';
+// Reiter „Adressen“ (Meine Klienten) und der Google-Maps-Link zu einer Adresse.
+import { klientenSicher, mapsUrl } from './klienten';
 
 // Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
 const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
@@ -495,7 +492,7 @@ export default function App() {
   const [dauerSaving, setDauerSaving] = useState<string | null>(null);
   const [dauerConfirm, setDauerConfirm] = useState<{ besuchId: string; minuten: number } | null>(null);
   const [dauerHinweis, setDauerHinweis] = useState<Record<string, string>>({});
-  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'urlaub'|'lohn'>(() => maTabFuerZiel(START_ZIEL) || 'uebersicht');
+  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'adressen'|'urlaub'|'lohn'>(() => maTabFuerZiel(START_ZIEL) || 'uebersicht');
   // Neuigkeiten der Mitarbeiter-App: Mitteilungen + „gesehen“-Stand (NEU-Markierungen)
   const [maMitteilungen, setMaMitteilungen] = useState<any[]>([]);
   const [maGesehen, setMaGesehen] = useState<MaGesehen>(() => maGesehenLaden(localStorage.getItem('active_mitarbeiter_id')));
@@ -1723,6 +1720,17 @@ export default function App() {
       const d = zeitpunktMs(t);
       return d >= morgen.getTime();
     });
+    // Reiter „Adressen“: Klienten der letzten 10 Wochen und alle eingeplanten - berechnet aus den
+    // ohnehin geladenen Einsätzen (src/klienten.ts), nur solange der Reiter offen ist. Nichts wird
+    // gespeichert. Ein Fehler in den Daten zeigt einen Hinweis statt eines Absturzes und wird gemeldet
+    // (reportClientError meldet denselben Fehler nur einmal je Sitzung).
+    const adressen = mitarbeiterTab === 'adressen'
+      ? klientenSicher(mitarbeiterTermine, { heuteBeginnMs: heute.getTime(), jetztMs: Date.now() })
+      : { klienten: [], fehler: null };
+    if (adressen.fehler) reportClientError('ma-adressen', adressen.fehler);
+    const klienten = adressen.klienten;
+    const klientTag = (ms: number) => (ms >= heute.getTime() && ms < morgen.getTime() ? 'Heute'
+      : new Date(ms).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }));
     // Urlaub/Abwesenheit zählt nicht als Einsatz (Zähler oben); die Karte steht trotzdem in der Liste.
     const einsaetzeHeute = termineHeute.filter((t) => !abwesenheitVon(t));
     const abwesendHeute = termineHeute.filter((t) => !abwesenheitAbgesagt(t)).map(abwesenheitVon).find(Boolean) || '';
@@ -1744,7 +1752,7 @@ export default function App() {
       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 ${m === 'abgesagt' ? 'bg-[#B5483C] text-white' : 'bg-[#E8890C] text-white'}`}>{markeText[m]}</span>
     ) : null);
     // Reiter wechseln; Einsätze nur nachladen, wenn der Stand älter als 45 s ist.
-    const maZuReiter = (tab: 'uebersicht' | 'tagesplan' | 'urlaub' | 'lohn') => {
+    const maZuReiter = (tab: 'uebersicht' | 'tagesplan' | 'adressen' | 'urlaub' | 'lohn') => {
       setMitarbeiterTab(tab);
       if (Date.now() - maLetzterAbrufRef.current > 45000) fetchMitarbeiterTermine(true);
       if (tab === 'urlaub') fetchUrlaubListe();
@@ -1940,8 +1948,9 @@ export default function App() {
                         {getValue(t, 'Adresse_Klient') && (
                           <a href={mapsUrl(getValue(t, 'Adresse_Klient'))} target="_blank" rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center gap-1 mt-1 text-[11px] font-bold text-[#0F6E56] active:opacity-60">
-                            <Navigation size={11}/> Route
+                            className="flex items-start gap-1 mt-1 text-[#0F6E56] active:opacity-60">
+                            <MapPin size={12} className="mt-0.5 shrink-0" />
+                            <span className="text-xs underline decoration-dotted leading-snug">{getValue(t, 'Adresse_Klient')}</span>
                           </a>
                         )}
                       </div>
@@ -2125,6 +2134,63 @@ export default function App() {
                   </div>
                 );
               })
+            )}
+          </div>
+        )}
+
+        {/* TAB: ADRESSEN (Meine Klienten) - Adressen unabhängig vom einzelnen Einsatz */}
+        {mitarbeiterTab === 'adressen' && (
+          <div className="animate-in fade-in">
+            <div className="text-center mb-6">
+              <p className="text-[11px] font-black uppercase tracking-wide text-[#0F6E56]">Meine Klienten</p>
+              <h2 className="text-2xl font-black text-[#3A3A3A] mt-1">{klienten.length === 0 ? 'Adressen' : klienten.length === 1 ? '1 Adresse' : `${klienten.length} Adressen`}</h2>
+              <p className="text-xs text-gray-400 mt-2 px-6">Alle Klienten, bei denen du in den letzten 10 Wochen im Einsatz warst oder eingeplant bist. Tippe auf eine Adresse – die Route öffnet sich in Google Maps.</p>
+            </div>
+            {ersteLadungMa ? (
+              /* Erstes Laden nach dem Öffnen: nicht kurz „keine Klienten" anzeigen */
+              <div className="bg-white rounded-2xl p-5 text-gray-400 text-center flex items-center justify-center gap-2">
+                <RefreshCw size={16} className="animate-spin text-[#b5a48b]" /> Adressen werden geladen …
+              </div>
+            ) : adressen.fehler ? (
+              <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-8 text-center">
+                <AlertCircle size={28} className="text-[#993C1D] mx-auto mb-3" />
+                <p className="text-gray-500">Die Adressen können gerade nicht angezeigt werden. Im Plan steht die Adresse weiterhin bei jedem Einsatz.</p>
+              </div>
+            ) : klienten.length === 0 ? (
+              /* Laden fehlgeschlagen: Der Hinweis mit „Erneut" steht oben - hier nicht „keine Klienten" behaupten */
+              mitarbeiterError ? null : (
+                <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-10 text-center">
+                  <MapPin size={32} className="text-[#dccfbc] mx-auto mb-3" />
+                  <p className="text-gray-400 italic">Noch keine Klienten. Sobald das Büro einen Einsatz für dich einträgt, steht die Adresse hier.</p>
+                </div>
+              )
+            ) : (
+              klienten.map((k) => (
+                <div key={k.id} className="bg-white rounded-[1.5rem] shadow-sm border border-gray-100 p-4 mb-2 text-left">
+                  <div className="flex items-center gap-2">
+                    <User size={13} className="text-gray-400 shrink-0" />
+                    <p className="font-black text-[#3A3A3A] leading-snug">{k.name || 'Klient'}</p>
+                  </div>
+                  {k.adresse ? (
+                    <a href={mapsUrl(k.adresse)} target="_blank" rel="noopener noreferrer"
+                      aria-label={`Route zu ${k.adresse} in Google Maps öffnen`}
+                      className="flex items-center gap-2 mt-2 px-3 py-3 rounded-xl bg-[#E1F5EE] text-[#0F6E56] active:opacity-60">
+                      <MapPin size={16} className="shrink-0" />
+                      <span className="flex-1 text-sm font-bold leading-snug">{k.adresse}</span>
+                      <Navigation size={16} className="shrink-0" />
+                    </a>
+                  ) : (
+                    <p className="flex items-start gap-1.5 mt-2 text-sm text-[#993C1D]">
+                      <AlertCircle size={14} className="mt-0.5 shrink-0" /> Adresse fehlt – bitte im Büro nachfragen.
+                    </p>
+                  )}
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    {k.naechsterMs !== null
+                      ? `Nächster Einsatz: ${klientTag(k.naechsterMs)} · ${formatTime(new Date(k.naechsterMs).toISOString())} Uhr`
+                      : k.letzterMs !== null ? `Zuletzt: ${klientTag(k.letzterMs)}` : ''}
+                  </p>
+                </div>
+              ))
             )}
           </div>
         )}
@@ -2427,6 +2493,14 @@ export default function App() {
                         <div className="flex-1 border-l border-gray-200 pl-3 text-left">
                           <p className="text-sm font-bold text-gray-600">{getValueOr(t, 'Tätigkeit', 'Unterstützung')}</p>
                           <p className="text-xs text-gray-400">{getValue(t, 'Patient_Name')}</p>
+                          {/* ADRESSE + MAPS auch bei künftigen Einsätzen */}
+                          {getValue(t, 'Adresse_Klient') && (
+                            <a href={mapsUrl(getValue(t, 'Adresse_Klient'))} target="_blank" rel="noopener noreferrer"
+                              className="flex items-start gap-1 mt-1 text-[#0F6E56] active:opacity-60">
+                              <MapPin size={12} className="mt-0.5 shrink-0" />
+                              <span className="text-xs underline decoration-dotted leading-snug">{getValue(t, 'Adresse_Klient')}</span>
+                            </a>
+                          )}
                         </div>
                         {/* RECHTS: Markierung + Status-Label */}
                         <div className="flex flex-col items-end gap-1 shrink-0">
@@ -2470,10 +2544,10 @@ export default function App() {
       )}
 
       {/* MITARBEITER-NAV */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn / Zeit' } ].map((tab) => (
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 border-t flex justify-around p-5 pb-11 z-50 rounded-t-[3rem] shadow-2xl">{[ { id: 'uebersicht', icon: Phone, label: 'Übersicht' }, { id: 'tagesplan', icon: CalendarDays, label: 'Plan' }, { id: 'adressen', icon: MapPin, label: 'Adressen' }, { id: 'urlaub', icon: Plane, label: 'Urlaub' }, { id: 'lohn', icon: Euro, label: 'Lohn / Zeit' } ].map((tab) => (
         <button
             key={tab.id}
-            onClick={() => maZuReiter(tab.id as 'uebersicht'|'tagesplan'|'urlaub'|'lohn')}
+            onClick={() => maZuReiter(tab.id as 'uebersicht'|'tagesplan'|'adressen'|'urlaub'|'lohn')}
             className={`flex flex-col items-center gap-1.5 transition-all relative ${mitarbeiterTab === tab.id ? 'text-[#b5a48b] scale-110' : 'text-gray-300'}`}
         >
             <div className="relative">
