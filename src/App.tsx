@@ -19,9 +19,13 @@ import { abrechnungszeitraum, abrechnungsmonatFuer, monatPlus, imZeitraum, zeitr
 import { bezahlteAusfallTage, type BezahlterAusfallTag } from '../api/_zeitkonto';
 // Reiter „Adressen“ (Meine Klienten) und der Google-Maps-Link zu einer Adresse.
 import { klientenSicher, mapsUrl } from './klienten';
+// Neue App-Version: Mitarbeiter-App startet beim Zurückkehren von selbst neu (oder zeigt den Hinweis).
+import { bundleAus, maInArbeit, neustartVormerken, reiterMerken, reiterNachNeustart, sitzungsSpeicher } from './version';
 
 // Tipp auf einen Push öffnet die App mit /?ziel=… (public/sw.js): beim Start einmal lesen.
 const START_ZIEL: PushZiel | null = typeof window !== 'undefined' ? zielAusAdresse(window.location.search) : null;
+// Nach einem automatischen Neustart wegen neuer Version denselben Reiter wieder öffnen (src/version.ts).
+const START_REITER = typeof window !== 'undefined' ? reiterNachNeustart(sitzungsSpeicher()) : null;
 const TAG_MS = 24 * 60 * 60 * 1000;
 const VOLL_ABSTAND_MS = 10 * 60 * 1000;   // Mitteilungen/Lohn höchstens alle 10 Min. mitladen
 // Was auf dem Gerät als gesehen gemerkt wird (nur IDs/Prüfwerte, siehe neuigkeiten.ts).
@@ -319,6 +323,22 @@ const logoErsatz = (e: React.SyntheticEvent<HTMLImageElement>) => {
     img.src = '/logo-weiss.png';
 };
 
+// Hinweis „Neue Version verfügbar“ (Klienten- und Mitarbeiter-Ansicht): Ein Tipp lädt die App neu.
+function NeueVersionHinweis() {
+  return (
+    <button
+      onClick={() => window.location.reload()}
+      className="fixed top-0 left-0 right-0 z-[110] bg-[#0F6E56] text-white p-6 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-white/30"
+    >
+        <div className="flex items-center gap-3 mb-1">
+            <div className="bg-white/20 p-2.5 rounded-full"><RefreshCw size={26} /></div>
+            <span className="font-black text-lg uppercase tracking-wide">Neue Version verfügbar</span>
+        </div>
+        <p className="text-sm opacity-90 font-bold underline decoration-2 underline-offset-4">Hier tippen zum Aktualisieren</p>
+    </button>
+  );
+}
+
 const formatDate = (raw: any, short = false) => {
   const val = unbox(raw);
   if (!val || val === "-") return "-";
@@ -492,7 +512,7 @@ export default function App() {
   const [dauerSaving, setDauerSaving] = useState<string | null>(null);
   const [dauerConfirm, setDauerConfirm] = useState<{ besuchId: string; minuten: number } | null>(null);
   const [dauerHinweis, setDauerHinweis] = useState<Record<string, string>>({});
-  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'adressen'|'urlaub'|'lohn'>(() => maTabFuerZiel(START_ZIEL) || 'uebersicht');
+  const [mitarbeiterTab, setMitarbeiterTab] = useState<'uebersicht'|'tagesplan'|'adressen'|'urlaub'|'lohn'>(() => maTabFuerZiel(START_ZIEL) || START_REITER || 'uebersicht');
   // Neuigkeiten der Mitarbeiter-App: Mitteilungen + „gesehen“-Stand (NEU-Markierungen)
   const [maMitteilungen, setMaMitteilungen] = useState<any[]>([]);
   const [maGesehen, setMaGesehen] = useState<MaGesehen>(() => maGesehenLaden(localStorage.getItem('active_mitarbeiter_id')));
@@ -579,26 +599,46 @@ export default function App() {
   // Vercel-CDN (mit Cache-Bust-Parameter) – KEINE Airtable-/API-Last, skaliert für alle Klienten.
   // Kein Intervall-Polling. Bei neuer Version: Banner -> Nutzer lädt per Tipp selbst neu
   // (kein automatisches Neuladen, damit keine laufende Eingabe verloren geht).
+  // Mitarbeiter-Ansicht (Wunsch Karl 27.11.2026, src/version.ts): Ist eine neue Version erkannt und gerade
+  // nichts in Arbeit, startet die App beim Zurückkehren von selbst neu - höchstens einmal je Version - und
+  // öffnet denselben Reiter wieder. Sonst bleibt es beim Hinweis. true = Neustart läuft.
+  const neueVersionRef = useRef('');
+  const autoNeustartRef = useRef<() => boolean>(() => false);
+  autoNeustartRef.current = () => {
+    const ziel = neueVersionRef.current;
+    if (!ziel || !mitarbeiterId) return false; // Klienten-Ansicht und Anmeldung: wie bisher nur der Hinweis
+    if (maInArbeit({
+      dauerInput, dauerConfirm, dauerSaving, meldungOffen: meldungTermin, meldungSending,
+      urlaubVon, urlaubBis, urlaubNotiz, urlaubSending, lohnVorschau, activeModal,
+      pushLaedt: mitarbeiterPushStatus === 'loading',
+    })) return false;
+    const speicher = sitzungsSpeicher();
+    if (!neustartVormerken(ziel, speicher)) return false;
+    reiterMerken(mitarbeiterTab, speicher);
+    window.location.reload();
+    return true;
+  };
   useEffect(() => {
-    const aktuelleVersion = (() => {
-      const tags = Array.from(document.querySelectorAll('script[type="module"][src]')) as HTMLScriptElement[];
-      for (const t of tags) {
-        const m = (t.getAttribute('src') || '').match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
-        if (m) return m[0];
-      }
-      return '';
-    })();
+    const aktuelleVersion = bundleAus(Array.from(document.querySelectorAll('script[type="module"][src]'))
+      .map((t) => t.getAttribute('src') || '').find((src) => bundleAus(src)) || '');
     if (!aktuelleVersion) return;
-    let benachrichtigt = false;
+    let laeuft = false;
     const pruefe = async () => {
-      if (benachrichtigt || document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') return;
+      // Neue Version schon erkannt: nur noch prüfen, ob die Mitarbeiter-App jetzt neu starten kann.
+      if (neueVersionRef.current) { autoNeustartRef.current(); return; }
+      if (laeuft) return;
+      laeuft = true;
       try {
         const res = await fetch('/index.html?vc=' + Date.now(), { cache: 'no-store' });
         if (!res.ok) return;
-        const html = await res.text();
-        const m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
-        if (m && m[0] !== aktuelleVersion) { benachrichtigt = true; setNewVersion(true); }
+        const neu = bundleAus(await res.text());
+        if (neu && neu !== aktuelleVersion) {
+          neueVersionRef.current = neu;
+          if (!autoNeustartRef.current()) setNewVersion(true);
+        }
       } catch { /* offline o. Ä.: ignorieren, kein Fehler */ }
+      finally { laeuft = false; }
     };
     const onVis = () => { if (document.visibilityState === 'visible') pruefe(); };
     document.addEventListener('visibilitychange', onVis);
@@ -1864,6 +1904,8 @@ export default function App() {
 
     return (
     <div className="min-h-screen bg-white pb-32">
+      {/* Neue Version: erscheint nur, wenn die App nicht von selbst neu starten konnte (src/version.ts) */}
+      {newVersion && <NeueVersionHinweis />}
       <header className="py-4 px-6 bg-[#dccfbc] text-white flex justify-between items-center shadow-sm">
         <img src={LOGO_WEISS_URL} onError={logoErsatz} alt="Logo" className="h-11" />
         <div className="flex items-center gap-3">
@@ -3099,18 +3141,7 @@ export default function App() {
           </div>
       )}
 
-      {newVersion && (
-          <button
-            onClick={() => window.location.reload()}
-            className="fixed top-0 left-0 right-0 z-[110] bg-[#0F6E56] text-white p-6 shadow-2xl flex flex-col items-center justify-center animate-in slide-in-from-top duration-500 w-full text-center cursor-pointer border-b-4 border-white/30"
-          >
-              <div className="flex items-center gap-3 mb-1">
-                  <div className="bg-white/20 p-2.5 rounded-full"><RefreshCw size={26} /></div>
-                  <span className="font-black text-lg uppercase tracking-wide">Neue Version verfügbar</span>
-              </div>
-              <p className="text-sm opacity-90 font-bold underline decoration-2 underline-offset-4">Hier tippen zum Aktualisieren</p>
-          </button>
-      )}
+      {newVersion && <NeueVersionHinweis />}
 
       {showUpdateBanner && (
           <button
