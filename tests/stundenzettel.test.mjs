@@ -375,12 +375,13 @@ test('Spalten: Soll und Ist getrennt, Zeitraum laut Ist bei Abweichung, Klient g
   assert.deepEqual(tagesZeilen(t).map((z) => [z.art, z.fenster, z.soll, z.ist, z.fett, z.istFenster, z.klient]), [
     ['einsatz', '08:00 – 08:30', '0:30', '1:00', true, '08:00 – 09:00', 'Klient A'],
     ['einsatz', '08:45 – 09:15', '0:30', '0:30', false, '09:00 – 09:30', 'Klient B'],
-    ['pause', '09:30 – 10:30', '', '(1:00)', false, '', 'Pause (unbezahlt)'],
-    ['anfahrt', '10:30 – 11:00', '', '0:30', false, '', 'Kunden-Anfahrt'],
+    // Lücke 09:30–11:00 = 1:30: ab 1 Stunde keine Kunden-Anfahrt, ganz Pause (Vorgabe Geschäftsleitung
+    // 27.11.2026; vorher 1:00 Pause + 0:30 Anfahrt)
+    ['pause', '09:30 – 11:00', '', '(1:30)', false, '', 'Pause (unbezahlt)'],
     ['einsatz', '11:00 – 11:30', '0:30', '0:00', true, '', 'Klient D'],
   ]);
-  assert.equal(tagesSummeText(t), 'Tagessumme · davon Anfahrt 0:30 · Pause 1:00 unbezahlt');
-  assert.equal(t.bezahltMin, 120); // 1:00 + 0:30 + 0:00 + Anfahrt 0:30 (keine Anfahrt zu Klient C)
+  assert.equal(tagesSummeText(t), 'Tagessumme · Pause 1:30 unbezahlt');
+  assert.equal(t.bezahltMin, 90); // 1:00 + 0:30 + 0:00, keine Anfahrt (auch nicht zu Klient C)
   const datumDe = `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`;
   assert.deepEqual(nichtBestaetigtZeilen(nachweis), [
     { datum: datumDe, fenster: '09:45 – 10:00', soll: '0:15', ist: '–', klient: 'Klient C' },
@@ -404,8 +405,11 @@ test('Hinweis "nicht bestätigt" im Summenblock: Einzahl, Mehrzahl, leer', () =>
 test('Erläuterung und Hinweis: vollständig darstellbar, Regel "nur Bestätigtes zählt" erklärt, passt in die Breite', async () => {
   for (const satz of [HINWEIS, NICHT_BESTAETIGT_TITEL, ...ERLAEUTERUNG]) assert.equal(pdfText(satz), satz);
   assert.ok(ERLAEUTERUNG.length >= 4);
-  // Regel seit 28.10.2026: auch bei längerer Lücke 30 Min Anfahrt, nur der Rest ist Pause
-  assert.ok(ERLAEUTERUNG.some((s) => /Lücke länger, werden trotzdem 30 Minuten Anfahrt bezahlt; nur der Rest ist Pause/.test(s)));
+  // Regel seit 28.10.2026: auch bei längerer Lücke 30 Min Anfahrt, nur der Rest ist Pause –
+  // seit 27.11.2026 (Vorgabe Geschäftsleitung) nur noch unter 1 Stunde; ab 1 Stunde keine Anfahrt
+  assert.ok(ERLAEUTERUNG.some((s) => /Lücke länger, aber kürzer als 1 Stunde, werden 30 Minuten Anfahrt bezahlt; der Rest ist unbezahlte Pause/.test(s)));
+  assert.ok(ERLAEUTERUNG.some((s) => /Ab 1 Stunde zwischen zwei Einsätzen gibt es keine Anfahrt – die ganze Lücke ist Pause\./.test(s)));
+  assert.ok(!ERLAEUTERUNG.some((s) => /trotzdem 30 Minuten Anfahrt|Lücke 1:00 = 0:30 Pause/.test(s)), 'die alte Regel steht noch in der Erläuterung');
   assert.ok(!ERLAEUTERUNG.some((s) => /Mehr als 30 Minuten sind eine Pause/.test(s)));
   // Regel seit 30.10.2026: ohne Bestätigung nichts berechnet, kein Soll-Ersatz
   assert.ok(ERLAEUTERUNG.some((s) => /ohne bestätigte Ist-Zeit werden nicht berechnet – auch keine Kunden-Anfahrt/.test(s)));

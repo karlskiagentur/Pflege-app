@@ -124,9 +124,10 @@ test('Markierter Einsatz MIT eingetragener Ist-Zeit: zählt trotzdem nie, keine 
   const mit = berechneZeitnachweis([a, m, c], { jetzt: ZEIT });
   assert.deepEqual(mit.tage, ohne.tage);
   assert.deepEqual(mit.summen, ohne.summen);
-  // Lücke 09:00–10:30 = 1:00 Pause + 0:30 Anfahrt (als gäbe es den markierten Einsatz nicht)
+  // Lücke 09:00–10:30 = 1:30 Pause, keine Anfahrt (als gäbe es den markierten Einsatz nicht;
+  // ab 1 Stunde keine Kunden-Anfahrt – Vorgabe Geschäftsleitung 27.11.2026, vorher 1:00 Pause + 0:30 Anfahrt)
   assert.deepEqual(mit.tage[0].zeilen.map((z) => `${z.art}:${z.von}-${z.bis}`),
-    ['einsatz:08:00-09:00', 'pause:09:00-10:00', 'anfahrt:10:00-10:30', 'einsatz:10:30-11:30']);
+    ['einsatz:08:00-09:00', 'pause:09:00-10:30', 'einsatz:10:30-11:30']);
   assert.equal(mit.ohneLohn.length, 1);
   // Gegenprobe ohne Haken: der Einsatz zählt und verändert die Anfahrt
   const normal = berechneZeitnachweis([a, b('2026-11-19', '09:15', '10:15'), c], { jetzt: ZEIT });

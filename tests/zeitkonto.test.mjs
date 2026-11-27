@@ -83,11 +83,12 @@ test('Nicht bestätigter Einsatz zwischen zwei bestätigten: keine Anfahrt dorth
     offen('2026-10-20', '08:45', '09:15'),
     b('2026-10-20', '09:30', '10:00'),
   ], { jetzt: ZEIT });
-  // Die Lücke 08:30-09:30 gilt wie jede Lücke: 30 Min Anfahrt zum nächsten bestätigten Einsatz, Rest Pause
+  // Die Lücke 08:30-09:30 gilt wie jede Lücke: genau 1 Stunde -> keine Anfahrt, ganz Pause
+  // (Vorgabe Geschäftsleitung 27.11.2026; vorher 0:30 Pause + 0:30 Anfahrt)
   assert.deepEqual(kurz(vorher.tage[0]), [
-    'einsatz:08:00-08:30=0:30', 'pause:08:30-09:00=0:30', 'anfahrt:09:00-09:30=0:30', 'einsatz:09:30-10:00=0:30',
+    'einsatz:08:00-08:30=0:30', 'pause:08:30-09:30=1:00', 'einsatz:09:30-10:00=0:30',
   ]);
-  assert.equal(hm(vorher.summen.bezahltMin), '1:30');
+  assert.equal(hm(vorher.summen.bezahltMin), '1:00');
   assert.equal(vorher.summen.einsaetze, 2);
   assert.equal(vorher.summen.ohneIst, 1);
   assert.equal(hm(vorher.summen.ohneIstSollMin), '0:30');
@@ -184,19 +185,20 @@ test('Grenzen: Lücke 15/30 Min = ganz Anfahrt, 45 Min = 30 Anfahrt + 15 Pause, 
   assert.equal(hm(r.summen.pauseMin), '0:15');
 });
 
-test('Lange Lücke (2:15): 30 Min Anfahrt bezahlt, nur 1:45 Pause', () => {
+test('Lange Lücke (2:15): ab 1 Stunde keine Anfahrt, die ganze Lücke ist Pause', () => {
   const r = berechneZeitnachweis([
     b('2026-10-23', '09:00', '10:45', { Dauer_Ist: 105 * 60 }),
     b('2026-10-23', '13:00', '15:00', { Dauer_Ist: 120 * 60 }),
   ], { jetzt: '2026-10-24T12:00:00Z' });
   assert.deepEqual(kurz(r.tage[0]), [
-    'einsatz:09:00-10:45=1:45', 'pause:10:45-12:30=1:45', 'anfahrt:12:30-13:00=0:30', 'einsatz:13:00-15:00=2:00',
+    'einsatz:09:00-10:45=1:45', 'pause:10:45-13:00=2:15', 'einsatz:13:00-15:00=2:00',
   ]);
-  assert.equal(hm(r.summen.bezahltMin), '4:15'); // 3:45 Einsätze + 0:30 Anfahrt
-  assert.equal(hm(r.summen.pauseMin), '1:45');
+  assert.equal(hm(r.summen.anfahrtMin), '0:00');
+  assert.equal(hm(r.summen.bezahltMin), '3:45'); // nur die Einsätze (bis 26.11.2026: + 0:30 Anfahrt)
+  assert.equal(hm(r.summen.pauseMin), '2:15');
 });
 
-test('Mehrere lange Lücken an einem Tag: je Lücke 30 Min Anfahrt', () => {
+test('Mehrere Lücken von 0:45 an einem Tag (über 30 Min, unter 1 Std.): je Lücke 30 Min Anfahrt', () => {
   const r = berechneZeitnachweis([
     b('2026-10-20', '09:30', '10:45', { Dauer_Ist: 75 * 60 }),
     b('2026-10-20', '11:30', '12:45', { Dauer_Ist: 75 * 60 }), // Lücke 0:45
@@ -208,7 +210,7 @@ test('Mehrere lange Lücken an einem Tag: je Lücke 30 Min Anfahrt', () => {
   assert.equal(hm(r.tage[0].bezahltMin), '5:00'); // vorher 4:00 (beide Lücken ganz Pause)
 });
 
-test('Jede Lücke: Anfahrt = höchstens 30 Min, Pause = Rest; Zeilen lückenlos bis zum nächsten Einsatz', () => {
+test('Jede Lücke: Anfahrt = höchstens 30 Min, Pause = Rest, ab 1 Std. nur Pause; Zeilen lückenlos bis zum nächsten Einsatz', () => {
   for (let luecke = 0; luecke <= 300; luecke += 5) {
     const beginn2 = 8 * 60 + 30 + luecke; // erster Einsatz 08:00-08:30
     const r = berechneZeitnachweis([
@@ -217,14 +219,19 @@ test('Jede Lücke: Anfahrt = höchstens 30 Min, Pause = Rest; Zeilen lückenlos 
     ], { jetzt: '2026-10-21T12:00:00Z' });
     const t = r.tage[0];
     const gesamt = takt(luecke);
-    const erwAnfahrt = luecke > 0 ? Math.min(gesamt, 30) : 0;
+    const nurPause = luecke >= 60; // ab 1 Stunde: keine Anfahrt (Vorgabe Geschäftsleitung 27.11.2026)
+    const erwAnfahrt = luecke > 0 && !nurPause ? Math.min(gesamt, 30) : 0;
     assert.equal(t.anfahrtMin, erwAnfahrt, `Lücke ${luecke}: Anfahrt`);
-    assert.equal(t.pauseMin, luecke > 30 ? gesamt - 30 : 0, `Lücke ${luecke}: Pause`);
+    assert.equal(t.pauseMin, nurPause ? gesamt : (luecke > 30 ? gesamt - 30 : 0), `Lücke ${luecke}: Pause`);
     assert.equal(t.anfahrtMin + t.pauseMin, luecke > 0 ? gesamt : 0, `Lücke ${luecke}: Summe`);
     assert.equal(t.bezahltMin, t.einsatzMin + t.anfahrtMin);
     // Zwischenzeilen schließen lückenlos an: Ende Einsatz 1 -> (Pause) -> Anfahrt -> Beginn Einsatz 2
     const zw = t.zeilen.filter((z) => z.art !== 'einsatz');
-    if (luecke > 30) {
+    if (nurPause) {
+      assert.deepEqual(zw.map((z) => z.art), ['pause'], `Lücke ${luecke}: nur eine Pause-Zeile`);
+      assert.equal(zw[0].von, '08:30');
+      assert.equal(zw[0].bis, t.zeilen.at(-1).istVon, `Lücke ${luecke}: Pause reicht bis zum Einsatz`);
+    } else if (luecke > 30) {
       assert.equal(zw.at(-1).art, 'anfahrt', `Lücke ${luecke}: Anfahrt direkt vor dem Einsatz`);
       assert.equal(zw.at(-1).bis, t.zeilen.at(-1).istVon);
       assert.equal(zw[0].von, '08:30');
@@ -246,7 +253,7 @@ test('Nur Vergangenes zählt: morgen und heute noch laufend/geplant fehlen - auc
   assert.equal(r.summen.einsaetze, 2);
   assert.equal(r.ausgelassen.zukunft, 3);
   assert.equal(hm(r.summen.einsatzMin), '1:30');
-  assert.equal(hm(r.summen.bezahltMin), '2:00'); // + 0:30 Anfahrt (Lücke 09:00-13:30, Rest Pause)
+  assert.equal(hm(r.summen.bezahltMin), '1:30'); // keine Anfahrt: Lücke 09:00-13:30 ist ab 1 Stunde ganz Pause
   assert.deepEqual(r.nichtBestaetigt.map((t) => t.von), ['10:00']);
 });
 

@@ -15,11 +15,15 @@
 //    Zettel, damit das Büro sie prüfen und tatsächlich geleistete Zeit nachtragen kann.
 //    Eine bestätigte 0 (z. B. Klient nicht angetroffen) ist eine Bestätigung und zählt 0.
 // 3. Liegen zwischen zwei Terminen desselben Tages höchstens 30 Minuten, ist das bezahlte
-//    "Kunden-Anfahrt" (eigene Zeile, zählt zur Summe). Liegen mehr als 30 Minuten dazwischen,
-//    werden trotzdem 30 Minuten als Kunden-Anfahrt bezahlt - die Fahrt zum nächsten Klienten
-//    fällt ja an; nur der Rest ist unbezahlte Pause (eigene Zeile, zählt NICHT zur Summe).
-//    Beispiel: Lücke 1:00 = 0:30 Pause + 0:30 Anfahrt. (Vorgabe Karl 28.10.2026; vorher galt
-//    eine Lücke über 30 Minuten komplett als Pause.)
+//    "Kunden-Anfahrt" (eigene Zeile, zählt zur Summe). Liegen mehr als 30 Minuten, aber weniger
+//    als 1 Stunde dazwischen, werden trotzdem 30 Minuten als Kunden-Anfahrt bezahlt - die Fahrt
+//    zum nächsten Klienten fällt ja an; nur der Rest ist unbezahlte Pause (eigene Zeile, zählt
+//    NICHT zur Summe). Beispiel: Lücke 0:45 = 0:15 Pause + 0:30 Anfahrt. (Vorgabe Karl
+//    28.10.2026; vorher galt eine Lücke über 30 Minuten komplett als Pause.)
+//    Ab 1 Stunde zwischen zwei Terminen gibt es KEINE Kunden-Anfahrt: Die ganze Lücke ist
+//    unbezahlte Pause (Vorgabe Geschäftsleitung 27.11.2026 - bei so viel Zeit dazwischen ist es
+//    keine Fahrt von Klient zu Klient; gemeldete Beispiele: Lücken von 2:30 und 3:30 Stunden).
+//    Beide Grenzen (30 Minuten, 1 Stunde) gelten für die Lücke in Minuten laut den Uhrzeiten.
 // 4. Einsätze, Anfahrt und Pausen liegen im 15-Minuten-Raster; die Monatssumme ist die exakte
 //    Addition.
 // 5. Urlaub/Gleitzeit/Krank/Abwesenheit (eigene Dienstplan-Zeile ohne Klient, Spalte
@@ -57,8 +61,11 @@ import {
 } from './_abrechnung.js';
 
 // Bezahlte Kunden-Anfahrt je Lücke zwischen zwei Terminen: bis 30 Min die ganze Lücke,
-// bei längerer Lücke genau 30 Min (der Rest ist Pause).
+// bei längerer Lücke genau 30 Min (der Rest ist Pause) - ab 1 Stunde keine Anfahrt mehr.
 export const ANFAHRT_MAX_MIN = 30;
+// Ab dieser Lücke (Minuten) wird keine Kunden-Anfahrt berechnet: Die ganze Lücke ist
+// unbezahlte Pause (Vorgabe Geschäftsleitung 27.11.2026, „ab 1 Stunde“ - Regel 3).
+export const ANFAHRT_KEINE_AB_MIN = 60;
 const TAKT = 15;                    // Abrechnungstakt in Minuten
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -384,11 +391,19 @@ export function berechneZeitnachweis(besuche, opt = {}) {
           const m = takt(luecke);
           zeilen.push({ art: 'anfahrt', von: uhr(ende), bis: uhr(beginn), min: m });
           tag.anfahrtMin += m;
+        } else if (luecke >= ANFAHRT_KEINE_AB_MIN) {
+          // Ab 1 Stunde zwischen zwei Einsätzen: keine Kunden-Anfahrt, die ganze Lücke ist
+          // unbezahlte Pause (Vorgabe Geschäftsleitung 27.11.2026). Die Grenze gilt für die
+          // Lücke in Minuten, so wie die Uhrzeiten auf dem Zettel sie zeigen (wie bei der
+          // 30-Minuten-Grenze); die Pause steht wie jede Zeile im 15-Minuten-Takt da.
+          const pause = takt(luecke);
+          zeilen.push({ art: 'pause', von: uhr(ende), bis: uhr(beginn), min: pause });
+          tag.pauseMin += pause;
         } else if (luecke > ANFAHRT_MAX_MIN) {
-          // Längere Lücke: 30 Min Kunden-Anfahrt sind trotzdem bezahlt, nur der Rest ist Pause.
-          // Auf der Zeitachse liegt die Anfahrt direkt vor dem nächsten Einsatz (Fahrt zum
-          // Klienten), die Pause davor. Gesamtlänge wie bisher im 15-Minuten-Takt; bleibt nach
-          // dem Runden keine Pause übrig (z. B. 35 Min), deckt die Anfahrt die ganze Lücke.
+          // Längere Lücke unter 1 Stunde: 30 Min Kunden-Anfahrt sind trotzdem bezahlt, nur der
+          // Rest ist Pause. Auf der Zeitachse liegt die Anfahrt direkt vor dem nächsten Einsatz
+          // (Fahrt zum Klienten), die Pause davor. Gesamtlänge wie bisher im 15-Minuten-Takt;
+          // bleibt nach dem Runden keine Pause übrig (z. B. 35 Min), deckt die Anfahrt die ganze Lücke.
           const gesamt = takt(luecke);
           const anfahrt = Math.min(gesamt, ANFAHRT_MAX_MIN);
           const pause = gesamt - anfahrt;
